@@ -151,6 +151,47 @@ Then try:
 /natal
 ```
 
+## Deploy On Render
+
+This bot should be deployed on Render as a **Background Worker**, not a Web Service.
+
+Why:
+
+- the bot uses Telegram long polling
+- it does not expose an HTTP server
+- it does not bind to a port
+
+If you deploy it as a Web Service, Render will wait for an open port and the deploy will fail with a port scan timeout.
+
+### Recommended Render setup
+
+Option 1:
+
+- create a new **Background Worker**
+- connect the GitHub repo
+- build command: `npm install`
+- start command: `npm start`
+
+Option 2:
+
+- use the included [render.yaml](/Users/gabriel/Documents/telegram-bot/render.yaml)
+- create the service from Blueprint on Render
+
+### Render environment variables
+
+Add these in Render:
+
+```env
+BOT_TOKEN=your_telegram_bot_token
+FREEASTRO_API_KEY=your_freeastro_api_key
+```
+
+### Important
+
+- do not create a Web Service for this bot
+- create a Background Worker
+- rotate the old exposed secrets before deploying to production
+
 ## Environment Variables
 
 | Variable | Required | Description |
