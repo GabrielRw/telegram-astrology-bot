@@ -1,0 +1,27 @@
+{
+  "name": "freeastro-telegram-bot",
+  "version": "1.0.0",
+  "description": "FreeAstro Telegram Bot Starter Kit",
+  "main": "src/bot.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/bot.js",
+    "dev": "node --watch src/bot.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "telegraf",
+    "astrology",
+    "freeastroapi",
+    "starter-kit"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "telegraf": "^4.16.3"
+  }
+}
