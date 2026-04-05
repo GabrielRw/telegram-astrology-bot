@@ -1,13 +1,18 @@
 services:
-  - type: worker
+  - type: web
     name: telegram-astrology-bot
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm install
     startCommand: npm start
     autoDeploy: true
+    healthCheckPath: /healthz
     envVars:
       - key: BOT_TOKEN
         sync: false
       - key: FREEASTRO_API_KEY
+        sync: false
+      - key: WEBHOOK_PATH
+        value: /telegram/webhook
+      - key: WEBHOOK_BASE_URL
         sync: false

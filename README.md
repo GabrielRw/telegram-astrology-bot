@@ -153,29 +153,23 @@ Then try:
 
 ## Deploy On Render
 
-This bot should be deployed on Render as a **Background Worker**, not a Web Service.
+This repo now supports **Telegram webhooks** for Render Web Services.
 
-Why:
+Deployment mode:
 
-- the bot uses Telegram long polling
-- it does not expose an HTTP server
-- it does not bind to a port
-
-If you deploy it as a Web Service, Render will wait for an open port and the deploy will fail with a port scan timeout.
+- local development: polling mode
+- Render production: webhook mode
 
 ### Recommended Render setup
 
-Option 1:
+Create a new **Web Service** on Render:
 
-- create a new **Background Worker**
 - connect the GitHub repo
 - build command: `npm install`
 - start command: `npm start`
+- health check path: `/healthz`
 
-Option 2:
-
-- use the included [render.yaml](/Users/gabriel/Documents/telegram-bot/render.yaml)
-- create the service from Blueprint on Render
+Or use the included [render.yaml](/Users/gabriel/Documents/telegram-bot/render.yaml) with Render Blueprints.
 
 ### Render environment variables
 
@@ -184,12 +178,15 @@ Add these in Render:
 ```env
 BOT_TOKEN=your_telegram_bot_token
 FREEASTRO_API_KEY=your_freeastro_api_key
+WEBHOOK_BASE_URL=https://your-service-name.onrender.com
+WEBHOOK_PATH=/telegram/webhook
 ```
 
 ### Important
 
-- do not create a Web Service for this bot
-- create a Background Worker
+- this bot must have a public HTTPS URL in webhook mode
+- `WEBHOOK_BASE_URL` should match your Render public URL exactly
+- the webhook path defaults to `/telegram/webhook`
 - rotate the old exposed secrets before deploying to production
 
 ## Environment Variables
@@ -198,6 +195,8 @@ FREEASTRO_API_KEY=your_freeastro_api_key
 | --- | --- | --- |
 | `BOT_TOKEN` | Yes | Telegram bot token from BotFather |
 | `FREEASTRO_API_KEY` | Yes | FreeAstroApi secret key |
+| `WEBHOOK_BASE_URL` | Render only | Public HTTPS base URL for webhook mode, for example `https://your-service-name.onrender.com` |
+| `WEBHOOK_PATH` | Optional | Webhook route path, defaults to `/telegram/webhook` |
 
 ## Commands
 
