@@ -21,6 +21,6 @@ module.exports = function registerStartCommand(bot) {
 
   bot.action('HELP_NATAL', async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.reply('Send /natal and I will ask for birth date, time, and city step by step.');
+    await ctx.reply('Send /natal and I will ask for birth date, time, and city step by step. After that, you can ask chart questions naturally.');
   });
 };

@@ -5,6 +5,7 @@ const { Telegraf } = require('telegraf');
 const registerStartCommand = require('./commands/start');
 const registerDailyCommand = require('./commands/daily');
 const registerNatalCommand = require('./commands/natal');
+const registerChatCommand = require('./commands/chat');
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -57,6 +58,7 @@ async function main() {
   registerStartCommand(bot);
   registerDailyCommand(bot);
   registerNatalCommand(bot);
+  registerChatCommand(bot);
 
   bot.catch((error, ctx) => {
     console.error(`Telegram bot error for update ${ctx.update.update_id}:`, error.message);

@@ -90,6 +90,9 @@ function formatStartMessage() {
     '/daily leo',
     '/natal',
     '',
+    'Or just ask a question in plain language and I will collect the birth data I need.',
+    'After your natal chart is set up, you can keep chatting naturally.',
+    '',
     'Note: /daily is a sign-based forecast, not a personal birth-chart reading.'
   ].join('\n');
 }

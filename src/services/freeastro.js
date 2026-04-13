@@ -139,21 +139,26 @@ function buildQuery(params) {
   return query.toString();
 }
 
-async function searchCity(query) {
+async function searchCities(query, limit = 3) {
   const normalizedQuery = String(query || '').trim();
 
   if (!normalizedQuery) {
     throw new FreeAstroError('Please provide a city name.');
   }
 
-  const qs = buildQuery({ q: normalizedQuery, limit: 1 });
+  const qs = buildQuery({ q: normalizedQuery, limit });
   const data = await request(`/api/v1/geo/search?${qs}`);
 
   if (!data || !Array.isArray(data.results) || data.results.length === 0) {
     throw new FreeAstroError(`Could not find a city match for "${normalizedQuery}".`);
   }
 
-  return data.results[0];
+  return data.results;
+}
+
+async function searchCity(query) {
+  const results = await searchCities(query, 1);
+  return results[0];
 }
 
 async function getDaily(sign) {
@@ -191,5 +196,6 @@ module.exports = {
   getDaily,
   getNatalChart,
   getNatal,
+  searchCities,
   searchCity
 };

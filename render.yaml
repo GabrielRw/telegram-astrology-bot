@@ -12,6 +12,12 @@ services:
         sync: false
       - key: FREEASTRO_API_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemma-4-31b-it
+      - key: FREEASTRO_MCP_URL
+        value: https://api.freeastroapi.com/mcp
       - key: WEBHOOK_PATH
         value: /telegram/webhook
       - key: WEBHOOK_BASE_URL

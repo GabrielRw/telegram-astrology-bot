@@ -1,5 +1,23 @@
 const { Markup } = require('telegraf');
-const { getNatal, getNatalChart, searchCity, FreeAstroError } = require('../services/freeastro');
+const { answerConversation } = require('../services/conversation');
+const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
+const { getGeminiErrorMessage } = require('../services/gemini');
+const {
+  clearSession,
+  createNatalChartPayload,
+  createNatalPayload,
+  getSession,
+  parseDateInput,
+  parseTimeInput,
+  setSession,
+  startNatalFlow
+} = require('../services/natalFlow');
+const {
+  consumePendingQuestion,
+  setNatalProfile,
+  setPendingQuestion,
+  setUiCache
+} = require('../state/chatState');
 const {
   formatAspectInterpretationMessage,
   formatNatalMessage,
@@ -10,21 +28,8 @@ const {
   splitMessage
 } = require('../utils/format');
 
-const sessions = new Map();
 const aspectCache = new Map();
 const planetCache = new Map();
-
-function getSession(chatId) {
-  return sessions.get(String(chatId));
-}
-
-function setSession(chatId, session) {
-  sessions.set(String(chatId), session);
-}
-
-function clearSession(chatId) {
-  sessions.delete(String(chatId));
-}
 
 function setAspectCache(chatId, aspects) {
   aspectCache.set(String(chatId), aspects);
@@ -42,146 +47,208 @@ function getPlanetCache(chatId) {
   return planetCache.get(String(chatId)) || [];
 }
 
-function parseDateInput(input) {
-  const value = String(input || '').trim();
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return null;
+function getNatalIntroMessage(source = 'command') {
+  if (source === 'chat') {
+    return [
+      'I can answer that, but first I need your natal chart so the reading is grounded.',
+      '',
+      'Reply with your name, or send `skip` to use Telegram User.',
+      'You can cancel anytime with /cancel.'
+    ].join('\n');
   }
 
-  const [year, month, day] = value.split('-').map(Number);
-  const parsedDate = new Date(`${value}T00:00:00`);
-
-  if (
-    Number.isNaN(parsedDate.getTime()) ||
-    year < 1900 ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31
-  ) {
-    return null;
-  }
-
-  return { year, month, day, raw: value };
+  return [
+    'Natal chart setup',
+    '',
+    'Reply with your name, or send `skip` to use Telegram User.',
+    'You can cancel anytime with /cancel.'
+  ].join('\n');
 }
 
-function parseTimeInput(input) {
-  const value = String(input || '').trim();
-
-  if (!/^\d{2}:\d{2}$/.test(value)) {
-    return null;
-  }
-
-  const [hour, minute] = value.split(':').map(Number);
-
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-    return null;
-  }
-
-  return { hour, minute, raw: value };
+function formatCityOption(city) {
+  const bits = [city?.name, city?.admin1 || city?.region, city?.country].filter(Boolean);
+  return bits.join(', ').slice(0, 60) || 'City option';
 }
 
-function createNatalPayload(session, cityMatch) {
-  return {
-    name: session.name || 'Telegram User',
-    year: session.birthDate.year,
-    month: session.birthDate.month,
-    day: session.birthDate.day,
-    time_known: session.timeKnown,
-    hour: session.timeKnown ? session.birthTime.hour : undefined,
-    minute: session.timeKnown ? session.birthTime.minute : undefined,
-    city: cityMatch.name,
-    lat: cityMatch.lat,
-    lng: cityMatch.lng,
-    tz_str: cityMatch.timezone || 'AUTO',
-    house_system: 'placidus',
-    zodiac_type: 'tropical',
-    include_speed: true,
-    include_dignity: true,
-    include_minor_aspects: true,
-    include_stelliums: true,
-    include_features: ['chiron', 'lilith', 'true_node'],
-    interpretation: {
-      enable: true,
-      style: 'improved'
+function buildCityKeyboard(candidates) {
+  return Markup.inlineKeyboard(
+    candidates.map((city, index) => [Markup.button.callback(formatCityOption(city), `NATAL_CITY_${index}`)])
+  );
+}
+
+async function promptForName(ctx, source = 'command') {
+  await ctx.reply(getNatalIntroMessage(source), { parse_mode: 'Markdown' });
+}
+
+async function promptForBirthDate(ctx) {
+  await ctx.reply('Send your birth date in `YYYY-MM-DD` format.\nExample: `1990-05-15`', {
+    parse_mode: 'Markdown'
+  });
+}
+
+async function promptForBirthTime(ctx) {
+  await ctx.reply('Send your birth time in 24-hour format.\nExample: `14:30`', {
+    parse_mode: 'Markdown'
+  });
+}
+
+async function promptForCity(ctx, timeKnown) {
+  const line = timeKnown
+    ? 'Send your birth city.'
+    : 'Birth time marked unknown. Houses and Rising will be omitted by the API.\nNow send your birth city.';
+
+  await ctx.reply(`${line}\nExample: \`Paris\` or \`New York\``, {
+    parse_mode: 'Markdown'
+  });
+}
+
+async function promptForCityConfirmation(ctx, candidates) {
+  await ctx.reply(
+    'I found these city matches. Tap the correct one.',
+    buildCityKeyboard(candidates)
+  );
+}
+
+async function finishNatalFlow(ctx, session, cityMatch) {
+  const loadingMessage = await ctx.reply('Calculating natal chart...');
+
+  try {
+    const natalPayload = createNatalPayload(session, cityMatch);
+    const chartPayload = createNatalChartPayload(session, cityMatch);
+    const [result, chart] = await Promise.allSettled([
+      getNatal(natalPayload),
+      getNatalChart(chartPayload)
+    ]);
+
+    if (result.status !== 'fulfilled') {
+      throw result.reason;
     }
-  };
-}
 
-function createNatalChartPayload(session, cityMatch) {
-  return {
-    name: session.name || 'Telegram User',
-    year: session.birthDate.year,
-    month: session.birthDate.month,
-    day: session.birthDate.day,
-    time_known: session.timeKnown,
-    hour: session.timeKnown ? session.birthTime.hour : 12,
-    minute: session.timeKnown ? session.birthTime.minute : 0,
-    city: cityMatch.name,
-    lat: cityMatch.lat,
-    lng: cityMatch.lng,
-    tz_str: cityMatch.timezone || 'AUTO',
-    house_system: 'placidus',
-    zodiac_type: 'tropical',
-    format: 'png',
-    size: 900,
-    png_quality_scale: 2,
-    theme_type: 'light',
-    show_metadata: true,
-    display_settings: {
-      chiron: true,
-      lilith: true,
-      mc: session.timeKnown,
-      dsc: session.timeKnown,
-      ic: session.timeKnown
-    },
-    chart_config: {
-      sign_line_width: 1.6,
-      house_line_width: 0.9,
-      asc_line_width: 2.4,
-      dsc_line_width: 2.4,
-      mc_line_width: 2.4,
-      ic_line_width: 2.4,
-      sign_ring_inner_width: 1.2,
-      sign_ring_outer_width: 1.6,
-      house_ring_inner_width: 0.8,
-      house_ring_outer_width: 0.9,
-      sign_tick_width: 0.45,
-      aspect_conjunction_width: 2.2,
-      aspect_opposition_width: 2.2,
-      aspect_trine_width: 1.8,
-      aspect_square_width: 2,
-      aspect_sextile_width: 1.5,
-      aspect_quincunx_width: 1.3
+    clearSession(ctx.chat.id);
+
+    const cityLabel = `${cityMatch.name}, ${cityMatch.country}`;
+    setNatalProfile(ctx.chat.id, result.value, cityLabel);
+
+    if (chart.status === 'fulfilled') {
+      await ctx.replyWithPhoto(
+        {
+          source: chart.value.buffer,
+          filename: 'natal-chart.png'
+        },
+        {
+          caption: 'Natal chart'
+        }
+      );
     }
-  };
+
+    await ctx.telegram.editMessageText(
+      ctx.chat.id,
+      loadingMessage.message_id,
+      undefined,
+      formatNatalMessage(result.value, cityLabel)
+    );
+
+    const planetButtons = getPlanetPlacementButtonsData(result.value);
+    setPlanetCache(ctx.chat.id, planetButtons);
+
+    for (const [index, planet] of planetButtons.entries()) {
+      await ctx.reply(
+        planet.summary,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('Get interpretation', `NATAL_PLANET_${index}`)]
+        ])
+      );
+    }
+
+    const aspectButtons = getMajorAspectButtonsData(result.value);
+    setAspectCache(ctx.chat.id, aspectButtons);
+    setUiCache(ctx.chat.id, {
+      aspects: aspectButtons,
+      planets: planetButtons
+    });
+
+    if (aspectButtons.length > 0) {
+      for (const [index, aspect] of aspectButtons.entries()) {
+        await ctx.reply(
+          aspect.summary,
+          Markup.inlineKeyboard([
+            [Markup.button.callback('Get interpretation', `NATAL_ASPECT_${index}`)]
+          ])
+        );
+      }
+    } else {
+      await ctx.reply('No major aspects were returned for this natal chart.');
+    }
+
+    const pendingQuestion = consumePendingQuestion(ctx.chat.id);
+
+    if (!pendingQuestion) {
+      return;
+    }
+
+    const thinkingMessage = await ctx.reply('Now I can answer your question from the chart...');
+
+    try {
+      const answer = await answerConversation(ctx.chat.id, pendingQuestion);
+      const chunks = splitMessage(answer.text);
+
+      if (chunks.length === 0) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          thinkingMessage.message_id,
+          undefined,
+          'I built the chart, but I could not produce a grounded answer to the original question.'
+        );
+        return;
+      }
+
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        thinkingMessage.message_id,
+        undefined,
+        `Your question: ${pendingQuestion}\n\n${chunks[0]}`
+      );
+
+      for (const chunk of chunks.slice(1)) {
+        await ctx.reply(chunk);
+      }
+    } catch (error) {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        thinkingMessage.message_id,
+        undefined,
+        `I built the chart, but conversational mode is unavailable right now.\n${getGeminiErrorMessage(error)}`
+      );
+    }
+  } catch (error) {
+    const message = error instanceof FreeAstroError
+      ? formatUserError(error)
+      : formatUserError(new Error('Unexpected error.'));
+
+    await ctx.telegram.editMessageText(
+      ctx.chat.id,
+      loadingMessage.message_id,
+      undefined,
+      message
+    );
+  }
 }
 
 module.exports = function registerNatalCommand(bot) {
   bot.command('natal', async (ctx) => {
-    setSession(ctx.chat.id, {
-      step: 'name'
-    });
-
-    await ctx.reply(
-      [
-        'Natal chart setup',
-        '',
-        'Reply with your name, or send `skip` to use Telegram User.',
-        'You can cancel anytime with /cancel.'
-      ].join('\n'),
-      { parse_mode: 'Markdown' }
-    );
+    startNatalFlow(ctx.chat.id, 'command');
+    await promptForName(ctx, 'command');
   });
 
   bot.command('cancel', async (ctx) => {
     clearSession(ctx.chat.id);
+    setPendingQuestion(ctx.chat.id, null);
     await ctx.reply('Cancelled.');
   });
 
   bot.action('NATAL_TIME_YES', async (ctx) => {
     const session = getSession(ctx.chat.id);
+
     if (!session) {
       await ctx.answerCbQuery('Start again with /natal');
       return;
@@ -192,13 +259,12 @@ module.exports = function registerNatalCommand(bot) {
     setSession(ctx.chat.id, session);
 
     await ctx.answerCbQuery();
-    await ctx.reply('Send your birth time in 24-hour format.\nExample: `14:30`', {
-      parse_mode: 'Markdown'
-    });
+    await promptForBirthTime(ctx);
   });
 
   bot.action('NATAL_TIME_NO', async (ctx) => {
     const session = getSession(ctx.chat.id);
+
     if (!session) {
       await ctx.answerCbQuery('Start again with /natal');
       return;
@@ -209,10 +275,27 @@ module.exports = function registerNatalCommand(bot) {
     setSession(ctx.chat.id, session);
 
     await ctx.answerCbQuery();
-    await ctx.reply(
-      'Birth time marked unknown. Houses and Rising will be omitted by the API.\nNow send your birth city.',
-      { parse_mode: 'Markdown' }
-    );
+    await promptForCity(ctx, false);
+  });
+
+  bot.action(/^NATAL_CITY_(\d+)$/, async (ctx) => {
+    const session = getSession(ctx.chat.id);
+
+    if (!session || session.step !== 'city_confirm') {
+      await ctx.answerCbQuery('City choices expired. Start again with /natal.');
+      return;
+    }
+
+    const cityIndex = Number(ctx.match[1]);
+    const cityMatch = Array.isArray(session.cityCandidates) ? session.cityCandidates[cityIndex] : null;
+
+    if (!cityMatch) {
+      await ctx.answerCbQuery('That city option is no longer available.');
+      return;
+    }
+
+    await ctx.answerCbQuery(`Using ${formatCityOption(cityMatch)}`);
+    await finishNatalFlow(ctx, session, cityMatch);
   });
 
   bot.action(/^NATAL_ASPECT_(\d+)$/, async (ctx) => {
@@ -263,10 +346,7 @@ module.exports = function registerNatalCommand(bot) {
       session.name = /^skip$/i.test(text) ? 'Telegram User' : text;
       session.step = 'date';
       setSession(ctx.chat.id, session);
-
-      await ctx.reply('Send your birth date in `YYYY-MM-DD` format.\nExample: `1990-05-15`', {
-        parse_mode: 'Markdown'
-      });
+      await promptForBirthDate(ctx);
       return;
     }
 
@@ -309,89 +389,30 @@ module.exports = function registerNatalCommand(bot) {
       session.birthTime = birthTime;
       session.step = 'city';
       setSession(ctx.chat.id, session);
-
-      await ctx.reply('Send your birth city.\nExample: `Paris` or `New York`', {
-        parse_mode: 'Markdown'
-      });
+      await promptForCity(ctx, true);
       return;
     }
 
     if (session.step === 'city') {
-      session.city = text;
-      const loadingMessage = await ctx.reply('Calculating natal chart...');
-
       try {
-        const cityMatch = await searchCity(session.city);
-        const natalPayload = createNatalPayload(session, cityMatch);
-        const chartPayload = createNatalChartPayload(session, cityMatch);
-        const [result, chart] = await Promise.allSettled([
-          getNatal(natalPayload),
-          getNatalChart(chartPayload)
-        ]);
+        const cityCandidates = await searchCities(text, 3);
+        session.city = text;
+        session.cityCandidates = cityCandidates;
+        session.step = 'city_confirm';
+        setSession(ctx.chat.id, session);
 
-        if (result.status !== 'fulfilled') {
-          throw result.reason;
-        }
-
-        clearSession(ctx.chat.id);
-
-        if (chart.status === 'fulfilled') {
-          await ctx.replyWithPhoto(
-            {
-              source: chart.value.buffer,
-              filename: 'natal-chart.png'
-            },
-            {
-              caption: 'Natal chart'
-            }
-          );
-        }
-
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          loadingMessage.message_id,
-          undefined,
-          formatNatalMessage(result.value, `${cityMatch.name}, ${cityMatch.country}`)
-        );
-
-        const planetButtons = getPlanetPlacementButtonsData(result.value);
-        setPlanetCache(ctx.chat.id, planetButtons);
-
-        for (const [index, planet] of planetButtons.entries()) {
-          await ctx.reply(
-            planet.summary,
-            Markup.inlineKeyboard([
-              [Markup.button.callback('Get interpretation', `NATAL_PLANET_${index}`)]
-            ])
-          );
-        }
-
-        const aspectButtons = getMajorAspectButtonsData(result.value);
-        setAspectCache(ctx.chat.id, aspectButtons);
-
-        if (aspectButtons.length > 0) {
-          for (const [index, aspect] of aspectButtons.entries()) {
-            await ctx.reply(
-              aspect.summary,
-              Markup.inlineKeyboard([
-                [Markup.button.callback('Get interpretation', `NATAL_ASPECT_${index}`)]
-              ])
-            );
-          }
-        } else {
-          await ctx.reply('No major aspects were returned for this natal chart.');
-        }
+        await promptForCityConfirmation(ctx, cityCandidates);
       } catch (error) {
         const message = error instanceof FreeAstroError
-          ? formatUserError(error)
-          : formatUserError(new Error('Unexpected error.'));
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          loadingMessage.message_id,
-          undefined,
-          message
-        );
+          ? error.message
+          : 'I could not look up that city right now.';
+        await ctx.reply(message);
       }
+      return;
+    }
+
+    if (session.step === 'city_confirm') {
+      await ctx.reply('Tap one of the city buttons above so I use the right location.');
       return;
     }
 
