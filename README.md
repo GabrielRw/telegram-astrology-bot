@@ -1,4 +1,4 @@
-# FreeAstro Telegram Bot Starter Kit
+# Astrology Telegram Starter Kit
 
 Build your astrology bot in 5 minutes.
 
