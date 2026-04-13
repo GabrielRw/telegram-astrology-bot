@@ -29,6 +29,35 @@ function getPort() {
   return Number(process.env.PORT || 10000);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function withRetry(label, fn, options = {}) {
+  const attempts = options.attempts || 5;
+  const delayMs = options.delayMs || 1500;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      if (attempt === attempts) {
+        break;
+      }
+
+      console.error(`${label} failed on attempt ${attempt}/${attempts}: ${error.message}`);
+      await sleep(delayMs * attempt);
+    }
+  }
+
+  throw lastError;
+}
+
 function createAppServer(bot, webhookPath) {
   const webhookHandler = bot.webhookCallback(webhookPath);
 
@@ -72,13 +101,15 @@ async function main() {
     const port = getPort();
     const webhookUrl = `${webhookBaseUrl}${webhookPath}`;
 
-    await bot.telegram.setWebhook(webhookUrl);
-
     await new Promise((resolve) => {
       server.listen(port, '0.0.0.0', resolve);
     });
 
+    const me = await withRetry('Telegram getMe', () => bot.telegram.getMe());
+    await withRetry('Telegram setWebhook', () => bot.telegram.setWebhook(webhookUrl));
+
     console.log(`FreeAstro Telegram bot is running in webhook mode on port ${port}.`);
+    console.log(`Telegram bot: @${me.username}`);
     console.log(`Webhook URL: ${webhookUrl}`);
 
     process.once('SIGINT', () => {
@@ -101,6 +132,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error.message);
+  console.error(error.stack || error.message);
   process.exit(1);
 });
