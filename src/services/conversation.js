@@ -21,9 +21,12 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
 
   return [
     'You are a concise professional astrologer answering natal-chart questions in Telegram chat.',
+    'Write in plain text only. Do not use Markdown emphasis, especially **.',
+    'Keep each response block short. Aim for multiple small blocks, with no block over 80 words.',
     'Ground every answer in the user natal chart or explicit tool results.',
     'Never invent placements, houses, angles, aspects, timings, or predictions.',
     'If information is missing, say so clearly and ask a narrow follow-up only when required.',
+    'If the user asks for transits, ephemeris, or a month-specific forecast and the needed date window is missing, ask for that date or month before answering.',
     'Do not give medical, legal, or financial advice.',
     'Never answer personal astrology questions without natal data.',
     'Prefer cached natal tools first. Use FreeAstro MCP only when cached chart data is insufficient.',
@@ -39,6 +42,13 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
   ].join('\n');
 }
 
+function normalizeAssistantText(text) {
+  return String(text || '')
+    .replace(/\*\*/g, '')
+    .replace(/__+/g, '')
+    .trim();
+}
+
 function createLocalToolExecutor(chatState) {
   const profile = chatState.natalProfile;
 
@@ -48,6 +58,8 @@ function createLocalToolExecutor(chatState) {
         return {
           available: Boolean(profile),
           summary: profile?.summaryText || null,
+          birthDatetime: profile?.birthDatetime || null,
+          birthLocation: profile?.birthLocation || null,
           stelliums: profile?.stelliums || null,
           confidence: profile?.confidence || null
         };
@@ -151,7 +163,7 @@ async function answerConversation(chatId, userText) {
   setLastToolResults(chatId, result.toolResults);
 
   return {
-    text: result.text,
+    text: normalizeAssistantText(result.text),
     usedTools: result.toolResults,
     intent: intent.id
   };

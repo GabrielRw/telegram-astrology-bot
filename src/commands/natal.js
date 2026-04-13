@@ -25,6 +25,7 @@ const {
   formatUserError,
   getMajorAspectButtonsData,
   getPlanetPlacementButtonsData,
+  splitConversationReply,
   splitMessage
 } = require('../utils/format');
 
@@ -190,7 +191,7 @@ async function finishNatalFlow(ctx, session, cityMatch) {
 
     try {
       const answer = await answerConversation(ctx.chat.id, pendingQuestion);
-      const chunks = splitMessage(answer.text);
+      const chunks = splitConversationReply(answer.text);
 
       if (chunks.length === 0) {
         await ctx.telegram.editMessageText(

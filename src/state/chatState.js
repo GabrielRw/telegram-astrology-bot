@@ -183,6 +183,8 @@ function normalizeNatalProfile(payload, cityLabel) {
   return {
     name: payload?.subject?.name || 'Telegram User',
     city: cityLabel,
+    birthDatetime: payload?.subject?.datetime || null,
+    birthLocation: payload?.subject?.location || null,
     timeKnown,
     confidence: payload?.confidence?.overall || 'unknown',
     subject: payload?.subject || null,
@@ -199,7 +201,9 @@ function normalizeNatalProfile(payload, cityLabel) {
     interpretationMap,
     summaryText: [
       `Name: ${payload?.subject?.name || 'Telegram User'}`,
+      payload?.subject?.datetime ? `Birth datetime: ${payload.subject.datetime}` : null,
       `City: ${cityLabel}`,
+      payload?.subject?.location?.timezone ? `Timezone: ${payload.subject.location.timezone}` : null,
       sun ? `Sun: ${humanizeIdentifier(sun.sign_id || sun.sign)}${sun.house ? ` in house ${sun.house}` : ''}` : null,
       moon ? `Moon: ${humanizeIdentifier(moon.sign_id || moon.sign)}${moon.house ? ` in house ${moon.house}` : ''}` : null,
       timeKnown && rising ? `Rising: ${humanizeIdentifier(rising.sign_id || rising.sign)}` : 'Rising unavailable without birth time'

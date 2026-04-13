@@ -2,7 +2,7 @@ const { answerConversation } = require('../services/conversation');
 const { getGeminiErrorMessage } = require('../services/gemini');
 const { getChatState, setPendingQuestion } = require('../state/chatState');
 const { startNatalFlow } = require('../services/natalFlow');
-const { splitMessage } = require('../utils/format');
+const { splitConversationReply } = require('../utils/format');
 
 module.exports = function registerChatCommand(bot) {
   bot.on('text', async (ctx) => {
@@ -37,7 +37,7 @@ module.exports = function registerChatCommand(bot) {
 
     try {
       const result = await answerConversation(ctx.chat.id, text);
-      const chunks = splitMessage(result.text);
+      const chunks = splitConversationReply(result.text);
 
       if (chunks.length === 0) {
         await ctx.telegram.editMessageText(

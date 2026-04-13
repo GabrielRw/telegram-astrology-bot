@@ -86,12 +86,12 @@ function formatStartMessage() {
   return [
     'FreeAstro Telegram Bot Starter Kit',
     '',
-    'Try one of these commands:',
-    '/daily leo',
-    '/natal',
+    'I will first save your birth details so later questions stay natural and chart-grounded.',
     '',
-    'Or just ask a question in plain language and I will collect the birth data I need.',
-    'After your natal chart is set up, you can keep chatting naturally.',
+    'You can still use:',
+    '/daily leo',
+    '',
+    'After setup, just ask questions normally.',
     '',
     'Note: /daily is a sign-based forecast, not a personal birth-chart reading.'
   ].join('\n');
@@ -393,6 +393,57 @@ function splitMessage(text, maxLength = 3500) {
   return chunks.filter(Boolean);
 }
 
+function splitConversationReply(text, maxWords = 80, maxLength = 1200) {
+  const normalized = String(text || '')
+    .replace(/\r/g, '')
+    .trim();
+
+  if (!normalized) {
+    return [];
+  }
+
+  const paragraphs = normalized
+    .split(/\n{2,}/)
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const chunks = [];
+
+  for (const paragraph of paragraphs) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+
+    if (words.length <= maxWords && paragraph.length <= maxLength) {
+      chunks.push(paragraph);
+      continue;
+    }
+
+    let currentWords = [];
+
+    for (const word of words) {
+      const candidateWords = [...currentWords, word];
+      const candidateText = candidateWords.join(' ');
+
+      if (candidateWords.length > maxWords || candidateText.length > maxLength) {
+        if (currentWords.length > 0) {
+          chunks.push(currentWords.join(' '));
+          currentWords = [word];
+        } else {
+          chunks.push(candidateText.slice(0, maxLength));
+          currentWords = [];
+        }
+      } else {
+        currentWords = candidateWords;
+      }
+    }
+
+    if (currentWords.length > 0) {
+      chunks.push(currentWords.join(' '));
+    }
+  }
+
+  return chunks.filter(Boolean);
+}
+
 function formatUsage(command, example) {
   return [`Usage: ${command}`, `Example: ${example}`].join('\n');
 }
@@ -411,6 +462,7 @@ module.exports = {
   formatUserError,
   getMajorAspectButtonsData,
   getPlanetPlacementButtonsData,
+  splitConversationReply,
   getSignEmoji,
   normalizeSign,
   splitMessage
