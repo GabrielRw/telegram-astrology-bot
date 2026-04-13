@@ -23,6 +23,7 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
     'You are a concise professional astrologer answering natal-chart questions in Telegram chat.',
     'Write in plain text only. Do not use Markdown emphasis, especially **.',
     'Keep each response block short. Aim for multiple small blocks, with no block over 80 words.',
+    'Do not repeat the same point twice in one answer, even in different wording.',
     'Ground every answer in the user natal chart or explicit tool results.',
     'Never invent placements, houses, angles, aspects, timings, or predictions.',
     'If information is missing, say so clearly and ask a narrow follow-up only when required.',
@@ -43,11 +44,93 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
 }
 
 function normalizeAssistantText(text) {
-  return String(text || '')
+  const cleaned = String(text || '')
     .replace(/\*/g, '')
     .replace(/__+/g, '')
     .replace(/`+/g, '')
     .trim();
+
+  return dedupeRepeatedSentences(cleaned);
+}
+
+function normalizeSentenceForCompare(sentence) {
+  return String(sentence || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getWordSet(sentence) {
+  return new Set(
+    normalizeSentenceForCompare(sentence)
+      .split(' ')
+      .filter((word) => word.length > 2)
+  );
+}
+
+function sentenceSimilarity(left, right) {
+  const leftWords = getWordSet(left);
+  const rightWords = getWordSet(right);
+
+  if (leftWords.size === 0 || rightWords.size === 0) {
+    return 0;
+  }
+
+  let overlap = 0;
+  for (const word of leftWords) {
+    if (rightWords.has(word)) {
+      overlap += 1;
+    }
+  }
+
+  return overlap / Math.max(leftWords.size, rightWords.size);
+}
+
+function dedupeRepeatedSentences(text) {
+  const paragraphs = String(text || '')
+    .split(/\n{2,}/)
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const keptSentences = [];
+  const keptParagraphs = [];
+
+  for (const paragraph of paragraphs) {
+    const sentences = paragraph
+      .split(/(?<=[.!?])\s+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    const uniqueSentences = [];
+
+    for (const sentence of sentences) {
+      const signature = normalizeSentenceForCompare(sentence);
+      const isDuplicate = keptSentences.some((existing) => {
+        if (existing.signature === signature) {
+          return true;
+        }
+
+        const wordCount = signature.split(' ').filter(Boolean).length;
+        if (wordCount < 6) {
+          return false;
+        }
+
+        return sentenceSimilarity(existing.text, sentence) >= 0.8;
+      });
+
+      if (!isDuplicate) {
+        keptSentences.push({ signature, text: sentence });
+        uniqueSentences.push(sentence);
+      }
+    }
+
+    if (uniqueSentences.length > 0) {
+      keptParagraphs.push(uniqueSentences.join(' '));
+    }
+  }
+
+  return keptParagraphs.join('\n\n').trim();
 }
 
 function createLocalToolExecutor(chatState) {

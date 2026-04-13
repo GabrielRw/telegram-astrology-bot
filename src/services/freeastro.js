@@ -1,4 +1,5 @@
 const API_BASE_URL = 'https://api.freeastroapi.com';
+const { notifyDailyCreditsExhausted } = require('./telegramAlerts');
 
 class FreeAstroError extends Error {
   constructor(message, options = {}) {
@@ -82,6 +83,7 @@ async function request(path, options = {}) {
     }
   });
 
+  await maybeNotifyCreditsExhausted(path, response);
   const data = await parseJson(response);
 
   if (!response.ok) {
@@ -103,6 +105,7 @@ async function requestBinary(path, options = {}) {
     }
   });
 
+  await maybeNotifyCreditsExhausted(path, response);
   const buffer = Buffer.from(await response.arrayBuffer());
 
   if (!response.ok) {
@@ -125,6 +128,24 @@ async function requestBinary(path, options = {}) {
     buffer,
     contentType: response.headers.get('content-type') || 'application/octet-stream'
   };
+}
+
+async function maybeNotifyCreditsExhausted(path, response) {
+  const remainingHeader = response.headers.get('x-ratelimit-remaining');
+  const resetHeader = response.headers.get('x-ratelimit-reset');
+  const remaining = remainingHeader === null ? null : Number(remainingHeader);
+  const isDepleted = response.status === 429 || (Number.isFinite(remaining) && remaining <= 0);
+
+  if (!isDepleted) {
+    return;
+  }
+
+  await notifyDailyCreditsExhausted({
+    endpoint: path,
+    remaining: Number.isFinite(remaining) ? remaining : null,
+    resetAt: resetHeader,
+    status: response.status
+  });
 }
 
 function buildQuery(params) {

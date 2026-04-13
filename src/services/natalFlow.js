@@ -2,12 +2,31 @@ const { setActiveFlow, clearActiveFlow } = require('../state/chatState');
 
 const sessions = new Map();
 
+function resolveIdentity(identity) {
+  if (identity && typeof identity === 'object') {
+    return {
+      channel: String(identity.channel || 'telegram'),
+      chatId: String(identity.chatId || identity.userId || 'unknown')
+    };
+  }
+
+  return {
+    channel: 'telegram',
+    chatId: String(identity)
+  };
+}
+
+function resolveSessionKey(identity) {
+  const normalized = resolveIdentity(identity);
+  return `${normalized.channel}:${normalized.chatId}`;
+}
+
 function getSession(chatId) {
-  return sessions.get(String(chatId));
+  return sessions.get(resolveSessionKey(chatId));
 }
 
 function setSession(chatId, session) {
-  sessions.set(String(chatId), session);
+  sessions.set(resolveSessionKey(chatId), session);
   setActiveFlow(chatId, {
     name: 'natal',
     step: session.step
@@ -15,7 +34,7 @@ function setSession(chatId, session) {
 }
 
 function clearSession(chatId) {
-  sessions.delete(String(chatId));
+  sessions.delete(resolveSessionKey(chatId));
   clearActiveFlow(chatId);
 }
 

@@ -2,6 +2,27 @@ const MAX_HISTORY_ITEMS = 12;
 
 const chats = new Map();
 
+function resolveIdentity(identity) {
+  if (identity && typeof identity === 'object') {
+    return {
+      channel: String(identity.channel || 'telegram'),
+      userId: identity.userId ? String(identity.userId) : null,
+      chatId: identity.chatId ? String(identity.chatId) : null
+    };
+  }
+
+  return {
+    channel: 'telegram',
+    userId: null,
+    chatId: String(identity)
+  };
+}
+
+function resolveStateKey(identity) {
+  const normalized = resolveIdentity(identity);
+  return `${normalized.channel}:${normalized.chatId || normalized.userId || 'unknown'}`;
+}
+
 function normalizeAngleKey(angle) {
   return String(angle || '').trim().toLowerCase();
 }
@@ -14,15 +35,19 @@ function humanizeIdentifier(value) {
     .join(' ');
 }
 
-function createDefaultState(chatId) {
+function createDefaultState(identity) {
+  const normalized = resolveIdentity(identity);
   return {
-    chatId: String(chatId),
+    channel: normalized.channel,
+    userId: normalized.userId,
+    chatId: normalized.chatId,
     natalProfile: null,
     rawNatalPayload: null,
     history: [],
     activeFlow: null,
     lastToolResults: [],
     pendingQuestion: null,
+    choiceMap: {},
     uiCache: {
       aspects: [],
       planets: []
@@ -30,14 +55,19 @@ function createDefaultState(chatId) {
   };
 }
 
-function getChatState(chatId) {
-  const key = String(chatId);
+function getChatState(identity) {
+  const key = resolveStateKey(identity);
+  const normalized = resolveIdentity(identity);
 
   if (!chats.has(key)) {
-    chats.set(key, createDefaultState(chatId));
+    chats.set(key, createDefaultState(identity));
   }
 
-  return chats.get(key);
+  const state = chats.get(key);
+  state.channel = normalized.channel;
+  state.userId = normalized.userId;
+  state.chatId = normalized.chatId;
+  return state;
 }
 
 function setActiveFlow(chatId, activeFlow) {
@@ -82,6 +112,10 @@ function setUiCache(chatId, cache) {
   };
 }
 
+function getUiCache(chatId) {
+  return getChatState(chatId).uiCache;
+}
+
 function setPendingQuestion(chatId, question) {
   const state = getChatState(chatId);
   state.pendingQuestion = question ? String(question) : null;
@@ -92,6 +126,15 @@ function consumePendingQuestion(chatId) {
   const question = state.pendingQuestion;
   state.pendingQuestion = null;
   return question;
+}
+
+function setChoiceMap(chatId, choiceMap) {
+  const state = getChatState(chatId);
+  state.choiceMap = choiceMap && typeof choiceMap === 'object' ? { ...choiceMap } : {};
+}
+
+function getChoiceMap(chatId) {
+  return getChatState(chatId).choiceMap || {};
 }
 
 function getAllInterpretationItems(payload) {
@@ -221,9 +264,13 @@ function setNatalProfile(chatId, rawNatalPayload, cityLabel) {
 module.exports = {
   clearActiveFlow,
   consumePendingQuestion,
+  getChoiceMap,
   getChatState,
+  getUiCache,
   pushHistory,
+  resolveIdentity,
   setActiveFlow,
+  setChoiceMap,
   setLastToolResults,
   setNatalProfile,
   setPendingQuestion,

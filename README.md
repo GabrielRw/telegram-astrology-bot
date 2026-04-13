@@ -1,13 +1,14 @@
-# Astrology Telegram Starter Kit
+# Astrology Messaging Starter Kit
 
 Build your astrology bot in 5 minutes.
 
-A production-ready open-source Telegram bot starter built with Node.js, Telegraf, and FreeAstroApi. The project is intentionally small, readable, and easy to fork, while still showing real-world API usage:
+A production-ready open-source astrology bot starter built with Node.js, Telegraf, Meta WhatsApp Cloud API, and FreeAstroApi. The project is intentionally small, readable, and easy to fork, while still showing real-world API usage:
 
 - sign-based daily horoscope
 - guided natal chart intake
 - natal chart image generation
 - interpretation-on-demand with Telegram buttons
+- shared messaging core with Telegram and WhatsApp adapters
 - conversational astrologer mode grounded in cached natal data
 - Gemini + FreeAstro MCP integration for follow-up chart questions
 
@@ -17,7 +18,7 @@ This project is meant to be a developer acquisition tool for FreeAstroApi.
 
 It shows how to:
 
-- structure a Telegram bot cleanly
+- structure a messaging bot cleanly
 - isolate API logic in a service layer
 - handle multi-step user input
 - call multiple astrology endpoints in a realistic flow
@@ -27,6 +28,7 @@ It shows how to:
 
 - `/start` welcome message with quick command guidance
 - `/daily <sign>` for a sign-based daily forecast
+- shared conversation and natal-intake core across channels
 - `/natal` guided questionnaire for date, time, and city
 - direct plain-language onboarding that can start natal intake from a normal chat message
 - natal chart PNG generated from FreeAstroApi
@@ -35,6 +37,7 @@ It shows how to:
 - top 5 major natal aspects returned with interpretation buttons
 - plain-language astrologer chat after `/natal`
 - cached chart tools plus FreeAstro MCP-backed follow-up answers
+- WhatsApp Meta Cloud API webhook support with conversation-first UX
 - support for unknown birth time
 - clean env-based setup with no hardcoded secrets
 
@@ -151,6 +154,7 @@ FREEASTRO_API_KEY=your_freeastro_api_key
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemma-4-31b-it
 FREEASTRO_MCP_URL=https://api.freeastroapi.com/mcp
+TELEGRAM_ALERT_CHAT_ID=
 ```
 
 ### 4. Run
@@ -182,7 +186,7 @@ What is my rising sign?
 
 ## Deploy On Render
 
-This repo now supports **Telegram webhooks** for Render Web Services.
+This repo now supports Telegram and WhatsApp webhooks in one Node service.
 
 Deployment mode:
 
@@ -210,8 +214,13 @@ FREEASTRO_API_KEY=your_freeastro_api_key
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemma-4-31b-it
 FREEASTRO_MCP_URL=https://api.freeastroapi.com/mcp
+TELEGRAM_ALERT_CHAT_ID=
 WEBHOOK_BASE_URL=https://your-service-name.onrender.com
 WEBHOOK_PATH=/telegram/webhook
+WHATSAPP_ACCESS_TOKEN=your_meta_whatsapp_access_token
+WHATSAPP_PHONE_NUMBER_ID=your_whatsapp_phone_number_id
+WHATSAPP_VERIFY_TOKEN=your_whatsapp_verify_token
+WHATSAPP_WEBHOOK_PATH=/whatsapp/webhook
 ```
 
 ### Important
@@ -230,8 +239,13 @@ WEBHOOK_PATH=/telegram/webhook
 | `GEMINI_API_KEY` | Chat mode | Gemini API key for conversational astrologer mode |
 | `GEMINI_MODEL` | Optional | Gemini model id, defaults to `gemma-4-31b-it` |
 | `FREEASTRO_MCP_URL` | Optional | FreeAstro MCP endpoint, defaults to `https://api.freeastroapi.com/mcp` |
+| `TELEGRAM_ALERT_CHAT_ID` | Optional | Telegram chat id that receives an owner alert when FreeAstro daily credits are exhausted |
 | `WEBHOOK_BASE_URL` | Render only | Public HTTPS base URL for webhook mode, for example `https://your-service-name.onrender.com` |
 | `WEBHOOK_PATH` | Optional | Webhook route path, defaults to `/telegram/webhook` |
+| `WHATSAPP_ACCESS_TOKEN` | WhatsApp only | Meta Cloud API access token |
+| `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp only | Meta Cloud API phone number id |
+| `WHATSAPP_VERIFY_TOKEN` | WhatsApp only | Verify token used for Meta webhook challenge |
+| `WHATSAPP_WEBHOOK_PATH` | Optional | Webhook route path, defaults to `/whatsapp/webhook` |
 
 ## Commands
 
@@ -315,12 +329,15 @@ Application entrypoint:
 
 ### `src/commands/*`
 
-Thin Telegram handlers:
+Thin channel handlers:
 
-- `start.js` handles onboarding
-- `daily.js` handles sign forecast requests
-- `natal.js` handles the guided natal flow, chart image, and interpretation buttons
-- `chat.js` handles plain-text astrologer conversations after a natal profile exists
+- `start.js`, `daily.js`, `natal.js`, and `chat.js` bind Telegram events to the shared controller
+- WhatsApp webhook handling uses the same shared controller through a Meta adapter
+
+### Shared runtime
+
+- one service can expose both `/telegram/webhook` and `/whatsapp/webhook`
+- Telegram can still run in polling mode locally when webhook mode is not enabled
 
 ### `src/services/freeastro.js`
 
