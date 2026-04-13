@@ -129,8 +129,10 @@ async function finishNatalFlow(ctx, session, cityMatch) {
 
     const cityLabel = `${cityMatch.name}, ${cityMatch.country}`;
     setNatalProfile(ctx.chat.id, result.value, cityLabel);
+    const pendingQuestion = consumePendingQuestion(ctx.chat.id);
+    const shouldSendNatalReading = session.source === 'command' && !pendingQuestion;
 
-    if (chart.status === 'fulfilled') {
+    if (shouldSendNatalReading && chart.status === 'fulfilled') {
       await ctx.replyWithPhoto(
         {
           source: chart.value.buffer,
@@ -142,48 +144,57 @@ async function finishNatalFlow(ctx, session, cityMatch) {
       );
     }
 
+    if (shouldSendNatalReading) {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        loadingMessage.message_id,
+        undefined,
+        formatNatalMessage(result.value, cityLabel)
+      );
+
+      const planetButtons = getPlanetPlacementButtonsData(result.value);
+      setPlanetCache(ctx.chat.id, planetButtons);
+
+      for (const [index, planet] of planetButtons.entries()) {
+        await ctx.reply(
+          planet.summary,
+          Markup.inlineKeyboard([
+            [Markup.button.callback('Get interpretation', `NATAL_PLANET_${index}`)]
+          ])
+        );
+      }
+
+      const aspectButtons = getMajorAspectButtonsData(result.value);
+      setAspectCache(ctx.chat.id, aspectButtons);
+      setUiCache(ctx.chat.id, {
+        aspects: aspectButtons,
+        planets: planetButtons
+      });
+
+      if (aspectButtons.length > 0) {
+        for (const [index, aspect] of aspectButtons.entries()) {
+          await ctx.reply(
+            aspect.summary,
+            Markup.inlineKeyboard([
+              [Markup.button.callback('Get interpretation', `NATAL_ASPECT_${index}`)]
+            ])
+          );
+        }
+      } else {
+        await ctx.reply('No major aspects were returned for this natal chart.');
+      }
+      return;
+    }
+
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       loadingMessage.message_id,
       undefined,
-      formatNatalMessage(result.value, cityLabel)
+      'Birth details saved.'
     );
 
-    const planetButtons = getPlanetPlacementButtonsData(result.value);
-    setPlanetCache(ctx.chat.id, planetButtons);
-
-    for (const [index, planet] of planetButtons.entries()) {
-      await ctx.reply(
-        planet.summary,
-        Markup.inlineKeyboard([
-          [Markup.button.callback('Get interpretation', `NATAL_PLANET_${index}`)]
-        ])
-      );
-    }
-
-    const aspectButtons = getMajorAspectButtonsData(result.value);
-    setAspectCache(ctx.chat.id, aspectButtons);
-    setUiCache(ctx.chat.id, {
-      aspects: aspectButtons,
-      planets: planetButtons
-    });
-
-    if (aspectButtons.length > 0) {
-      for (const [index, aspect] of aspectButtons.entries()) {
-        await ctx.reply(
-          aspect.summary,
-          Markup.inlineKeyboard([
-            [Markup.button.callback('Get interpretation', `NATAL_ASPECT_${index}`)]
-          ])
-        );
-      }
-    } else {
-      await ctx.reply('No major aspects were returned for this natal chart.');
-    }
-
-    const pendingQuestion = consumePendingQuestion(ctx.chat.id);
-
     if (!pendingQuestion) {
+      await ctx.reply('Your chart is ready. Ask your question directly.');
       return;
     }
 
