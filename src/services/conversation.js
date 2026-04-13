@@ -44,8 +44,9 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
 
 function normalizeAssistantText(text) {
   return String(text || '')
-    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
     .replace(/__+/g, '')
+    .replace(/`+/g, '')
     .trim();
 }
 

@@ -207,10 +207,10 @@ async function finishNatalFlow(ctx, session, cityMatch) {
         ctx.chat.id,
         thinkingMessage.message_id,
         undefined,
-        `Your question: ${pendingQuestion}\n\n${chunks[0]}`
+        `Your question: ${pendingQuestion}`
       );
 
-      for (const chunk of chunks.slice(1)) {
+      for (const chunk of chunks) {
         await ctx.reply(chunk);
       }
     } catch (error) {

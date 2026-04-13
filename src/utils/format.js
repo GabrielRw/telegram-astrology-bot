@@ -396,6 +396,8 @@ function splitMessage(text, maxLength = 3500) {
 function splitConversationReply(text, maxWords = 80, maxLength = 1200) {
   const normalized = String(text || '')
     .replace(/\r/g, '')
+    .replace(/\*/g, '')
+    .replace(/`+/g, '')
     .trim();
 
   if (!normalized) {
@@ -410,34 +412,59 @@ function splitConversationReply(text, maxWords = 80, maxLength = 1200) {
   const chunks = [];
 
   for (const paragraph of paragraphs) {
-    const words = paragraph.split(/\s+/).filter(Boolean);
+    const sentences = paragraph
+      .split(/(?<=[.!?])\s+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
 
-    if (words.length <= maxWords && paragraph.length <= maxLength) {
-      chunks.push(paragraph);
-      continue;
-    }
+    let current = '';
 
-    let currentWords = [];
+    for (const sentence of sentences) {
+      const candidate = current ? `${current} ${sentence}` : sentence;
+      const candidateWords = candidate.split(/\s+/).filter(Boolean).length;
 
-    for (const word of words) {
-      const candidateWords = [...currentWords, word];
-      const candidateText = candidateWords.join(' ');
+      if (candidateWords <= maxWords && candidate.length <= maxLength) {
+        current = candidate;
+        continue;
+      }
 
-      if (candidateWords.length > maxWords || candidateText.length > maxLength) {
-        if (currentWords.length > 0) {
-          chunks.push(currentWords.join(' '));
-          currentWords = [word];
+      if (current) {
+        chunks.push(current);
+        current = '';
+      }
+
+      const sentenceWords = sentence.split(/\s+/).filter(Boolean);
+
+      if (sentenceWords.length <= maxWords && sentence.length <= maxLength) {
+        current = sentence;
+        continue;
+      }
+
+      let partial = [];
+
+      for (const word of sentenceWords) {
+        const candidatePartial = [...partial, word].join(' ');
+
+        if (partial.length >= maxWords || candidatePartial.length > maxLength) {
+          if (partial.length > 0) {
+            chunks.push(partial.join(' '));
+            partial = [word];
+          } else {
+            chunks.push(word.slice(0, maxLength));
+            partial = [];
+          }
         } else {
-          chunks.push(candidateText.slice(0, maxLength));
-          currentWords = [];
+          partial.push(word);
         }
-      } else {
-        currentWords = candidateWords;
+      }
+
+      if (partial.length > 0) {
+        current = partial.join(' ');
       }
     }
 
-    if (currentWords.length > 0) {
-      chunks.push(currentWords.join(' '));
+    if (current) {
+      chunks.push(current);
     }
   }
 
