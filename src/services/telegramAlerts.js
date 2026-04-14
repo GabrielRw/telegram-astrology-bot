@@ -10,14 +10,14 @@ function getAlertChatId() {
   return String(process.env.TELEGRAM_ALERT_CHAT_ID || '').trim();
 }
 
-async function notifyDailyCreditsExhausted({ endpoint, remaining, resetAt, status }) {
+async function notifyApiCreditsExhausted({ endpoint, remaining, resetAt, status }) {
   const chatId = getAlertChatId();
   if (!telegram || !chatId) {
     return;
   }
 
   const resetKey = resetAt || 'unknown-reset';
-  const alertKey = `daily-credits-exhausted:${resetKey}`;
+  const alertKey = `freeastro-credits-exhausted:${resetKey}`;
   if (sentAlertKeys.has(alertKey)) {
     return;
   }
@@ -33,7 +33,7 @@ async function notifyDailyCreditsExhausted({ endpoint, remaining, resetAt, statu
   const statusLine = status ? `Status: ${status}` : 'Status: unavailable';
 
   const message = [
-    'FreeAstro daily credits are exhausted.',
+    'FreeAstro API credits are exhausted.',
     statusLine,
     remainingLine,
     resetLine,
@@ -43,7 +43,7 @@ async function notifyDailyCreditsExhausted({ endpoint, remaining, resetAt, statu
   try {
     await telegram.sendMessage(chatId, message);
   } catch (error) {
-    console.error('Failed to send Telegram daily credit alert:', error.message);
+    console.error('Failed to send Telegram FreeAstro credit alert:', error.message);
     sentAlertKeys.delete(alertKey);
   }
 }
@@ -89,7 +89,7 @@ async function notifyOperationalError({ scope, error, meta }) {
 }
 
 module.exports = {
-  notifyDailyCreditsExhausted,
+  notifyApiCreditsExhausted,
   notifyOperationalError,
   setTelegramNotifier
 };

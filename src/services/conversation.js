@@ -2,6 +2,14 @@ const { detectConversationIntent } = require('../config/conversationIntents');
 const mcpService = require('./freeastroMcp');
 const { createLocalFunctionDeclarations, runFunctionCallingLoop } = require('./gemini');
 const { getChatState, pushHistory, setLastToolResults } = require('../state/chatState');
+const { getLocale } = require('./locale');
+
+const LOCALE_INSTRUCTION = {
+  en: 'English',
+  fr: 'French',
+  de: 'German',
+  es: 'Spanish'
+};
 
 function findPlanet(profile, planet) {
   const key = String(planet || '').trim().toLowerCase();
@@ -18,6 +26,7 @@ function findAngle(profile, angle) {
 
 function buildSystemInstruction(chatState, mcpStatus, intent) {
   const profile = chatState.natalProfile;
+  const locale = getLocale(chatState);
   const relocationRules = intent.id === 'relocation'
     ? [
         'For relocation and astrocartography questions, prefer MCP astrocartography tools over generic natal interpretation.',
@@ -30,7 +39,8 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
     : [];
 
   return [
-    'You are a concise professional astrologer answering natal-chart questions in Telegram chat.',
+    'You are a concise professional astrologer answering natal-chart questions in a messaging chat.',
+    `Always answer in ${LOCALE_INSTRUCTION[locale] || 'English'}.`,
     'Write in plain text only. Do not use Markdown emphasis, especially **.',
     'Keep each response block short. Aim for multiple small blocks, with no block over 80 words.',
     'Do not repeat the same point twice in one answer, even in different wording.',
@@ -207,6 +217,7 @@ function createLocalToolExecutor(chatState) {
 async function answerConversation(chatId, userText) {
   const chatState = getChatState(chatId);
   const intent = detectConversationIntent(userText, chatState.history);
+  const locale = getLocale(chatState);
 
   if (!process.env.GEMINI_API_KEY) {
     throw new Error('Missing GEMINI_API_KEY. Conversational mode is disabled.');
@@ -214,7 +225,12 @@ async function answerConversation(chatId, userText) {
 
   if (!chatState.natalProfile) {
     return {
-      text: 'I need your birth details before I can answer personal astrology questions from your chart.',
+      text: {
+        en: 'I need your birth details before I can answer personal astrology questions from your chart.',
+        fr: 'J’ai besoin de vos données de naissance avant de pouvoir répondre à des questions astrologiques personnelles à partir de votre thème.',
+        de: 'Ich brauche deine Geburtsdaten, bevor ich persönliche astrologische Fragen aus deinem Horoskop beantworten kann.',
+        es: 'Necesito tus datos de nacimiento antes de poder responder preguntas astrológicas personales a partir de tu carta.'
+      }[locale] || 'I need your birth details before I can answer personal astrology questions from your chart.',
       usedTools: [],
       intent: intent.id
     };

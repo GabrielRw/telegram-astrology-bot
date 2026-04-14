@@ -5,10 +5,19 @@ const INTENTS = [
       /\brelocat/i,
       /\bmove\b/i,
       /\bmoving\b/i,
+      /\bd[ée]m[ée]nag/i,
+      /\bumzieh/i,
+      /\bmudar/i,
       /\blive\b.*\b(france|paris|lyon|marseille|bordeaux|lille|toulouse|nice)\b/i,
       /\bastrocart/i,
       /\bcity\b/i,
-      /\bwhere should i\b/i
+      /\bville\b/i,
+      /\bstadt\b/i,
+      /\bciudad\b/i,
+      /\bwhere should i\b/i,
+      /\bo[uù] devrais-je\b/i,
+      /\bwo sollte ich\b/i,
+      /\bd[óo]nde deber[ií]a\b/i
     ],
     prefersCachedTools: ['get_cached_natal_summary', 'get_profile_completeness'],
     prefersMcpTools: ['mcp'],
@@ -16,35 +25,35 @@ const INTENTS = [
   },
   {
     id: 'rising_sign',
-    matchers: [/rising sign/i, /\bascendant\b/i, /\basc\b/i],
+    matchers: [/rising sign/i, /\bascendant\b/i, /\basc\b/i, /\bsigne ascendant\b/i, /\baszendent\b/i, /\bascendente\b/i],
     prefersCachedTools: ['get_cached_angle_info', 'get_profile_completeness'],
     prefersMcpTools: [],
     guidance: 'Answer from cached ascendant data first. If birth time is unknown, say Rising cannot be determined reliably.'
   },
   {
     id: 'planet_placement',
-    matchers: [/\b(sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron|lilith)\b/i],
+    matchers: [/\b(sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron|lilith|soleil|lune|mercure|v[ée]nus|soleil|mond|merkur|sonne|venere|sol|luna)\b/i],
     prefersCachedTools: ['get_cached_planet_placement', 'get_profile_completeness'],
     prefersMcpTools: [],
     guidance: 'Use cached placement and linked sign/house interpretation before any external tool.'
   },
   {
     id: 'major_aspects',
-    matchers: [/\baspect/i, /\bstrongest\b/i, /\bmajor aspects?\b/i],
+    matchers: [/\baspect/i, /\bstrongest\b/i, /\bmajor aspects?\b/i, /\baspect le plus fort\b/i, /\bst[äa]rkster aspekt\b/i, /\baspecto m[áa]s fuerte\b/i],
     prefersCachedTools: ['get_cached_major_aspects'],
     prefersMcpTools: [],
     guidance: 'Prefer cached major aspects sorted by orb.'
   },
   {
     id: 'house_question',
-    matchers: [/\bhouse\b/i, /\b7th\b/i, /\b10th\b/i, /\b4th\b/i],
+    matchers: [/\bhouse\b/i, /\b7th\b/i, /\b10th\b/i, /\b4th\b/i, /\bmaison\b/i, /\bhaus\b/i, /\bcasa\b/i],
     prefersCachedTools: ['get_cached_house_info', 'get_profile_completeness'],
     prefersMcpTools: [],
     guidance: 'Use cached natal house data when the user asks about a house meaning.'
   },
   {
     id: 'chart_summary',
-    matchers: [/\bsummarize\b/i, /\boverall\b/i, /\bmy chart\b/i, /\bbig picture\b/i],
+    matchers: [/\bsummarize\b/i, /\boverall\b/i, /\bmy chart\b/i, /\bbig picture\b/i, /\br[ée]sum/i, /\bzusammenfass/i, /\bresume?n\b/i, /\bth[èe]me\b/i, /\bhoroskop\b/i, /\bcarta\b/i],
     prefersCachedTools: ['get_cached_natal_summary', 'get_cached_major_aspects', 'get_profile_completeness'],
     prefersMcpTools: [],
     guidance: 'Synthesize from cached natal summary, major aspects, and stellium data.'
@@ -59,7 +68,7 @@ const INTENTS = [
 ];
 
 function looksLikeRelocationReply(value) {
-  return /^(romance|love|career|work|health|spiritual|spirituality|home|family)$/i.test(value.trim());
+  return /^(romance|love|career|work|health|spiritual|spirituality|home|family|amour|carri[èe]re|sant[ée]|spirituel|foyer|famille|liebe|karriere|gesundheit|spirituell|zuhause|familie|amor|carrera|salud|espiritual|hogar)$/i.test(value.trim());
 }
 
 function historyImpliesRelocation(history) {
@@ -68,7 +77,7 @@ function historyImpliesRelocation(history) {
     .map((item) => String(item?.text || ''))
     .join(' ');
 
-  return /\brelocat|\bastrocart|\bwhere should i relocate|\bwhich city|\bmoving to france|\bprimary goal\b/i.test(recentText);
+  return /\brelocat|\bastrocart|\bwhere should i relocate|\bwhich city|\bmoving to france|\bprimary goal\b|\bo[uù] devrais-je|\bquelle ville\b|\bumzieh|\bwelche stadt\b|\bd[óo]nde deber[ií]a|\bqu[ée] ciudad\b/i.test(recentText);
 }
 
 function detectConversationIntent(text, history = []) {

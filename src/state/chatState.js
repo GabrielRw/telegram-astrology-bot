@@ -42,6 +42,9 @@ function createDefaultState(identity) {
     channel: normalized.channel,
     userId: normalized.userId,
     chatId: normalized.chatId,
+    locale: 'en',
+    localeSource: 'default',
+    platformLocaleHint: null,
     natalProfile: null,
     rawNatalPayload: null,
     natalRequestPayload: null,
@@ -226,7 +229,7 @@ function getAspectInterpretationKeys(aspect) {
   ];
 }
 
-function normalizeNatalProfile(payload, cityLabel) {
+function normalizeNatalProfile(payload, cityLabel, options = {}) {
   const interpretationMap = buildInterpretationMap(payload);
   const planets = Array.isArray(payload?.planets) ? payload.planets : [];
   const majorAspects = (Array.isArray(payload?.aspects) ? payload.aspects : [])
@@ -255,6 +258,7 @@ function normalizeNatalProfile(payload, cityLabel) {
   return {
     name: payload?.subject?.name || 'Chart User',
     city: cityLabel,
+    country: options.birthCountry || payload?.subject?.location?.country || null,
     birthDatetime: payload?.subject?.datetime || null,
     birthLocation: payload?.subject?.location || null,
     timeKnown,
@@ -288,7 +292,7 @@ function setNatalProfile(chatId, rawNatalPayload, cityLabel, options = {}) {
   state.rawNatalPayload = rawNatalPayload;
   state.natalRequestPayload = options.natalRequestPayload || null;
   state.chartRequestPayload = options.chartRequestPayload || null;
-  state.natalProfile = normalizeNatalProfile(rawNatalPayload, cityLabel);
+  state.natalProfile = normalizeNatalProfile(rawNatalPayload, cityLabel, options);
   notifyPersistence(chatId);
   return state.natalProfile;
 }
@@ -340,6 +344,7 @@ module.exports = {
   setChoiceMap,
   setLastToolResults,
   setNatalProfile,
+  notifyPersistence,
   setPendingQuestion,
   setPersistenceHook,
   setUiCache

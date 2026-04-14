@@ -4,8 +4,8 @@ const http = require('node:http');
 const { createHash } = require('node:crypto');
 const { Telegraf } = require('telegraf');
 const registerStartCommand = require('./commands/start');
-const registerDailyCommand = require('./commands/daily');
 const registerNatalCommand = require('./commands/natal');
+const registerLanguageCommand = require('./commands/language');
 const registerProfileCommand = require('./commands/profile');
 const registerChatCommand = require('./commands/chat');
 const { getWhatsappPaths } = require('./channels/whatsapp/api');
@@ -186,8 +186,8 @@ async function main() {
   persistence.initialize();
 
   registerStartCommand(bot);
-  registerDailyCommand(bot);
   registerNatalCommand(bot);
+  registerLanguageCommand(bot);
   registerProfileCommand(bot);
   registerChatCommand(bot);
 

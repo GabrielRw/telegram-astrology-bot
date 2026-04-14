@@ -22,23 +22,54 @@ function getModelName() {
   return process.env.GEMINI_MODEL || 'gemma-4-31b-it';
 }
 
-function getGeminiErrorMessage(error) {
+function getLocalizedGeminiMessage(locale, key, fallback) {
+  const messages = {
+    invalidKey: {
+      en: 'Gemini rejected GEMINI_API_KEY. Check or rotate the key.',
+      fr: 'Gemini a rejeté GEMINI_API_KEY. Vérifiez la clé ou faites-la tourner.',
+      de: 'Gemini hat GEMINI_API_KEY abgelehnt. Prüfe oder rotiere den Schlüssel.',
+      es: 'Gemini rechazó GEMINI_API_KEY. Revisa o rota la clave.'
+    },
+    modelUnavailable: {
+      en: `Gemini model "${getModelName()}" is unavailable. Set GEMINI_MODEL to a valid model ID.`,
+      fr: `Le modèle Gemini "${getModelName()}" est indisponible. Définissez GEMINI_MODEL avec un identifiant valide.`,
+      de: `Das Gemini-Modell "${getModelName()}" ist nicht verfügbar. Setze GEMINI_MODEL auf eine gültige Modell-ID.`,
+      es: `El modelo Gemini "${getModelName()}" no está disponible. Define GEMINI_MODEL con un identificador válido.`
+    },
+    quota: {
+      en: 'Gemini quota is exhausted right now. Try again later.',
+      fr: 'Le quota Gemini est épuisé pour le moment. Réessayez plus tard.',
+      de: 'Das Gemini-Kontingent ist gerade aufgebraucht. Versuche es später erneut.',
+      es: 'La cuota de Gemini está agotada ahora mismo. Inténtalo más tarde.'
+    },
+    internal: {
+      en: 'Gemini had a temporary internal error. Try the question again.',
+      fr: 'Gemini a rencontré une erreur interne temporaire. Réessayez la question.',
+      de: 'Gemini hatte einen vorübergehenden internen Fehler. Versuche die Frage erneut.',
+      es: 'Gemini tuvo un error interno temporal. Intenta la pregunta de nuevo.'
+    }
+  };
+
+  return messages[key]?.[locale] || fallback;
+}
+
+function getGeminiErrorMessage(error, locale = 'en') {
   const message = String(error?.message || '');
 
   if (message.includes('API key not valid')) {
-    return 'Gemini rejected GEMINI_API_KEY. Check or rotate the key.';
+    return getLocalizedGeminiMessage(locale, 'invalidKey', 'Gemini rejected GEMINI_API_KEY. Check or rotate the key.');
   }
 
   if (message.includes('not found for API version') || message.includes('is not found')) {
-    return `Gemini model "${getModelName()}" is unavailable. Set GEMINI_MODEL to a valid model ID.`;
+    return getLocalizedGeminiMessage(locale, 'modelUnavailable', `Gemini model "${getModelName()}" is unavailable. Set GEMINI_MODEL to a valid model ID.`);
   }
 
   if (message.includes('quota') || message.includes('RESOURCE_EXHAUSTED')) {
-    return 'Gemini quota is exhausted right now. Try again later.';
+    return getLocalizedGeminiMessage(locale, 'quota', 'Gemini quota is exhausted right now. Try again later.');
   }
 
   if (message.includes('"status":"INTERNAL"') || message.includes('Internal error encountered')) {
-    return 'Gemini had a temporary internal error. Try the question again.';
+    return getLocalizedGeminiMessage(locale, 'internal', 'Gemini had a temporary internal error. Try the question again.');
   }
 
   return message || 'Gemini request failed.';

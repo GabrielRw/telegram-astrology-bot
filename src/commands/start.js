@@ -9,9 +9,23 @@ module.exports = function registerStartCommand(bot) {
     );
   });
 
-  bot.action(ACTIONS.HELP_DAILY, async (ctx) => {
+  bot.action(ACTIONS.SHOW_MORE_QUESTIONS, async (ctx) => {
     await handleIncomingAction(
-      createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.HELP_DAILY }),
+      createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.SHOW_MORE_QUESTIONS }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
+  bot.action(/^STARTER_QUESTION_(\d+)$/, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
+  bot.action(/^FULL_QUESTION_(\d+)$/, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
       createTelegramChannelApi(ctx)
     );
   });

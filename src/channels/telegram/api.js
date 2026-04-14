@@ -69,6 +69,7 @@ function createTelegramEvent(ctx, overrides = {}) {
     channel: 'telegram',
     userId: String(ctx.from?.id || ctx.chat?.id || ''),
     chatId: String(ctx.chat?.id || ''),
+    localeHint: overrides.localeHint !== undefined ? overrides.localeHint : (ctx.from?.language_code || null),
     type: overrides.type || 'text',
     text: overrides.text !== undefined ? overrides.text : String(ctx.message?.text || ''),
     actionId: overrides.actionId || null,

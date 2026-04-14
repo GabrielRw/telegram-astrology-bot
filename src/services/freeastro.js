@@ -1,5 +1,5 @@
 const API_BASE_URL = 'https://api.freeastroapi.com';
-const { notifyDailyCreditsExhausted } = require('./telegramAlerts');
+const { notifyApiCreditsExhausted } = require('./telegramAlerts');
 
 class FreeAstroError extends Error {
   constructor(message, options = {}) {
@@ -140,7 +140,7 @@ async function maybeNotifyCreditsExhausted(path, response) {
     return;
   }
 
-  await notifyDailyCreditsExhausted({
+  await notifyApiCreditsExhausted({
     endpoint: path,
     remaining: Number.isFinite(remaining) ? remaining : null,
     resetAt: resetHeader,
@@ -182,16 +182,6 @@ async function searchCity(query) {
   return results[0];
 }
 
-async function getDaily(sign) {
-  const qs = buildQuery({
-    sign,
-    date: 'today',
-    tz_str: 'AUTO'
-  });
-
-  return request(`/api/v2/horoscope/daily/sign?${qs}`);
-}
-
 async function getNatal(data) {
   return request('/api/v1/natal/calculate', {
     method: 'POST',
@@ -214,7 +204,6 @@ async function getNatalChart(data) {
 
 module.exports = {
   FreeAstroError,
-  getDaily,
   getNatalChart,
   getNatal,
   searchCities,

@@ -6,8 +6,10 @@ const {
 } = require('./api');
 const {
   handleStart,
+  handleProfile,
   handleIncomingAction,
-  handleIncomingText
+  handleIncomingText,
+  promptForLanguage
 } = require('../../core/controller');
 const eventQueue = require('../../services/eventQueue');
 const { reportError } = require('../../services/logger');
@@ -51,11 +53,16 @@ async function handleWhatsAppVerification(req, res) {
 
 async function processWhatsAppEvent(event) {
   const channelApi = createWhatsAppChannelApi();
+  const text = String(event.text || '').trim().toLowerCase();
 
   if (event.type === 'action') {
     await handleIncomingAction(event, channelApi);
-  } else if (event.type === 'text' && String(event.text || '').trim().toLowerCase() === 'start') {
+  } else if (event.type === 'text' && (text === 'start' || text === '/start')) {
     await handleStart(event, channelApi);
+  } else if (event.type === 'text' && text === '/profile') {
+    await handleProfile(event, channelApi);
+  } else if (event.type === 'text' && text === '/language') {
+    await promptForLanguage(event, channelApi);
   } else if (event.type === 'text') {
     await handleIncomingText(event, channelApi);
   }

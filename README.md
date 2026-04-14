@@ -4,12 +4,12 @@ Build your astrology bot in 5 minutes.
 
 A production-ready open-source astrology bot starter built with Node.js, Telegraf, Meta WhatsApp Cloud API, and FreeAstroApi. The project is intentionally small, readable, and easy to fork, while still showing real-world API usage:
 
-- sign-based daily horoscope
 - guided birth-data intake
 - natal chart image generation
 - shared messaging core with Telegram and WhatsApp adapters
 - conversational astrologer mode grounded in cached natal data
 - Gemini + FreeAstro MCP integration for follow-up chart questions
+- locale-aware UX in English, French, German, and Spanish
 
 ## Why This Repo Exists
 
@@ -26,8 +26,8 @@ It shows how to:
 ## Features
 
 - `/start` guided onboarding and re-entry
-- `/daily <sign>` for a sign-based daily forecast
 - `/profile` to inspect, update, reset, or view the saved chart
+- `/language` to switch the bot UI and answer language
 - shared conversation and natal-intake core across channels
 - direct plain-language onboarding that can start natal intake from a normal chat message
 - natal chart PNG available on demand
@@ -39,25 +39,9 @@ It shows how to:
 - durable webhook event queue with idempotent Telegram and WhatsApp event handling
 - structured JSON logs plus Telegram error alerts
 - WhatsApp Meta Cloud API webhook support with conversation-first UX
+- locale detection from platform language, then birth-country fallback
 - support for unknown birth time
 - clean env-based setup with no hardcoded secrets
-
-## What The Bot Returns
-
-### `/daily <sign>`
-
-Uses FreeAstro's sign-wide daily endpoint and returns:
-
-- theme
-- category scores
-- moon sign and moon phase
-- lucky indicators
-- short forecast text
-
-Important:
-
-- this is a generic sign forecast
-- it is not a personalized natal/transit reading
 
 ### Guided setup
 
@@ -89,15 +73,18 @@ telegram-astrology-bot/
 │   ├── bot.js
 │   ├── commands/
 │   │   ├── chat.js
-│   │   ├── daily.js
+│   │   ├── language.js
 │   │   ├── natal.js
 │   │   ├── profile.js
 │   │   └── start.js
+│   ├── i18n/
+│   │   └── catalog.js
 │   ├── services/
 │   │   ├── conversation.js
 │   │   ├── freeastro.js
 │   │   ├── freeastroMcp.js
-│   │   └── gemini.js
+│   │   ├── gemini.js
+│   │   └── locale.js
 │   ├── state/
 │   │   └── chatState.js
 │   └── utils/
@@ -116,7 +103,7 @@ telegram-astrology-bot/
 - native `fetch`
 - dotenv
 
-No database is required for the starter kit.
+No database is required for local development. Supabase is optional for durable state in production.
 
 ## Quick Start
 
@@ -169,8 +156,8 @@ Open your bot chat and send:
 Then try:
 
 ```text
-/daily leo
 /profile
+/language
 ```
 
 Then ask a plain text question:
@@ -238,7 +225,7 @@ Before first production deploy, run the SQL in [schema.sql](/Users/gabriel/Docum
 | `FREEASTRO_MCP_URL` | Optional | FreeAstro MCP endpoint, defaults to `https://api.freeastroapi.com/mcp` |
 | `SUPABASE_URL` | Production | Supabase project URL used for durable state and event storage |
 | `SUPABASE_SERVICE_ROLE_KEY` | Production | Supabase service role key used for persistence and webhook queueing |
-| `TELEGRAM_ALERT_CHAT_ID` | Optional | Telegram chat id that receives an owner alert when FreeAstro daily credits are exhausted |
+| `TELEGRAM_ALERT_CHAT_ID` | Optional | Telegram chat id that receives owner alerts when FreeAstro API credits are exhausted or operational failures happen |
 | `WEBHOOK_BASE_URL` | Render only | Public HTTPS base URL for webhook mode, for example `https://your-service-name.onrender.com` |
 | `WEBHOOK_PATH` | Optional | Webhook route path, defaults to `/telegram/webhook` |
 | `WHATSAPP_ACCESS_TOKEN` | WhatsApp only | Meta Cloud API access token |
@@ -250,26 +237,7 @@ Before first production deploy, run the SQL in [schema.sql](/Users/gabriel/Docum
 
 ### `/start`
 
-Shows:
-
-- project intro
-- available commands
-- quick usage hints
-
-### `/daily <sign>`
-
-Examples:
-
-```text
-/daily leo
-/daily libra
-/daily scorpio
-```
-
-Input rules:
-
-- sign must be one of the 12 western zodiac signs
-- capitalization does not matter
+Starts onboarding for new users and shows localized re-entry prompts for returning users.
 
 ### `/profile`
 
@@ -278,6 +246,15 @@ Shows the saved birth details and offers:
 - update
 - reset
 - show chart
+
+### `/language`
+
+Lets the user switch between:
+
+- English
+- Français
+- Deutsch
+- Español
 
 ### Conversational chart chat
 
@@ -319,7 +296,7 @@ Application entrypoint:
 
 Thin channel handlers:
 
-- `start.js`, `daily.js`, `natal.js`, `profile.js`, and `chat.js` bind Telegram events to the shared controller
+- `start.js`, `language.js`, `natal.js`, `profile.js`, and `chat.js` bind Telegram events to the shared controller
 - WhatsApp webhook handling uses the same shared controller through a Meta adapter
 
 ### Shared runtime
@@ -363,6 +340,15 @@ Conversation orchestration:
 - cached chart tool execution
 - MCP fallback when more chart data is needed
 - history and tool-result updates
+- locale-aware Gemini response-language control
+
+### `src/services/locale.js` and `src/i18n/catalog.js`
+
+Localization:
+
+- locale resolution from manual choice, platform language, and birth country
+- translated UI copy for Telegram and WhatsApp
+- localized suggestion prompts and button labels
 
 ### `src/state/chatState.js`
 
@@ -405,21 +391,12 @@ Operational logging:
 
 Presentation helpers:
 
-- sign normalization
-- text formatting
+- natal summary formatting
 - natal aspect ranking
 - interpretation extraction
 - Telegram-safe message chunking
 
 ## FreeAstro Endpoints Used
-
-### Daily sign forecast
-
-- `GET /api/v2/horoscope/daily/sign`
-
-Used for:
-
-- `/daily <sign>`
 
 ### Geo search
 
@@ -502,7 +479,7 @@ The bot also tolerates chart-image failure separately:
 ```bash
 node --check src/bot.js
 node --check src/commands/chat.js
-node --check src/commands/daily.js
+node --check src/commands/language.js
 node --check src/commands/natal.js
 node --check src/commands/profile.js
 node --check src/commands/start.js
@@ -519,10 +496,10 @@ node --check src/utils/format.js
 1. Start the bot locally with `npm run dev`
 2. Open your bot in Telegram
 3. Send `/start`
-4. Send `/daily leo`
-5. Complete the guided intake
-6. When asked for a city, tap one of the city buttons or reply `1`, `2`, or `3`
-7. Ask a plain text chart question
+4. Complete the guided intake
+5. When asked for a city, tap one of the city buttons or reply `1`, `2`, or `3`
+6. Ask a plain text chart question
+7. Send `/language` and switch locale
 8. Send `/profile`
 9. Use `Show chart`
 
@@ -636,7 +613,6 @@ That makes it suitable as:
 
 - [FreeAstroApi Documentation](https://www.freeastroapi.com/docs)
 - [Western Natal Docs](https://www.freeastroapi.com/docs/western/natal)
-- [Daily Sign Docs](https://www.freeastroapi.com/docs/western/daily-sign)
 - [Geo Search Docs](https://www.freeastroapi.com/docs/geo/search)
 - [Chart SVG / PNG Docs](https://www.freeastroapi.com/docs/western/chart-svg)
 - [FreeAstro MCP endpoint](https://api.freeastroapi.com/mcp)

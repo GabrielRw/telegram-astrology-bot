@@ -141,12 +141,15 @@ function normalizeWhatsAppEvents(payload) {
   return changes.flatMap((change) => {
     const value = change?.value || {};
     const messages = Array.isArray(value.messages) ? value.messages : [];
+    const contacts = Array.isArray(value.contacts) ? value.contacts : [];
 
     return messages.map((message) => {
+      const contact = contacts.find((item) => String(item?.wa_id || '') === String(message.from || ''));
       const baseEvent = {
         channel: 'whatsapp',
         userId: String(message.from || ''),
         chatId: String(message.from || ''),
+        localeHint: contact?.profile?.language || contact?.language || null,
         messageRef: { chatId: String(message.from || ''), messageId: message.id || null }
       };
 

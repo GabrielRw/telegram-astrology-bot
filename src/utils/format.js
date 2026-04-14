@@ -1,3 +1,5 @@
+const { getLocale, t } = require('../services/locale');
+
 const SIGN_LABELS = {
   aries: 'Aries',
   taurus: 'Taurus',
@@ -13,49 +15,6 @@ const SIGN_LABELS = {
   pisces: 'Pisces'
 };
 
-const SIGN_EMOJIS = {
-  aries: '♈',
-  taurus: '♉',
-  gemini: '♊',
-  cancer: '♋',
-  leo: '♌',
-  virgo: '♍',
-  libra: '♎',
-  scorpio: '♏',
-  sagittarius: '♐',
-  capricorn: '♑',
-  aquarius: '♒',
-  pisces: '♓'
-};
-
-const SIGN_ABBREVIATIONS = {
-  Ari: 'Aries',
-  Tau: 'Taurus',
-  Gem: 'Gemini',
-  Can: 'Cancer',
-  Leo: 'Leo',
-  Vir: 'Virgo',
-  Lib: 'Libra',
-  Sco: 'Scorpio',
-  Sag: 'Sagittarius',
-  Cap: 'Capricorn',
-  Aqu: 'Aquarius',
-  Pis: 'Pisces'
-};
-
-function normalizeSign(input) {
-  const sign = String(input || '').trim().toLowerCase();
-  return SIGN_LABELS[sign] ? sign : null;
-}
-
-function getSignLabel(sign) {
-  return SIGN_LABELS[sign] || sign;
-}
-
-function getSignEmoji(sign) {
-  return SIGN_EMOJIS[sign] || '✨';
-}
-
 function titleCase(value) {
   const text = String(value || '').trim();
   return text ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase() : '';
@@ -70,69 +29,16 @@ function humanizeIdentifier(value) {
 }
 
 function resolveSignLabel(sign, signId) {
-  const normalizedId = normalizeSign(signId);
-  if (normalizedId) {
-    return getSignLabel(normalizedId);
+  const normalizedId = String(signId || '').trim().toLowerCase();
+  if (SIGN_LABELS[normalizedId]) {
+    return SIGN_LABELS[normalizedId];
   }
 
-  if (SIGN_ABBREVIATIONS[sign]) {
-    return SIGN_ABBREVIATIONS[sign];
+  if (SIGN_LABELS[String(sign || '').trim().toLowerCase()]) {
+    return SIGN_LABELS[String(sign || '').trim().toLowerCase()];
   }
 
   return sign || 'Unknown';
-}
-
-function formatStartMessage() {
-  return [
-    'I read charts from your birth details so later questions stay personal and precise.',
-    '',
-    'You can still use:',
-    '/daily leo',
-    '',
-    'After setup, just ask questions normally.',
-    '',
-    'Note: /daily is a sign-based forecast, not a personal birth-chart reading.'
-  ].join('\n');
-}
-
-function formatDailyMessage(payload) {
-  const sign = payload?.data?.sign;
-  const normalizedSign = normalizeSign(sign);
-  const label = getSignLabel(normalizedSign || sign || 'Daily');
-  const emoji = getSignEmoji(normalizedSign);
-  const date = payload?.data?.date;
-  const theme = payload?.data?.content?.theme;
-  const summary = payload?.data?.content?.text || 'No horoscope text returned.';
-  const scores = payload?.data?.scores;
-  const astro = payload?.data?.astro;
-  const lucky = payload?.data?.lucky;
-  const keywords = Array.isArray(payload?.data?.content?.keywords)
-    ? payload.data.content.keywords.slice(0, 3)
-    : [];
-
-  return [
-    `${emoji} ${label} Daily Sign Forecast`,
-    '',
-    [
-      date,
-      theme ? `Theme: ${theme}` : null
-    ].filter(Boolean).join(' • '),
-    scores
-      ? `Overall ${scores.overall} | Love ${scores.love} | Career ${scores.career} | Money ${scores.money} | Health ${scores.health}`
-      : null,
-    astro?.moon_sign?.label && astro?.moon_phase?.label
-      ? `Moon: ${astro.moon_sign.label} • Phase: ${astro.moon_phase.label}`
-      : null,
-    lucky?.color?.label || lucky?.number || lucky?.time_window?.display
-      ? `Lucky: ${[lucky?.color?.label, lucky?.number, lucky?.time_window?.display].filter(Boolean).join(' • ')}`
-      : null,
-    '',
-    summary
-      ? summary
-      : null,
-    keywords.length > 0 ? '' : null,
-    keywords.length > 0 ? `Focus: ${keywords.join(', ')}` : null
-  ].join('\n');
 }
 
 function formatAngleSign(angle) {
@@ -313,7 +219,7 @@ function getPlanetPlacementButtonsData(payload) {
   });
 }
 
-function formatNatalMessage(payload, city) {
+function formatNatalMessage(payload, city, locale = 'en') {
   const planets = payload?.planets || [];
   const sun = pickPlanet(planets, 'sun');
   const moon = pickPlanet(planets, 'moon');
@@ -328,23 +234,23 @@ function formatNatalMessage(payload, city) {
   const stellium = formatStellium(payload?.stelliums);
 
   return [
-    '🌙 Natal Snapshot',
+    `🌙 ${t(locale, 'natal.snapshotTitle')}`,
     '',
-    `Name: ${subjectName}`,
-    `City: ${city}`,
-    [houseSystem ? `House system: ${titleCase(houseSystem)}` : null, zodiacType].filter(Boolean).join(' • '),
-    `Sun: ${formatPlanetPlacement(sun)}`,
-    `Moon: ${formatPlanetPlacement(moon)}`,
+    `${t(locale, 'natal.name')}: ${subjectName}`,
+    `${t(locale, 'natal.city')}: ${city}`,
+    [houseSystem ? `${t(locale, 'natal.houseSystem')}: ${titleCase(houseSystem)}` : null, zodiacType].filter(Boolean).join(' • '),
+    `${t(locale, 'natal.sun')}: ${formatPlanetPlacement(sun)}`,
+    `${t(locale, 'natal.moon')}: ${formatPlanetPlacement(moon)}`,
     timed
-      ? `Rising: ${formatAngleSign(rising)}${typeof rising?.pos === 'number' ? ` ${rising.pos.toFixed(1)}°` : ''}`
-      : 'Rising: unavailable without birth time',
+      ? `${t(locale, 'natal.rising')}: ${formatAngleSign(rising)}${typeof rising?.pos === 'number' ? ` ${rising.pos.toFixed(1)}°` : ''}`
+      : t(locale, 'natal.risingUnavailable'),
     timed && mc
-      ? `MC: ${formatAngleSign(mc)}${typeof mc?.pos === 'number' ? ` ${mc.pos.toFixed(1)}°` : ''}`
+      ? `${t(locale, 'natal.mc')}: ${formatAngleSign(mc)}${typeof mc?.pos === 'number' ? ` ${mc.pos.toFixed(1)}°` : ''}`
       : null,
-    confidence ? `Confidence: ${titleCase(confidence)}` : null,
+    confidence ? `${t(locale, 'natal.confidence')}: ${titleCase(confidence)}` : null,
     stellium,
     topAspects.length > 0 ? '' : null,
-    topAspects.length > 0 ? 'Strongest natal aspects:' : null,
+    topAspects.length > 0 ? t(locale, 'natal.strongestAspects') : null,
     ...topAspects.map(formatNatalAspectLine)
   ].join('\n');
 }
@@ -469,26 +375,18 @@ function splitConversationReply(text, maxWords = 80, maxLength = 1200) {
   return chunks.filter(Boolean);
 }
 
-function formatUsage(command, example) {
-  return [`Usage: ${command}`, `Example: ${example}`].join('\n');
-}
-
-function formatUserError(error) {
-  const message = error && error.message ? error.message : 'Something went wrong.';
-  return `Could not fetch the stars right now.\n${message}`;
+function formatUserError(error, identityOrLocale = 'en') {
+  const locale = typeof identityOrLocale === 'string' ? identityOrLocale : getLocale(identityOrLocale);
+  const message = error && error.message ? error.message : t(locale, 'errors.genericUnexpected');
+  return `${t(locale, 'errors.starsUnavailable')}\n${message}`;
 }
 
 module.exports = {
   formatAspectInterpretationMessage,
-  formatDailyMessage,
   formatNatalMessage,
-  formatStartMessage,
-  formatUsage,
   formatUserError,
   getMajorAspectButtonsData,
   getPlanetPlacementButtonsData,
   splitConversationReply,
-  getSignEmoji,
-  normalizeSign,
   splitMessage
 };
