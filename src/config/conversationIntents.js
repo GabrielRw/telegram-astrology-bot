@@ -1,5 +1,20 @@
 const INTENTS = [
   {
+    id: 'relocation',
+    matchers: [
+      /\brelocat/i,
+      /\bmove\b/i,
+      /\bmoving\b/i,
+      /\blive\b.*\b(france|paris|lyon|marseille|bordeaux|lille|toulouse|nice)\b/i,
+      /\bastrocart/i,
+      /\bcity\b/i,
+      /\bwhere should i\b/i
+    ],
+    prefersCachedTools: ['get_cached_natal_summary', 'get_profile_completeness'],
+    prefersMcpTools: ['mcp'],
+    guidance: 'Use astrocartography MCP tools for relocation questions. Ask only for the smallest missing parameter, such as the relocation goal or target city. When answering, separate raw returned values like distances and scores from your interpretation. Do not invent generic orb rules or score semantics unless the tool explicitly provides them.'
+  },
+  {
     id: 'rising_sign',
     matchers: [/rising sign/i, /\bascendant\b/i, /\basc\b/i],
     prefersCachedTools: ['get_cached_angle_info', 'get_profile_completeness'],
@@ -43,8 +58,25 @@ const INTENTS = [
   }
 ];
 
-function detectConversationIntent(text) {
+function looksLikeRelocationReply(value) {
+  return /^(romance|love|career|work|health|spiritual|spirituality|home|family)$/i.test(value.trim());
+}
+
+function historyImpliesRelocation(history) {
+  const recentText = (Array.isArray(history) ? history : [])
+    .slice(-6)
+    .map((item) => String(item?.text || ''))
+    .join(' ');
+
+  return /\brelocat|\bastrocart|\bwhere should i relocate|\bwhich city|\bmoving to france|\bprimary goal\b/i.test(recentText);
+}
+
+function detectConversationIntent(text, history = []) {
   const value = String(text || '');
+
+  if (looksLikeRelocationReply(value) && historyImpliesRelocation(history)) {
+    return INTENTS.find((intent) => intent.id === 'relocation');
+  }
 
   return INTENTS.find((intent) => intent.matchers.some((matcher) => matcher.test(value))) || INTENTS[INTENTS.length - 1];
 }

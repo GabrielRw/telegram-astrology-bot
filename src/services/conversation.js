@@ -18,6 +18,16 @@ function findAngle(profile, angle) {
 
 function buildSystemInstruction(chatState, mcpStatus, intent) {
   const profile = chatState.natalProfile;
+  const relocationRules = intent.id === 'relocation'
+    ? [
+        'For relocation and astrocartography questions, prefer MCP astrocartography tools over generic natal interpretation.',
+        'If you need one missing parameter such as the relocation goal or target city, ask only that one question.',
+        'When you answer, state the raw returned evidence first, such as distances, scores, city names, or line types.',
+        'Then interpret those values in plain language.',
+        'If score meaning is not explicitly documented in the tool result, present your reading as an inference, not as endpoint fact.',
+        'Do not invent generic distance-orb rules such as "300 to 500 km" unless the tool result explicitly provides that rule.'
+      ]
+    : [];
 
   return [
     'You are a concise professional astrologer answering natal-chart questions in Telegram chat.',
@@ -32,6 +42,7 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
     'Never answer personal astrology questions without natal data.',
     'Prefer cached natal tools first. Use FreeAstro MCP only when cached chart data is insufficient.',
     'When using tool data, interpret it like an astrologer, but stay specific to the chart and concise.',
+    ...relocationRules,
     `Detected user intent: ${intent.id}.`,
     `Routing guidance: ${intent.guidance}`,
     `Preferred cached tools: ${intent.prefersCachedTools.join(', ') || 'none'}.`,
@@ -195,7 +206,7 @@ function createLocalToolExecutor(chatState) {
 
 async function answerConversation(chatId, userText) {
   const chatState = getChatState(chatId);
-  const intent = detectConversationIntent(userText);
+  const intent = detectConversationIntent(userText, chatState.history);
 
   if (!process.env.GEMINI_API_KEY) {
     throw new Error('Missing GEMINI_API_KEY. Conversational mode is disabled.');

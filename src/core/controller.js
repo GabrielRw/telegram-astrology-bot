@@ -54,8 +54,40 @@ function getStarterSuggestions() {
   ];
 }
 
+function getFirstQuestionPrompts() {
+  return [
+    'What does my birth chart say about my personality?',
+    'What are my Sun, Moon, and Rising signs, and what do they mean?',
+    'Who am I most compatible with in love?',
+    'What does my chart say about my career path?',
+    'What is my biggest hidden strength according to astrology?',
+    'What karmic lessons am I here to learn?',
+    'What does my Saturn placement say about my life challenges?',
+    'What does my Venus sign reveal about how I love?',
+    'What major transits are affecting me right now?',
+    'Why has this year felt so difficult for me astrologically?',
+    'What does the current moon mean for me personally?',
+    'What area of life is about to change for me?',
+    'What is my soul purpose based on my North Node?',
+    'Which zodiac signs understand me best emotionally?',
+    'What patterns in my chart explain my friendships and conflicts?',
+    'What does western astrology predict for my next 12 months?',
+    'Where should I relocate in the world for my career?',
+    'How is the city where I live influencing me?',
+    'Show me my natal chart visually.'
+  ];
+}
+
+function formatFirstQuestionPrompts() {
+  return getFirstQuestionPrompts()
+    .map((question) => `- ${question}`)
+    .join('\n');
+}
+
 function getFollowUpSuggestions(intentId) {
   switch (intentId) {
+    case 'relocation':
+      return ['another city in France', 'career relocation', 'romantic relocation'];
     case 'rising_sign':
       return ['Moon sign meaning', 'love patterns', 'strongest aspect'];
     case 'planet_placement':
@@ -244,6 +276,7 @@ async function finishNatalFlow(event, channelApi, session) {
 
     if (!pendingQuestion) {
       await channelApi.editText(event, loadingRef, 'We are ready now, What do you want to explore first?');
+      await channelApi.sendText(event, formatFirstQuestionPrompts());
       return true;
     }
 
