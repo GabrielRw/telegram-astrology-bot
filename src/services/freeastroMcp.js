@@ -1,5 +1,6 @@
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+const { Type } = require('@google/genai');
 
 class FreeAstroMcpService {
   constructor() {
@@ -26,6 +27,103 @@ class FreeAstroMcpService {
 
     const safe = normalized || 'tool';
     return `mcp_${safe}`.slice(0, 64);
+  }
+
+  normalizeSchemaType(type) {
+    switch (String(type || '').toLowerCase()) {
+      case 'object':
+        return Type.OBJECT;
+      case 'array':
+        return Type.ARRAY;
+      case 'string':
+        return Type.STRING;
+      case 'integer':
+        return Type.INTEGER;
+      case 'number':
+        return Type.NUMBER;
+      case 'boolean':
+        return Type.BOOLEAN;
+      default:
+        return undefined;
+    }
+  }
+
+  sanitizeSchema(schema) {
+    if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+      return {
+        type: Type.OBJECT,
+        properties: {}
+      };
+    }
+
+    const type = this.normalizeSchemaType(schema.type);
+
+    if (type === Type.OBJECT || (!type && schema.properties)) {
+      const properties = Object.fromEntries(
+        Object.entries(schema.properties || {}).map(([key, value]) => [key, this.sanitizeSchema(value)])
+      );
+
+      const next = {
+        type: Type.OBJECT,
+        properties
+      };
+
+      if (typeof schema.description === 'string' && schema.description.trim()) {
+        next.description = schema.description;
+      }
+
+      if (Array.isArray(schema.required) && schema.required.length > 0) {
+        next.required = schema.required.filter((item) => typeof item === 'string');
+      }
+
+      if (schema.nullable === true) {
+        next.nullable = true;
+      }
+
+      return next;
+    }
+
+    if (type === Type.ARRAY) {
+      const next = {
+        type: Type.ARRAY
+      };
+
+      if (typeof schema.description === 'string' && schema.description.trim()) {
+        next.description = schema.description;
+      }
+
+      if (schema.items) {
+        next.items = this.sanitizeSchema(schema.items);
+      }
+
+      if (schema.nullable === true) {
+        next.nullable = true;
+      }
+
+      return next;
+    }
+
+    const next = {
+      type: type || Type.STRING
+    };
+
+    if (typeof schema.description === 'string' && schema.description.trim()) {
+      next.description = schema.description;
+    }
+
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+      next.enum = schema.enum.filter((value) => ['string', 'number', 'boolean'].includes(typeof value));
+    }
+
+    if (typeof schema.format === 'string' && schema.format.trim()) {
+      next.format = schema.format;
+    }
+
+    if (schema.nullable === true) {
+      next.nullable = true;
+    }
+
+    return next;
   }
 
   async ensureConnected() {
@@ -86,10 +184,7 @@ class FreeAstroMcpService {
           this.functionDeclarations = tools.map((tool) => ({
             name: this.sanitizeToolName(tool.name),
             description: `[FreeAstro MCP] ${tool.description || tool.name}`,
-            parameters: tool.inputSchema || {
-              type: 'object',
-              properties: {}
-            }
+            parameters: this.sanitizeSchema(tool.inputSchema)
           }));
 
           return this.functionDeclarations;
