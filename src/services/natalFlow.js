@@ -2,6 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { setActiveFlow, clearActiveFlow } = require('../state/chatState');
 
 const sessions = new Map();
+let persistenceHook = null;
 
 function resolveIdentity(identity) {
   if (identity && typeof identity === 'object') {
@@ -43,12 +44,14 @@ function setSession(chatId, session) {
     name: 'natal',
     step: nextSession.step
   });
+  notifyPersistence(chatId);
   return nextSession;
 }
 
 function clearSession(chatId) {
   sessions.delete(resolveSessionKey(chatId));
   clearActiveFlow(chatId);
+  notifyPersistence(chatId);
 }
 
 function startNatalFlow(chatId, source = 'command') {
@@ -112,6 +115,41 @@ function unlockSession(chatId, flowId) {
     ...current,
     locked: false
   });
+}
+
+function getSessionSnapshot(identity) {
+  const session = getSession(identity);
+  return session ? JSON.parse(JSON.stringify(session)) : null;
+}
+
+function replaceSession(identity, snapshot) {
+  const key = resolveSessionKey(identity);
+
+  if (!snapshot) {
+    sessions.delete(key);
+    clearActiveFlow(identity);
+    return;
+  }
+
+  sessions.set(key, JSON.parse(JSON.stringify(snapshot)));
+  setActiveFlow(identity, {
+    name: 'natal',
+    step: snapshot.step
+  });
+}
+
+function setPersistenceHook(nextHook) {
+  persistenceHook = typeof nextHook === 'function' ? nextHook : null;
+}
+
+function notifyPersistence(identity) {
+  if (!persistenceHook) {
+    return;
+  }
+
+  Promise.resolve()
+    .then(() => persistenceHook(identity))
+    .catch(() => {});
 }
 
 function parseDateInput(input) {
@@ -236,11 +274,14 @@ module.exports = {
   createNatalChartPayload,
   createNatalPayload,
   getSession,
+  getSessionSnapshot,
   isSessionCurrent,
   lockSession,
   parseDateInput,
   parseTimeInput,
+  replaceSession,
   setSession,
+  setPersistenceHook,
   startNatalFlow,
   unlockSession
 };

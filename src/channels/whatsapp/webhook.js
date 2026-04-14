@@ -1,3 +1,4 @@
+const { createHash } = require('node:crypto');
 const {
   createWhatsAppChannelApi,
   getRequiredEnv,
@@ -8,6 +9,8 @@ const {
   handleIncomingAction,
   handleIncomingText
 } = require('../../core/controller');
+const eventQueue = require('../../services/eventQueue');
+const { reportError } = require('../../services/logger');
 
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
@@ -46,26 +49,54 @@ async function handleWhatsAppVerification(req, res) {
   res.end('forbidden');
 }
 
+async function processWhatsAppEvent(event) {
+  const channelApi = createWhatsAppChannelApi();
+
+  if (event.type === 'action') {
+    await handleIncomingAction(event, channelApi);
+  } else if (event.type === 'text' && String(event.text || '').trim().toLowerCase() === 'start') {
+    await handleStart(event, channelApi);
+  } else if (event.type === 'text') {
+    await handleIncomingText(event, channelApi);
+  }
+}
+
+function getWhatsAppEventKey(event) {
+  const rawId = event?.messageRef?.messageId;
+
+  if (rawId) {
+    return `whatsapp:${rawId}`;
+  }
+
+  const digest = createHash('sha256')
+    .update(JSON.stringify(event))
+    .digest('hex')
+    .slice(0, 16);
+
+  return `whatsapp:fallback:${digest}`;
+}
+
 async function handleWhatsAppWebhook(req, res) {
   try {
     const payload = await readRequestBody(req);
     const events = normalizeWhatsAppEvents(payload);
-    const channelApi = createWhatsAppChannelApi();
-
     for (const event of events) {
-      if (event.type === 'action') {
-        await handleIncomingAction(event, channelApi);
-      } else if (event.type === 'text' && String(event.text || '').trim().toLowerCase() === 'start') {
-        await handleStart(event, channelApi);
-      } else if (event.type === 'text') {
-        await handleIncomingText(event, channelApi);
+      if (eventQueue.isEnabled()) {
+        await eventQueue.enqueue({
+          eventKey: getWhatsAppEventKey(event),
+          channel: 'whatsapp',
+          eventType: 'whatsapp_event',
+          payload: event
+        });
+      } else {
+        await processWhatsAppEvent(event);
       }
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ received: true }));
   } catch (error) {
-    console.error('WhatsApp webhook error:', error.message);
+    await reportError('whatsapp.webhook', error);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'internal_error' }));
   }
@@ -73,5 +104,6 @@ async function handleWhatsAppWebhook(req, res) {
 
 module.exports = {
   handleWhatsAppVerification,
-  handleWhatsAppWebhook
+  handleWhatsAppWebhook,
+  processWhatsAppEvent
 };

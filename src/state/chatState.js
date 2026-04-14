@@ -1,6 +1,7 @@
 const MAX_HISTORY_ITEMS = 12;
 
 const chats = new Map();
+let persistenceHook = null;
 
 function resolveIdentity(identity) {
   if (identity && typeof identity === 'object') {
@@ -71,6 +72,7 @@ function clearNatalProfile(identity) {
     aspects: [],
     planets: []
   };
+  notifyPersistence(identity);
 }
 
 function getChatState(identity) {
@@ -91,17 +93,20 @@ function getChatState(identity) {
 function setActiveFlow(chatId, activeFlow) {
   const state = getChatState(chatId);
   state.activeFlow = activeFlow;
+  notifyPersistence(chatId);
   return state.activeFlow;
 }
 
 function clearActiveFlow(chatId) {
   const state = getChatState(chatId);
   state.activeFlow = null;
+  notifyPersistence(chatId);
 }
 
 function setLastToolResults(chatId, results) {
   const state = getChatState(chatId);
   state.lastToolResults = Array.isArray(results) ? results.slice(-6) : [];
+  notifyPersistence(chatId);
 }
 
 function pushHistory(chatId, role, text) {
@@ -120,6 +125,8 @@ function pushHistory(chatId, role, text) {
   if (state.history.length > MAX_HISTORY_ITEMS) {
     state.history = state.history.slice(-MAX_HISTORY_ITEMS);
   }
+
+  notifyPersistence(chatId);
 }
 
 function setUiCache(chatId, cache) {
@@ -128,6 +135,7 @@ function setUiCache(chatId, cache) {
     aspects: Array.isArray(cache?.aspects) ? cache.aspects : [],
     planets: Array.isArray(cache?.planets) ? cache.planets : []
   };
+  notifyPersistence(chatId);
 }
 
 function getUiCache(chatId) {
@@ -137,18 +145,21 @@ function getUiCache(chatId) {
 function setPendingQuestion(chatId, question) {
   const state = getChatState(chatId);
   state.pendingQuestion = question ? String(question) : null;
+  notifyPersistence(chatId);
 }
 
 function consumePendingQuestion(chatId) {
   const state = getChatState(chatId);
   const question = state.pendingQuestion;
   state.pendingQuestion = null;
+  notifyPersistence(chatId);
   return question;
 }
 
 function setChoiceMap(chatId, choiceMap) {
   const state = getChatState(chatId);
   state.choiceMap = choiceMap && typeof choiceMap === 'object' ? { ...choiceMap } : {};
+  notifyPersistence(chatId);
 }
 
 function getChoiceMap(chatId) {
@@ -278,7 +289,39 @@ function setNatalProfile(chatId, rawNatalPayload, cityLabel, options = {}) {
   state.natalRequestPayload = options.natalRequestPayload || null;
   state.chartRequestPayload = options.chartRequestPayload || null;
   state.natalProfile = normalizeNatalProfile(rawNatalPayload, cityLabel);
+  notifyPersistence(chatId);
   return state.natalProfile;
+}
+
+function getChatStateSnapshot(identity) {
+  const state = getChatState(identity);
+  return JSON.parse(JSON.stringify(state));
+}
+
+function replaceChatState(identity, snapshot) {
+  const key = resolveStateKey(identity);
+  const normalized = resolveIdentity(identity);
+  chats.set(key, {
+    ...createDefaultState(identity),
+    ...(snapshot || {}),
+    channel: normalized.channel,
+    userId: normalized.userId,
+    chatId: normalized.chatId
+  });
+}
+
+function setPersistenceHook(nextHook) {
+  persistenceHook = typeof nextHook === 'function' ? nextHook : null;
+}
+
+function notifyPersistence(identity) {
+  if (!persistenceHook) {
+    return;
+  }
+
+  Promise.resolve()
+    .then(() => persistenceHook(identity))
+    .catch(() => {});
 }
 
 module.exports = {
@@ -287,13 +330,17 @@ module.exports = {
   consumePendingQuestion,
   getChoiceMap,
   getChatState,
+  getChatStateSnapshot,
   getUiCache,
   pushHistory,
+  replaceChatState,
   resolveIdentity,
+  resolveStateKey,
   setActiveFlow,
   setChoiceMap,
   setLastToolResults,
   setNatalProfile,
   setPendingQuestion,
+  setPersistenceHook,
   setUiCache
 };

@@ -35,6 +35,9 @@ It shows how to:
 - explicit numeric fallback for city confirmation if buttons do not render
 - plain-language astrologer chat after setup
 - cached chart tools plus FreeAstro MCP-backed follow-up answers
+- Supabase-backed persistence for saved profiles, onboarding state, and pending questions
+- durable webhook event queue with idempotent Telegram and WhatsApp event handling
+- structured JSON logs plus Telegram error alerts
 - WhatsApp Meta Cloud API webhook support with conversation-first UX
 - support for unknown birth time
 - clean env-based setup with no hardcoded secrets
@@ -144,6 +147,8 @@ FREEASTRO_API_KEY=your_freeastro_api_key
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemma-4-31b-it
 FREEASTRO_MCP_URL=https://api.freeastroapi.com/mcp
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 TELEGRAM_ALERT_CHAT_ID=
 ```
 
@@ -213,6 +218,8 @@ WHATSAPP_VERIFY_TOKEN=your_whatsapp_verify_token
 WHATSAPP_WEBHOOK_PATH=/whatsapp/webhook
 ```
 
+Before first production deploy, run the SQL in [schema.sql](/Users/gabriel/Documents/telegram-bot/supabase/schema.sql) against your Supabase project.
+
 ### Important
 
 - this bot must have a public HTTPS URL in webhook mode
@@ -229,6 +236,8 @@ WHATSAPP_WEBHOOK_PATH=/whatsapp/webhook
 | `GEMINI_API_KEY` | Chat mode | Gemini API key for conversational astrologer mode |
 | `GEMINI_MODEL` | Optional | Gemini model id, defaults to `gemma-4-31b-it` |
 | `FREEASTRO_MCP_URL` | Optional | FreeAstro MCP endpoint, defaults to `https://api.freeastroapi.com/mcp` |
+| `SUPABASE_URL` | Production | Supabase project URL used for durable state and event storage |
+| `SUPABASE_SERVICE_ROLE_KEY` | Production | Supabase service role key used for persistence and webhook queueing |
 | `TELEGRAM_ALERT_CHAT_ID` | Optional | Telegram chat id that receives an owner alert when FreeAstro daily credits are exhausted |
 | `WEBHOOK_BASE_URL` | Render only | Public HTTPS base URL for webhook mode, for example `https://your-service-name.onrender.com` |
 | `WEBHOOK_PATH` | Optional | Webhook route path, defaults to `/telegram/webhook` |
@@ -365,6 +374,33 @@ In-memory per-chat state:
 - active flow
 - recent tool results
 
+When Supabase is configured, this state is also persisted and rehydrated on restart.
+
+### `src/services/persistence.js`
+
+Conversation persistence:
+
+- hydrates chat state and onboarding state from Supabase
+- debounces writes from the in-memory store
+- persists pending question, saved profile, and active intake session
+
+### `src/services/eventQueue.js`
+
+Durable webhook processing:
+
+- idempotent event insert by provider event key
+- background worker for Telegram and WhatsApp webhook events
+- retry with backoff for transient failures
+- dead-letter style terminal status after repeated failures
+
+### `src/services/logger.js`
+
+Operational logging:
+
+- structured JSON logs
+- shared error-reporting helper
+- optional Telegram owner alerts for operational failures
+
 ### `src/utils/format.js`
 
 Presentation helpers:
@@ -431,11 +467,10 @@ Rules:
 - if cached data is insufficient, the bot may call FreeAstro MCP tools
 - the bot should not invent missing chart facts
 
-The current memory model is in-memory only:
-
-- each Telegram chat gets a short rolling history
+Conversation memory is still kept in process for fast access:
+- each chat gets a short rolling history
 - natal profile data is reused across follow-up messages
-- history is lost on process restart
+- when Supabase is configured, profile, pending question, and onboarding state survive restarts
 
 ## Error Handling
 
@@ -452,6 +487,8 @@ Handled cases include:
 - invalid Gemini API key
 - invalid Gemini model id
 - FreeAstro MCP connectivity/auth failures
+- duplicate webhook delivery
+- transient webhook handler failures via queued retry
 
 The bot also tolerates chart-image failure separately:
 
@@ -488,6 +525,14 @@ node --check src/utils/format.js
 7. Ask a plain text chart question
 8. Send `/profile`
 9. Use `Show chart`
+
+To test persistence and queueing:
+
+1. Configure Supabase and run [schema.sql](/Users/gabriel/Documents/telegram-bot/supabase/schema.sql)
+2. Complete setup in Telegram or WhatsApp
+3. Restart the bot process
+4. Confirm `/profile` still shows the saved birth details
+5. Send a new message and confirm the conversation continues without re-onboarding
 
 You can also test the direct onboarding path:
 

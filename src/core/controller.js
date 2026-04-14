@@ -1,6 +1,7 @@
 const { answerConversation } = require('../services/conversation');
 const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
 const { getGeminiErrorMessage } = require('../services/gemini');
+const persistence = require('../services/persistence');
 const {
   clearSession,
   createNatalChartPayload,
@@ -240,19 +241,30 @@ async function finishNatalFlow(event, channelApi, session) {
     setChoiceMap(event, {});
 
     const pendingQuestion = consumePendingQuestion(event);
-    await channelApi.editText(event, loadingRef, "I've got your chart. Here's what stands out.");
 
     if (!pendingQuestion) {
-      await channelApi.sendText(event, getWelcomeBackMessage());
+      await channelApi.editText(event, loadingRef, 'We are ready now, What do you want to explore first?');
       return true;
     }
 
     try {
       const answer = await answerConversation(event, pendingQuestion);
-      await sendConversationAnswer(event, channelApi, answer.text);
+      const chunks = splitConversationReply(answer.text);
+
+      if (chunks.length === 0) {
+        await channelApi.editText(event, loadingRef, 'I could not produce a grounded astrology answer.');
+        return true;
+      }
+
+      await channelApi.editText(event, loadingRef, chunks[0]);
+
+      for (const chunk of chunks.slice(1)) {
+        await channelApi.sendText(event, chunk);
+      }
+
       await sendFollowUpPrompt(event, channelApi, answer.intent);
     } catch (error) {
-      await channelApi.sendText(event, `Conversational mode is unavailable right now.\n${getGeminiErrorMessage(error)}`);
+      await channelApi.editText(event, loadingRef, `Conversational mode is unavailable right now.\n${getGeminiErrorMessage(error)}`);
     }
 
     return true;
@@ -270,6 +282,7 @@ async function finishNatalFlow(event, channelApi, session) {
 }
 
 async function handleStart(event, channelApi) {
+  await persistence.ensureHydrated(event);
   const chatState = getChatState(event);
 
   if (chatState.natalProfile) {
@@ -293,6 +306,7 @@ async function handleStart(event, channelApi) {
 }
 
 async function handleProfile(event, channelApi) {
+  await persistence.ensureHydrated(event);
   const chatState = getChatState(event);
   await channelApi.sendText(event, buildProfileMessage(chatState));
 
@@ -308,6 +322,7 @@ async function handleProfile(event, channelApi) {
 }
 
 async function handleCancel(event, channelApi) {
+  await persistence.ensureHydrated(event);
   clearSession(event);
   setPendingQuestion(event, null);
   setChoiceMap(event, {});
@@ -316,6 +331,7 @@ async function handleCancel(event, channelApi) {
 }
 
 async function handleIncomingAction(event, channelApi) {
+  await persistence.ensureHydrated(event);
   const actionId = String(event.actionId || '');
 
   if (!actionId) {
@@ -511,6 +527,7 @@ async function handleActiveFlowText(event, channelApi, text) {
 }
 
 async function handleIncomingText(event, channelApi) {
+  await persistence.ensureHydrated(event);
   const text = String(event.text || '').trim();
 
   if (!text) {

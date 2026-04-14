@@ -23,6 +23,7 @@
   "dependencies": {
     "@google/genai": "^1.49.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@supabase/supabase-js": "^2.103.0",
     "dotenv": "^17.2.3",
     "telegraf": "^4.16.3"
   }
