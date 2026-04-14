@@ -4,32 +4,30 @@ const { getGeminiErrorMessage } = require('../services/gemini');
 const {
   clearSession,
   createNatalChartPayload,
+  createSessionCheckpoint,
   createNatalPayload,
   getSession,
+  isSessionCurrent,
+  lockSession,
   parseDateInput,
   parseTimeInput,
   setSession,
-  startNatalFlow
+  startNatalFlow,
+  unlockSession
 } = require('../services/natalFlow');
 const {
+  clearNatalProfile,
   consumePendingQuestion,
-  getChatState,
   getChoiceMap,
-  getUiCache,
+  getChatState,
   setChoiceMap,
   setNatalProfile,
-  setPendingQuestion,
-  setUiCache
+  setPendingQuestion
 } = require('../state/chatState');
 const {
-  formatAspectInterpretationMessage,
   formatNatalMessage,
-  formatUsage,
   formatUserError,
-  getMajorAspectButtonsData,
-  getPlanetPlacementButtonsData,
-  splitConversationReply,
-  splitMessage
+  splitConversationReply
 } = require('../utils/format');
 
 const ACTIONS = {
@@ -37,51 +35,79 @@ const ACTIONS = {
   TIME_YES: 'NATAL_TIME_YES',
   TIME_NO: 'NATAL_TIME_NO',
   CITY_PREFIX: 'NATAL_CITY_',
-  ASPECT_PREFIX: 'NATAL_ASPECT_',
-  PLANET_PREFIX: 'NATAL_PLANET_'
+  PROFILE_UPDATE: 'PROFILE_UPDATE',
+  PROFILE_RESET: 'PROFILE_RESET',
+  PROFILE_SHOW_CHART: 'PROFILE_SHOW_CHART'
 };
-
-function getNatalIntroMessage(source = 'command') {
-  if (source === 'chat') {
-    return [
-      'I can answer that, but first I need your natal chart so the reading is grounded.',
-      '',
-      'Reply with your name, or send skip to use Telegram User.',
-      'You can cancel anytime with /cancel.'
-    ].join('\n');
-  }
-
-  return [
-    'Natal chart setup',
-    '',
-    'Reply with your name, or send skip to use Telegram User.',
-    'You can cancel anytime with /cancel.'
-  ].join('\n');
-}
 
 function formatCityOption(city) {
   const bits = [city?.name, city?.admin1 || city?.region, city?.country].filter(Boolean);
   return bits.join(', ').slice(0, 60) || 'City option';
 }
 
-async function promptForName(event, channelApi, source = 'command') {
-  await channelApi.sendText(event, getNatalIntroMessage(source));
+function getStarterSuggestions() {
+  return [
+    'Ask about your Rising sign',
+    'Ask about love patterns',
+    'Ask for your strongest aspect'
+  ];
 }
 
-async function promptForBirthDate(event, channelApi) {
-  await channelApi.sendText(event, 'Send your birth date in YYYY-MM-DD format.\nExample: 1990-05-15');
+function getFollowUpSuggestions(intentId) {
+  switch (intentId) {
+    case 'rising_sign':
+      return ['Moon sign meaning', 'love patterns', 'strongest aspect'];
+    case 'planet_placement':
+      return ['strongest aspect', 'career themes', 'Rising sign'];
+    case 'major_aspects':
+      return ['how that aspect plays out in love', 'chart summary', 'Rising sign'];
+    case 'house_question':
+      return ['another house focus', 'Rising sign', 'career themes'];
+    case 'chart_summary':
+      return ['love patterns', 'career themes', 'strongest aspect'];
+    default:
+      return ['Rising sign', 'strongest aspect', 'love patterns'];
+  }
 }
 
-async function promptForBirthTime(event, channelApi) {
-  await channelApi.sendText(event, 'Send your birth time in 24-hour format.\nExample: 14:30');
+function formatSuggestionLine(suggestions) {
+  return `Next you can ask: ${suggestions.join(', ')}.`;
 }
 
-async function promptForCity(event, channelApi, timeKnown) {
-  const line = timeKnown
-    ? 'Send your birth city.'
-    : 'Birth time marked unknown. Houses and Rising will be omitted by the API.\nNow send your birth city.';
+function getWelcomeBackMessage() {
+  return [
+    'Welcome back. What do you want to explore today?',
+    '',
+    formatSuggestionLine(getStarterSuggestions())
+  ].join('\n');
+}
 
-  await channelApi.sendText(event, `${line}\nExample: Paris or New York`);
+function getOnboardingIntro(source = 'start') {
+  if (source === 'chat') {
+    return [
+      'I can answer that properly from your chart.',
+      'First I need your birth date and birth city.',
+      '',
+      'Send your birth date in YYYY-MM-DD format.'
+    ].join('\n');
+  }
+
+  return [
+    'I read charts from your birth details so later questions stay personal and precise.',
+    '',
+    'Send your birth date in YYYY-MM-DD format.'
+  ].join('\n');
+}
+
+async function promptForBirthDate(event, channelApi, source = 'start') {
+  await channelApi.sendText(event, getOnboardingIntro(source));
+}
+
+async function promptForCity(event, channelApi) {
+  await channelApi.sendText(
+    event,
+    'Good. Your birth date anchors the core chart.\nNow send your birth city.\nExample: Paris or New York'
+  );
 }
 
 async function promptForCityConfirmation(event, channelApi, candidates) {
@@ -90,16 +116,32 @@ async function promptForCityConfirmation(event, channelApi, candidates) {
     title: formatCityOption(city)
   }));
 
-  await channelApi.sendChoices(event, 'I found these city matches. Choose the correct one.', choices);
+  const prompt = [
+    'I found these city matches. Choose the right one.',
+    'Reply 1, 2, or 3 if buttons don’t appear.'
+  ].join('\n');
+
+  await channelApi.sendChoices(event, prompt, choices);
   setChoiceMap(event, Object.fromEntries(choices.map((choice, index) => [String(index + 1), choice.id])));
 }
 
-async function sendConversationAnswer(event, channelApi, question, answerText) {
-  const chunks = splitConversationReply(answerText);
+async function promptForBirthTimeKnown(event, channelApi) {
+  await channelApi.sendChoices(
+    event,
+    'Good. Your birth city locks the location and timezone.\nDo you know your birth time? It helps with Rising sign and house accuracy.',
+    [
+      { id: ACTIONS.TIME_YES, title: 'Yes' },
+      { id: ACTIONS.TIME_NO, title: 'No' }
+    ]
+  );
+}
 
-  if (question) {
-    await channelApi.sendText(event, `Your question: ${question}`);
-  }
+async function promptForBirthTime(event, channelApi) {
+  await channelApi.sendText(event, 'Send your birth time in 24-hour format.\nExample: 14:30');
+}
+
+async function sendConversationAnswer(event, channelApi, answerText) {
+  const chunks = splitConversationReply(answerText);
 
   if (chunks.length === 0) {
     await channelApi.sendText(event, 'I could not produce a grounded astrology answer.');
@@ -111,111 +153,114 @@ async function sendConversationAnswer(event, channelApi, question, answerText) {
   }
 }
 
-async function sendExplicitNatalReading(event, channelApi, payload, cityLabel, chart) {
-  if (chart?.buffer) {
-    await channelApi.sendImage(event, chart.buffer, {
-      caption: 'Natal chart',
-      filename: 'natal-chart.png'
-    });
-  }
-
-  await channelApi.sendText(event, formatNatalMessage(payload, cityLabel));
-
-  if (!channelApi.capabilities?.richNatalActions) {
-    return;
-  }
-
-  const planetButtons = getPlanetPlacementButtonsData(payload);
-  const aspectButtons = getMajorAspectButtonsData(payload);
-
-  setUiCache(event, {
-    aspects: aspectButtons,
-    planets: planetButtons
-  });
-
-  for (const [index, planet] of planetButtons.entries()) {
-    await channelApi.sendChoices(event, planet.summary, [
-      {
-        id: `${ACTIONS.PLANET_PREFIX}${index}`,
-        title: 'Get interpretation'
-      }
-    ]);
-  }
-
-  if (aspectButtons.length === 0) {
-    await channelApi.sendText(event, 'No major aspects were returned for this natal chart.');
-    return;
-  }
-
-  for (const [index, aspect] of aspectButtons.entries()) {
-    await channelApi.sendChoices(event, aspect.summary, [
-      {
-        id: `${ACTIONS.ASPECT_PREFIX}${index}`,
-        title: 'Get interpretation'
-      }
-    ]);
-  }
+async function sendFollowUpPrompt(event, channelApi, intentId) {
+  await channelApi.sendText(event, formatSuggestionLine(getFollowUpSuggestions(intentId)));
 }
 
-async function finishNatalFlow(event, channelApi, session, cityMatch) {
-  const loadingRef = await channelApi.sendText(event, 'Calculating natal chart...');
+function buildProfileMessage(chatState) {
+  const profile = chatState.natalProfile;
+
+  if (!profile) {
+    return [
+      'No birth details are saved yet.',
+      '',
+      'Use /start to set up your chart.'
+    ].join('\n');
+  }
+
+  const birthDate = profile.birthDatetime ? String(profile.birthDatetime).slice(0, 10) : 'Unknown';
+  const city = profile.city || 'Unknown';
+  const timeLine = profile.timeKnown
+    ? `Birth time: ${String(profile.birthDatetime).slice(11, 16) || 'Saved'}`
+    : 'Birth time: not saved';
+
+  return [
+    'Saved birth details',
+    '',
+    `Birth date: ${birthDate}`,
+    `City: ${city}`,
+    timeLine,
+    '',
+    'Use the buttons below to update, reset, or view your chart.'
+  ].join('\n');
+}
+
+async function sendCompactChart(event, channelApi) {
+  const chatState = getChatState(event);
+  const chartPayload = chatState.chartRequestPayload;
+
+  if (!chartPayload || !chatState.rawNatalPayload) {
+    await channelApi.sendText(event, 'Your chart image is not available right now.');
+    return true;
+  }
 
   try {
-    const natalPayload = createNatalPayload(session, cityMatch);
-    const chartPayload = createNatalChartPayload(session, cityMatch);
-    const [result, chart] = await Promise.allSettled([
-      getNatal(natalPayload),
-      getNatalChart(chartPayload)
-    ]);
+    const chart = await getNatalChart(chartPayload);
+    await channelApi.sendImage(event, chart.buffer, {
+      caption: 'Your natal chart',
+      filename: 'natal-chart.png'
+    });
+    await channelApi.sendText(event, formatNatalMessage(chatState.rawNatalPayload, chatState.natalProfile.city));
+  } catch (error) {
+    await channelApi.sendText(event, formatUserError(error));
+  }
 
-    if (result.status !== 'fulfilled') {
-      throw result.reason;
+  return true;
+}
+
+async function finishNatalFlow(event, channelApi, session) {
+  const lockedSession = lockSession(event, session.flowId);
+
+  if (!lockedSession) {
+    await channelApi.sendText(event, 'Still reading your chart...');
+    return true;
+  }
+
+  const loadingRef = await channelApi.sendText(event, 'Reading your chart...');
+
+  try {
+    const natalPayload = createNatalPayload(lockedSession, lockedSession.cityMatch);
+    const chartPayload = createNatalChartPayload(lockedSession, lockedSession.cityMatch);
+    const result = await getNatal(natalPayload);
+
+    if (!isSessionCurrent(event, createSessionCheckpoint(lockedSession))) {
+      return true;
     }
 
     clearSession(event);
-
-    const cityLabel = `${cityMatch.name}, ${cityMatch.country}`;
-    setNatalProfile(event, result.value, cityLabel);
+    setNatalProfile(
+      event,
+      result,
+      `${lockedSession.cityMatch.name}, ${lockedSession.cityMatch.country}`,
+      {
+        natalRequestPayload: natalPayload,
+        chartRequestPayload: chartPayload
+      }
+    );
     setChoiceMap(event, {});
 
     const pendingQuestion = consumePendingQuestion(event);
-    const shouldSendNatalReading = session.source === 'command' && !pendingQuestion;
-
-    if (shouldSendNatalReading) {
-      await channelApi.editText(event, loadingRef, 'Natal chart ready.');
-      await sendExplicitNatalReading(
-        event,
-        channelApi,
-        result.value,
-        cityLabel,
-        chart.status === 'fulfilled' ? chart.value : null
-      );
-      return true;
-    }
-
-    await channelApi.editText(event, loadingRef, 'Birth details saved.');
+    await channelApi.editText(event, loadingRef, "I've got your chart. Here's what stands out.");
 
     if (!pendingQuestion) {
-      await channelApi.sendText(event, 'Your chart is ready. Ask your question directly.');
+      await channelApi.sendText(event, getWelcomeBackMessage());
       return true;
     }
-
-    const thinkingRef = await channelApi.sendText(event, 'Now I can answer your question from the chart...');
 
     try {
       const answer = await answerConversation(event, pendingQuestion);
-      await channelApi.editText(event, thinkingRef, 'Answer ready.');
-      await sendConversationAnswer(event, channelApi, pendingQuestion, answer.text);
+      await sendConversationAnswer(event, channelApi, answer.text);
+      await sendFollowUpPrompt(event, channelApi, answer.intent);
     } catch (error) {
-      await channelApi.editText(
-        event,
-        thinkingRef,
-        `Conversational mode is unavailable right now.\n${getGeminiErrorMessage(error)}`
-      );
+      await channelApi.sendText(event, `Conversational mode is unavailable right now.\n${getGeminiErrorMessage(error)}`);
     }
 
     return true;
   } catch (error) {
+    if (isSessionCurrent(event, createSessionCheckpoint(lockedSession))) {
+      unlockSession(event, lockedSession.flowId);
+    }
+
     const message = error instanceof FreeAstroError
       ? formatUserError(error)
       : formatUserError(new Error('Unexpected error.'));
@@ -228,14 +273,13 @@ async function handleStart(event, channelApi) {
   const chatState = getChatState(event);
 
   if (chatState.natalProfile) {
-    await channelApi.sendText(
-      event,
-      ['Your birth details are already saved.', '', 'Ask a chart question directly, or use /daily leo for a sign forecast.'].join('\n')
-    );
+    await channelApi.sendText(event, getWelcomeBackMessage());
 
     if (channelApi.capabilities?.helpActions) {
-      await channelApi.sendChoices(event, 'Quick action', [
-        { id: ACTIONS.HELP_DAILY, title: 'Daily' }
+      await channelApi.sendChoices(event, 'Quick actions', [
+        { id: ACTIONS.HELP_DAILY, title: 'Daily' },
+        { id: ACTIONS.PROFILE_SHOW_CHART, title: 'Chart' },
+        { id: ACTIONS.PROFILE_UPDATE, title: 'Update profile' }
       ]);
     }
 
@@ -244,33 +288,22 @@ async function handleStart(event, channelApi) {
 
   setPendingQuestion(event, null);
   startNatalFlow(event, 'start');
-
-  await channelApi.sendText(event, [
-    'FreeAstro Telegram Bot Starter Kit',
-    '',
-    'I will first save your birth details so later questions stay natural and chart-grounded.',
-    '',
-    'You can still use:',
-    '/daily leo',
-    '',
-    'After setup, just ask questions normally.',
-    '',
-    'Note: /daily is a sign-based forecast, not a personal birth-chart reading.'
-  ].join('\n'));
-
-  if (channelApi.capabilities?.helpActions) {
-    await channelApi.sendChoices(event, 'Quick action', [
-      { id: ACTIONS.HELP_DAILY, title: 'Daily' }
-    ]);
-  }
-
-  await promptForName(event, channelApi, 'start');
+  await promptForBirthDate(event, channelApi, 'start');
   return true;
 }
 
-async function handleExplicitNatal(event, channelApi) {
-  startNatalFlow(event, 'command');
-  await promptForName(event, channelApi, 'command');
+async function handleProfile(event, channelApi) {
+  const chatState = getChatState(event);
+  await channelApi.sendText(event, buildProfileMessage(chatState));
+
+  if (chatState.natalProfile) {
+    await channelApi.sendChoices(event, 'Profile actions', [
+      { id: ACTIONS.PROFILE_UPDATE, title: 'Update' },
+      { id: ACTIONS.PROFILE_RESET, title: 'Reset' },
+      { id: ACTIONS.PROFILE_SHOW_CHART, title: 'Show chart' }
+    ]);
+  }
+
   return true;
 }
 
@@ -295,6 +328,29 @@ async function handleIncomingAction(event, channelApi) {
     return true;
   }
 
+  if (actionId === ACTIONS.PROFILE_UPDATE) {
+    await channelApi.ackAction(event);
+    setPendingQuestion(event, null);
+    startNatalFlow(event, 'profile');
+    await promptForBirthDate(event, channelApi, 'start');
+    return true;
+  }
+
+  if (actionId === ACTIONS.PROFILE_RESET) {
+    await channelApi.ackAction(event);
+    clearSession(event);
+    clearNatalProfile(event);
+    setPendingQuestion(event, null);
+    setChoiceMap(event, {});
+    await channelApi.sendText(event, 'Your saved birth details were cleared. Send /start when you want to set them again.');
+    return true;
+  }
+
+  if (actionId === ACTIONS.PROFILE_SHOW_CHART) {
+    await channelApi.ackAction(event);
+    return sendCompactChart(event, channelApi);
+  }
+
   if (actionId === ACTIONS.TIME_YES || actionId === ACTIONS.TIME_NO) {
     const session = getSession(event);
 
@@ -303,19 +359,22 @@ async function handleIncomingAction(event, channelApi) {
       return true;
     }
 
-    session.timeKnown = actionId === ACTIONS.TIME_YES;
-    session.step = session.timeKnown ? 'time' : 'city';
-    setSession(event, session);
+     if (session.locked) {
+      await channelApi.ackAction(event, 'Still reading your chart...');
+      return true;
+    }
 
+    session.timeKnown = actionId === ACTIONS.TIME_YES;
+    session.step = session.timeKnown ? 'time' : 'complete';
+    setSession(event, session);
     await channelApi.ackAction(event);
 
     if (session.timeKnown) {
       await promptForBirthTime(event, channelApi);
-    } else {
-      await promptForCity(event, channelApi, false);
+      return true;
     }
 
-    return true;
+    return finishNatalFlow(event, channelApi, session);
   }
 
   if (actionId.startsWith(ACTIONS.CITY_PREFIX)) {
@@ -334,40 +393,17 @@ async function handleIncomingAction(event, channelApi) {
       return true;
     }
 
+    if (session.locked) {
+      await channelApi.ackAction(event, 'Still reading your chart...');
+      return true;
+    }
+
+    session.cityMatch = cityMatch;
+    session.step = 'time_known';
+    setSession(event, session);
+
     await channelApi.ackAction(event, `Using ${formatCityOption(cityMatch)}`);
-    await finishNatalFlow(event, channelApi, session, cityMatch);
-    return true;
-  }
-
-  if (actionId.startsWith(ACTIONS.ASPECT_PREFIX)) {
-    const aspectIndex = Number(actionId.slice(ACTIONS.ASPECT_PREFIX.length));
-    const aspect = getUiCache(event)?.aspects?.[aspectIndex];
-
-    if (!aspect) {
-      await channelApi.ackAction(event, 'Aspect details expired.');
-      return true;
-    }
-
-    await channelApi.ackAction(event);
-    for (const chunk of splitMessage(formatAspectInterpretationMessage(aspect))) {
-      await channelApi.sendText(event, chunk);
-    }
-    return true;
-  }
-
-  if (actionId.startsWith(ACTIONS.PLANET_PREFIX)) {
-    const planetIndex = Number(actionId.slice(ACTIONS.PLANET_PREFIX.length));
-    const planet = getUiCache(event)?.planets?.[planetIndex];
-
-    if (!planet) {
-      await channelApi.ackAction(event, 'Placement details expired.');
-      return true;
-    }
-
-    await channelApi.ackAction(event);
-    for (const chunk of splitMessage(formatAspectInterpretationMessage(planet))) {
-      await channelApi.sendText(event, chunk);
-    }
+    await promptForBirthTimeKnown(event, channelApi);
     return true;
   }
 
@@ -381,11 +417,8 @@ async function handleActiveFlowText(event, channelApi, text) {
     return false;
   }
 
-  if (session.step === 'name') {
-    session.name = /^skip$/i.test(text) ? 'Telegram User' : text;
-    session.step = 'date';
-    setSession(event, session);
-    await promptForBirthDate(event, channelApi);
+  if (session.locked) {
+    await channelApi.sendText(event, 'Still reading your chart...');
     return true;
   }
 
@@ -398,40 +431,33 @@ async function handleActiveFlowText(event, channelApi, text) {
     }
 
     session.birthDate = birthDate;
-    session.step = 'time_known';
-    setSession(event, session);
-
-    await channelApi.sendChoices(event, 'Do you know the birth time?', [
-      { id: ACTIONS.TIME_YES, title: 'Yes' },
-      { id: ACTIONS.TIME_NO, title: 'No' }
-    ]);
-    return true;
-  }
-
-  if (session.step === 'time') {
-    const birthTime = parseTimeInput(text);
-
-    if (!birthTime) {
-      await channelApi.sendText(event, 'Time format should look like 14:30.');
-      return true;
-    }
-
-    session.birthTime = birthTime;
     session.step = 'city';
     setSession(event, session);
-    await promptForCity(event, channelApi, true);
+    await promptForCity(event, channelApi);
     return true;
   }
 
   if (session.step === 'city') {
+    const checkpoint = createSessionCheckpoint(session);
+
     try {
       const cityCandidates = await searchCities(text, 3);
-      session.city = text;
-      session.cityCandidates = cityCandidates;
-      session.step = 'city_confirm';
-      setSession(event, session);
+
+      if (!isSessionCurrent(event, checkpoint, 'city')) {
+        return true;
+      }
+
+      const currentSession = getSession(event);
+      currentSession.city = text;
+      currentSession.cityCandidates = cityCandidates;
+      currentSession.step = 'city_confirm';
+      setSession(event, currentSession);
       await promptForCityConfirmation(event, channelApi, cityCandidates);
     } catch (error) {
+      if (!isSessionCurrent(event, checkpoint, 'city')) {
+        return true;
+      }
+
       const message = error instanceof FreeAstroError
         ? error.message
         : 'I could not look up that city right now.';
@@ -448,12 +474,40 @@ async function handleActiveFlowText(event, channelApi, text) {
       return handleIncomingAction({ ...event, actionId: mappedAction, type: 'action' }, channelApi);
     }
 
-    await channelApi.sendText(event, 'Choose one of the city options above. If buttons are unavailable, reply with 1, 2, or 3.');
+    await channelApi.sendText(event, 'Choose one of the city options above. Reply 1, 2, or 3 if buttons don’t appear.');
     return true;
   }
 
-  await channelApi.sendText(event, formatUsage('/natal', '/natal'));
-  return true;
+  if (session.step === 'time_known') {
+    const normalized = String(text || '').trim().toLowerCase();
+
+    if (['yes', 'y', 'oui'].includes(normalized)) {
+      return handleIncomingAction({ ...event, actionId: ACTIONS.TIME_YES, type: 'action' }, channelApi);
+    }
+
+    if (['no', 'n', 'non'].includes(normalized)) {
+      return handleIncomingAction({ ...event, actionId: ACTIONS.TIME_NO, type: 'action' }, channelApi);
+    }
+
+    await channelApi.sendText(event, 'Reply yes or no. Birth time helps with Rising sign and house accuracy.');
+    return true;
+  }
+
+  if (session.step === 'time') {
+    const birthTime = parseTimeInput(text);
+
+    if (!birthTime) {
+      await channelApi.sendText(event, 'Time format should look like 14:30.');
+      return true;
+    }
+
+    session.birthTime = birthTime;
+    session.step = 'complete';
+    setSession(event, session);
+    return finishNatalFlow(event, channelApi, session);
+  }
+
+  return false;
 }
 
 async function handleIncomingText(event, channelApi) {
@@ -473,7 +527,7 @@ async function handleIncomingText(event, channelApi) {
   if (!chatState.natalProfile) {
     setPendingQuestion(event, text);
     startNatalFlow(event, 'chat');
-    await promptForName(event, channelApi, 'chat');
+    await promptForBirthDate(event, channelApi, 'chat');
     return true;
   }
 
@@ -493,6 +547,8 @@ async function handleIncomingText(event, channelApi) {
     for (const chunk of chunks.slice(1)) {
       await channelApi.sendText(event, chunk);
     }
+
+    await sendFollowUpPrompt(event, channelApi, result.intent);
   } catch (error) {
     await channelApi.editText(
       event,
@@ -507,8 +563,8 @@ async function handleIncomingText(event, channelApi) {
 module.exports = {
   ACTIONS,
   handleCancel,
-  handleExplicitNatal,
   handleIncomingAction,
   handleIncomingText,
+  handleProfile,
   handleStart
 };

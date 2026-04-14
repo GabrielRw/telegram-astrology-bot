@@ -203,7 +203,7 @@ async function answerConversation(chatId, userText) {
 
   if (!chatState.natalProfile) {
     return {
-      text: 'I need your natal chart before I can answer personal astrology questions. Start with /natal.',
+      text: 'I need your birth details before I can answer personal astrology questions from your chart.',
       usedTools: [],
       intent: intent.id
     };

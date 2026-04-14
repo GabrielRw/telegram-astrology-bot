@@ -3,19 +3,11 @@ const { createTelegramChannelApi, createTelegramEvent } = require('../channels/t
 const {
   ACTIONS,
   handleCancel,
-  handleExplicitNatal,
   handleIncomingAction,
   handleIncomingText
 } = require('../core/controller');
 
 module.exports = function registerNatalCommand(bot) {
-  bot.command('natal', async (ctx) => {
-    await handleExplicitNatal(
-      createTelegramEvent(ctx, { type: 'start' }),
-      createTelegramChannelApi(ctx)
-    );
-  });
-
   bot.command('cancel', async (ctx) => {
     await handleCancel(
       createTelegramEvent(ctx, { type: 'action', actionId: 'cancel' }),
@@ -38,20 +30,6 @@ module.exports = function registerNatalCommand(bot) {
   });
 
   bot.action(/^NATAL_CITY_(\d+)$/, async (ctx) => {
-    await handleIncomingAction(
-      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
-      createTelegramChannelApi(ctx)
-    );
-  });
-
-  bot.action(/^NATAL_ASPECT_(\d+)$/, async (ctx) => {
-    await handleIncomingAction(
-      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
-      createTelegramChannelApi(ctx)
-    );
-  });
-
-  bot.action(/^NATAL_PLANET_(\d+)$/, async (ctx) => {
     await handleIncomingAction(
       createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
       createTelegramChannelApi(ctx)

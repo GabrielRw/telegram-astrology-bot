@@ -5,9 +5,8 @@ Build your astrology bot in 5 minutes.
 A production-ready open-source astrology bot starter built with Node.js, Telegraf, Meta WhatsApp Cloud API, and FreeAstroApi. The project is intentionally small, readable, and easy to fork, while still showing real-world API usage:
 
 - sign-based daily horoscope
-- guided natal chart intake
+- guided birth-data intake
 - natal chart image generation
-- interpretation-on-demand with Telegram buttons
 - shared messaging core with Telegram and WhatsApp adapters
 - conversational astrologer mode grounded in cached natal data
 - Gemini + FreeAstro MCP integration for follow-up chart questions
@@ -26,16 +25,15 @@ It shows how to:
 
 ## Features
 
-- `/start` welcome message with quick command guidance
+- `/start` guided onboarding and re-entry
 - `/daily <sign>` for a sign-based daily forecast
+- `/profile` to inspect, update, reset, or view the saved chart
 - shared conversation and natal-intake core across channels
-- `/natal` guided questionnaire for date, time, and city
 - direct plain-language onboarding that can start natal intake from a normal chat message
-- natal chart PNG generated from FreeAstroApi
+- natal chart PNG available on demand
 - top 3 city matches returned as inline buttons for confirmation
-- natal placements returned as separate messages with interpretation buttons
-- top 5 major natal aspects returned with interpretation buttons
-- plain-language astrologer chat after `/natal`
+- explicit numeric fallback for city confirmation if buttons do not render
+- plain-language astrologer chat after setup
 - cached chart tools plus FreeAstro MCP-backed follow-up answers
 - WhatsApp Meta Cloud API webhook support with conversation-first UX
 - support for unknown birth time
@@ -58,25 +56,16 @@ Important:
 - this is a generic sign forecast
 - it is not a personalized natal/transit reading
 
-### `/natal`
+### Guided setup
 
-Runs a guided flow:
+The first profile setup now asks only for:
 
-1. asks for name
-2. asks for birth date
-3. asks whether birth time is known
-4. asks for birth time if available
-5. asks for birth city
-6. shows up to 3 city matches as buttons so the user confirms the right location
+1. birth date
+2. birth city
+3. whether birth time is known
+4. birth time, if available
 
-Then it returns:
-
-- natal chart PNG
-- natal snapshot summary
-- one message per planet placement with a `Get interpretation` button
-- top 5 major aspects with a `Get interpretation` button
-
-After `/natal`, users can ask conversational chart questions like:
+After setup, users can ask conversational chart questions like:
 
 - `What is my rising sign?`
 - `What does my Sun in Taurus in the 9th house mean?`
@@ -99,6 +88,7 @@ telegram-astrology-bot/
 │   │   ├── chat.js
 │   │   ├── daily.js
 │   │   ├── natal.js
+│   │   ├── profile.js
 │   │   └── start.js
 │   ├── services/
 │   │   ├── conversation.js
@@ -175,7 +165,7 @@ Then try:
 
 ```text
 /daily leo
-/natal
+/profile
 ```
 
 Then ask a plain text question:
@@ -272,24 +262,13 @@ Input rules:
 - sign must be one of the 12 western zodiac signs
 - capitalization does not matter
 
-### `/natal`
+### `/profile`
 
-This is a guided flow, not a one-line command.
+Shows the saved birth details and offers:
 
-The bot will ask for:
-
-- name
-- birth date
-- birth time yes/no
-- birth time if known
-- city
-
-Supported examples:
-
-- `1990-05-15`
-- `14:30`
-- `Paris`
-- `New York`
+- update
+- reset
+- show chart
 
 ### Conversational chart chat
 
@@ -297,7 +276,7 @@ Any plain-text message that is not a command can start the AI flow.
 
 Behavior:
 
-- if no natal profile exists yet, the bot stores the user question, starts natal intake, and asks for the missing birth data conversationally
+- if no natal profile exists yet, the bot stores the user question, starts setup, and asks for the missing birth data conversationally
 - once the natal chart is complete, the bot automatically returns to the original question and answers it from the chart
 - if a natal profile already exists, the message is handled as a chart question immediately
 
@@ -331,7 +310,7 @@ Application entrypoint:
 
 Thin channel handlers:
 
-- `start.js`, `daily.js`, `natal.js`, and `chat.js` bind Telegram events to the shared controller
+- `start.js`, `daily.js`, `natal.js`, `profile.js`, and `chat.js` bind Telegram events to the shared controller
 - WhatsApp webhook handling uses the same shared controller through a Meta adapter
 
 ### Shared runtime
@@ -431,7 +410,7 @@ Used for:
 
 Used for:
 
-- PNG natal chart sent in Telegram before text results
+- PNG natal chart returned on demand from `/profile`
 
 ### FreeAstro MCP
 
@@ -440,19 +419,6 @@ Used for:
 Used for:
 
 - conversational chart questions that need specific tool-backed data beyond the cached natal profile
-
-## How Natal Interpretations Work
-
-The bot does not dump the entire natal interpretation response by default.
-
-Instead it turns the result into:
-
-- planet placement messages with buttons
-- top 5 major aspect messages with buttons
-
-When a user taps `Get interpretation`, the bot returns the relevant interpretation block extracted from the FreeAstro response.
-
-This keeps the main chat readable while still exposing rich API content.
 
 ## How Conversational Mode Works
 
@@ -501,6 +467,7 @@ node --check src/bot.js
 node --check src/commands/chat.js
 node --check src/commands/daily.js
 node --check src/commands/natal.js
+node --check src/commands/profile.js
 node --check src/commands/start.js
 node --check src/services/conversation.js
 node --check src/services/freeastro.js
@@ -516,31 +483,28 @@ node --check src/utils/format.js
 2. Open your bot in Telegram
 3. Send `/start`
 4. Send `/daily leo`
-5. Send `/natal`
-6. Complete the guided intake
-7. When asked for a city, tap one of the city buttons
-8. Tap a few `Get interpretation` buttons
-9. Ask a plain text chart question
+5. Complete the guided intake
+6. When asked for a city, tap one of the city buttons or reply `1`, `2`, or `3`
+7. Ask a plain text chart question
+8. Send `/profile`
+9. Use `Show chart`
 
 You can also test the direct onboarding path:
 
 1. Start a fresh chat with no natal profile
 2. Send a plain-language question like `What does my Venus placement say about relationships?`
-3. Let the bot collect name, date, time, and city
+3. Let the bot collect date, city, and optional time
 4. Confirm the city from the inline buttons
 5. Verify that the bot answers the original question after building the chart
 
-### Expected natal behavior
+### Expected guided behavior
 
 You should receive:
 
-- a chart image
-- a natal summary
-- planet placement messages
-- 5 aspect messages
 - city confirmation buttons before natal calculation
-- working interpretation responses from the buttons
-- grounded answers to plain-language chart questions after `/natal`
+- a direct answer to the original question after setup
+- a short follow-up prompt suggesting what to ask next
+- chart access through `/profile`
 
 ## Troubleshooting
 
@@ -580,9 +544,7 @@ The bot will continue, but:
 
 ### A button says details expired
 
-Run `/natal` again.
-
-Interpretation button data is kept in memory for the running bot process and is not persisted.
+Run `/profile` or `/start` again.
 
 ### Conversational mode says Gemini is unavailable
 
@@ -594,14 +556,14 @@ Check:
 
 If the key was pasted in chat or logs, rotate it before production use.
 
-### Conversational mode answers only after `/natal`
+### Conversational mode answers only after setup
 
 This is intentional.
 
 The bot is configured in strict chart-based mode:
 
 - no chart, no personal astrology answer
-- complete `/natal` first, then ask follow-up questions
+- complete setup first, then ask follow-up questions
 
 ## Publishing Notes
 

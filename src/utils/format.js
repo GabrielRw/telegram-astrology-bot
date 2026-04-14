@@ -84,9 +84,7 @@ function resolveSignLabel(sign, signId) {
 
 function formatStartMessage() {
   return [
-    'FreeAstro Telegram Bot Starter Kit',
-    '',
-    'I will first save your birth details so later questions stay natural and chart-grounded.',
+    'I read charts from your birth details so later questions stay personal and precise.',
     '',
     'You can still use:',
     '/daily leo',

@@ -6,6 +6,11 @@ class FreeAstroMcpService {
     this.client = null;
     this.transport = null;
     this.tools = null;
+    this.functionDeclarations = null;
+    this.toolsPromise = null;
+    this.functionDeclarationsPromise = null;
+    this.cacheExpiryMs = 60 * 60 * 1000;
+    this.toolsFetchedAt = 0;
     this.toolNameMap = new Map();
   }
 
@@ -47,29 +52,54 @@ class FreeAstroMcpService {
   async listTools() {
     await this.ensureConnected();
 
-    if (this.tools) {
+    if (this.tools && Date.now() - this.toolsFetchedAt < this.cacheExpiryMs) {
       return this.tools;
     }
 
-    const result = await this.client.listTools();
-    this.tools = Array.isArray(result?.tools) ? result.tools : [];
-    this.toolNameMap = new Map(
-      this.tools.map((tool) => [this.sanitizeToolName(tool.name), tool.name])
-    );
-    return this.tools;
+    if (!this.toolsPromise) {
+      this.toolsPromise = this.client.listTools()
+        .then((result) => {
+          this.tools = Array.isArray(result?.tools) ? result.tools : [];
+          this.toolNameMap = new Map(
+            this.tools.map((tool) => [this.sanitizeToolName(tool.name), tool.name])
+          );
+          this.toolsFetchedAt = Date.now();
+          this.functionDeclarations = null;
+          return this.tools;
+        })
+        .finally(() => {
+          this.toolsPromise = null;
+        });
+    }
+
+    return this.toolsPromise;
   }
 
   async getFunctionDeclarations() {
-    const tools = await this.listTools();
+    if (this.functionDeclarations && Date.now() - this.toolsFetchedAt < this.cacheExpiryMs) {
+      return this.functionDeclarations;
+    }
 
-    return tools.map((tool) => ({
-      name: this.sanitizeToolName(tool.name),
-      description: `[FreeAstro MCP] ${tool.description || tool.name}`,
-      parameters: tool.inputSchema || {
-        type: 'object',
-        properties: {}
-      }
-    }));
+    if (!this.functionDeclarationsPromise) {
+      this.functionDeclarationsPromise = this.listTools()
+        .then((tools) => {
+          this.functionDeclarations = tools.map((tool) => ({
+            name: this.sanitizeToolName(tool.name),
+            description: `[FreeAstro MCP] ${tool.description || tool.name}`,
+            parameters: tool.inputSchema || {
+              type: 'object',
+              properties: {}
+            }
+          }));
+
+          return this.functionDeclarations;
+        })
+        .finally(() => {
+          this.functionDeclarationsPromise = null;
+        });
+    }
+
+    return this.functionDeclarationsPromise;
   }
 
   async callSanitizedTool(name, args) {

@@ -1,3 +1,4 @@
+const { randomUUID } = require('node:crypto');
 const { setActiveFlow, clearActiveFlow } = require('../state/chatState');
 
 const sessions = new Map();
@@ -26,11 +27,23 @@ function getSession(chatId) {
 }
 
 function setSession(chatId, session) {
-  sessions.set(resolveSessionKey(chatId), session);
+  const key = resolveSessionKey(chatId);
+  const previous = sessions.get(key);
+  const flowId = session.flowId || previous?.flowId || randomUUID();
+  const revision = previous?.flowId === flowId ? (previous?.revision || 0) + 1 : 1;
+  const nextSession = {
+    ...session,
+    flowId,
+    revision,
+    locked: Boolean(session.locked)
+  };
+
+  sessions.set(key, nextSession);
   setActiveFlow(chatId, {
     name: 'natal',
-    step: session.step
+    step: nextSession.step
   });
+  return nextSession;
 }
 
 function clearSession(chatId) {
@@ -40,13 +53,65 @@ function clearSession(chatId) {
 
 function startNatalFlow(chatId, source = 'command') {
   const session = {
-    step: 'name',
+    step: 'date',
     source,
     pendingQuestion: null,
-    cityCandidates: []
+    cityCandidates: [],
+    locked: false
   };
-  setSession(chatId, session);
-  return session;
+  return setSession(chatId, session);
+}
+
+function createSessionCheckpoint(session) {
+  if (!session) {
+    return null;
+  }
+
+  return {
+    flowId: session.flowId,
+    revision: session.revision,
+    step: session.step
+  };
+}
+
+function isSessionCurrent(chatId, checkpoint, expectedStep) {
+  const current = getSession(chatId);
+
+  if (!current || !checkpoint) {
+    return false;
+  }
+
+  if (current.flowId !== checkpoint.flowId || current.revision !== checkpoint.revision) {
+    return false;
+  }
+
+  return expectedStep ? current.step === expectedStep : true;
+}
+
+function lockSession(chatId, flowId) {
+  const current = getSession(chatId);
+
+  if (!current || current.flowId !== flowId || current.locked) {
+    return null;
+  }
+
+  return setSession(chatId, {
+    ...current,
+    locked: true
+  });
+}
+
+function unlockSession(chatId, flowId) {
+  const current = getSession(chatId);
+
+  if (!current || current.flowId !== flowId) {
+    return null;
+  }
+
+  return setSession(chatId, {
+    ...current,
+    locked: false
+  });
 }
 
 function parseDateInput(input) {
@@ -91,7 +156,7 @@ function parseTimeInput(input) {
 
 function createNatalPayload(session, cityMatch) {
   return {
-    name: session.name || 'Telegram User',
+    name: session.name || 'Chart User',
     year: session.birthDate.year,
     month: session.birthDate.month,
     day: session.birthDate.day,
@@ -118,7 +183,7 @@ function createNatalPayload(session, cityMatch) {
 
 function createNatalChartPayload(session, cityMatch) {
   return {
-    name: session.name || 'Telegram User',
+    name: session.name || 'Chart User',
     year: session.birthDate.year,
     month: session.birthDate.month,
     day: session.birthDate.day,
@@ -167,11 +232,15 @@ function createNatalChartPayload(session, cityMatch) {
 
 module.exports = {
   clearSession,
+  createSessionCheckpoint,
   createNatalChartPayload,
   createNatalPayload,
   getSession,
+  isSessionCurrent,
+  lockSession,
   parseDateInput,
   parseTimeInput,
   setSession,
-  startNatalFlow
+  startNatalFlow,
+  unlockSession
 };

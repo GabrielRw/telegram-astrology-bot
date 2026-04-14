@@ -43,6 +43,8 @@ function createDefaultState(identity) {
     chatId: normalized.chatId,
     natalProfile: null,
     rawNatalPayload: null,
+    natalRequestPayload: null,
+    chartRequestPayload: null,
     history: [],
     activeFlow: null,
     lastToolResults: [],
@@ -52,6 +54,22 @@ function createDefaultState(identity) {
       aspects: [],
       planets: []
     }
+  };
+}
+
+function clearNatalProfile(identity) {
+  const state = getChatState(identity);
+  state.natalProfile = null;
+  state.rawNatalPayload = null;
+  state.natalRequestPayload = null;
+  state.chartRequestPayload = null;
+  state.history = [];
+  state.lastToolResults = [];
+  state.pendingQuestion = null;
+  state.choiceMap = {};
+  state.uiCache = {
+    aspects: [],
+    planets: []
   };
 }
 
@@ -224,7 +242,7 @@ function normalizeNatalProfile(payload, cityLabel) {
   const rising = anglesById.asc || null;
 
   return {
-    name: payload?.subject?.name || 'Telegram User',
+    name: payload?.subject?.name || 'Chart User',
     city: cityLabel,
     birthDatetime: payload?.subject?.datetime || null,
     birthLocation: payload?.subject?.location || null,
@@ -243,7 +261,7 @@ function normalizeNatalProfile(payload, cityLabel) {
     stelliums: payload?.stelliums || null,
     interpretationMap,
     summaryText: [
-      `Name: ${payload?.subject?.name || 'Telegram User'}`,
+      `Name: ${payload?.subject?.name || 'Chart User'}`,
       payload?.subject?.datetime ? `Birth datetime: ${payload.subject.datetime}` : null,
       `City: ${cityLabel}`,
       payload?.subject?.location?.timezone ? `Timezone: ${payload.subject.location.timezone}` : null,
@@ -254,14 +272,17 @@ function normalizeNatalProfile(payload, cityLabel) {
   };
 }
 
-function setNatalProfile(chatId, rawNatalPayload, cityLabel) {
+function setNatalProfile(chatId, rawNatalPayload, cityLabel, options = {}) {
   const state = getChatState(chatId);
   state.rawNatalPayload = rawNatalPayload;
+  state.natalRequestPayload = options.natalRequestPayload || null;
+  state.chartRequestPayload = options.chartRequestPayload || null;
   state.natalProfile = normalizeNatalProfile(rawNatalPayload, cityLabel);
   return state.natalProfile;
 }
 
 module.exports = {
+  clearNatalProfile,
   clearActiveFlow,
   consumePendingQuestion,
   getChoiceMap,

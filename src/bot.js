@@ -5,6 +5,7 @@ const { Telegraf } = require('telegraf');
 const registerStartCommand = require('./commands/start');
 const registerDailyCommand = require('./commands/daily');
 const registerNatalCommand = require('./commands/natal');
+const registerProfileCommand = require('./commands/profile');
 const registerChatCommand = require('./commands/chat');
 const { getWhatsappPaths } = require('./channels/whatsapp/api');
 const { handleWhatsAppVerification, handleWhatsAppWebhook } = require('./channels/whatsapp/webhook');
@@ -114,6 +115,7 @@ async function main() {
   registerStartCommand(bot);
   registerDailyCommand(bot);
   registerNatalCommand(bot);
+  registerProfileCommand(bot);
   registerChatCommand(bot);
 
   bot.catch((error, ctx) => {
