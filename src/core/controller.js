@@ -1,4 +1,5 @@
 const { answerConversation } = require('../services/conversation');
+const { renderAstrocartographyMap } = require('../services/astroMap');
 const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
 const { getGeminiErrorMessage } = require('../services/gemini');
 const {
@@ -136,6 +137,34 @@ async function sendConversationAnswer(event, channelApi, answerText) {
 async function sendFollowUpPrompt(event, channelApi, intentId) {
   const locale = getLocale(event);
   await channelApi.sendText(event, formatSuggestionLine(locale, getFollowUpSuggestions(locale, intentId)));
+}
+
+async function maybeSendAstroMap(event, channelApi, userText, conversationResult) {
+  if (conversationResult?.intent !== 'relocation') {
+    return;
+  }
+
+  if (!Array.isArray(conversationResult?.usedTools) || conversationResult.usedTools.length === 0) {
+    return;
+  }
+
+  try {
+    const rendered = await renderAstrocartographyMap({
+      locale: getLocale(event),
+      toolResults: conversationResult.usedTools,
+      userText
+    });
+
+    if (!rendered) {
+      return;
+    }
+
+    await channelApi.sendImage(event, rendered.buffer, {
+      filename: rendered.filename
+    });
+  } catch (error) {
+    return;
+  }
 }
 
 async function sendStarterQuestionButtons(event, channelApi) {
@@ -281,6 +310,7 @@ async function finishNatalFlow(event, channelApi, session) {
         await channelApi.sendText(event, chunk);
       }
 
+      await maybeSendAstroMap(event, channelApi, pendingQuestion, answer);
       await sendFollowUpPrompt(event, channelApi, answer.intent);
     } catch (error) {
       await channelApi.editText(event, loadingRef, `${t(event, 'errors.conversationUnavailable')}\n${getGeminiErrorMessage(error, getLocale(event))}`);
@@ -688,6 +718,7 @@ async function handleIncomingText(event, channelApi) {
       await channelApi.sendText(event, chunk);
     }
 
+    await maybeSendAstroMap(event, channelApi, text, result);
     await sendFollowUpPrompt(event, channelApi, result.intent);
   } catch (error) {
     await channelApi.editText(

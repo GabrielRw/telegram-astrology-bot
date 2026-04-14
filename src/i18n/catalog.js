@@ -179,6 +179,11 @@ const CATALOG = {
       mc: 'MC',
       confidence: 'Confidence',
       strongestAspects: 'Strongest natal aspects:'
+    },
+    maps: {
+      worldTitle: 'Astrocartography map',
+      franceTitle: 'Astrocartography map for France',
+      subtitle: 'Relevant lines and places from your latest relocation reading'
     }
   },
   fr: {
@@ -267,6 +272,11 @@ const CATALOG = {
       mc: 'MC',
       confidence: 'Confiance',
       strongestAspects: 'Aspects natals les plus forts :'
+    },
+    maps: {
+      worldTitle: 'Carte astrocartographique',
+      franceTitle: 'Carte astrocartographique pour la France',
+      subtitle: 'Lignes et lieux pertinents issus de votre dernière lecture de relocalisation'
     }
   },
   de: {
@@ -355,6 +365,11 @@ const CATALOG = {
       mc: 'MC',
       confidence: 'Sicherheit',
       strongestAspects: 'Stärkste Geburtsaspekte:'
+    },
+    maps: {
+      worldTitle: 'Astrokartographie-Karte',
+      franceTitle: 'Astrokartographie-Karte für Frankreich',
+      subtitle: 'Relevante Linien und Orte aus deiner letzten Relokationsdeutung'
     }
   },
   es: {
@@ -443,6 +458,11 @@ const CATALOG = {
       mc: 'MC',
       confidence: 'Confianza',
       strongestAspects: 'Aspectos natales más fuertes:'
+    },
+    maps: {
+      worldTitle: 'Mapa de astrocartografía',
+      franceTitle: 'Mapa de astrocartografía para Francia',
+      subtitle: 'Líneas y lugares relevantes de tu última lectura de reubicación'
     }
   }
 };
