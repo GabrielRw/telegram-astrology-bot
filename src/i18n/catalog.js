@@ -99,40 +99,51 @@ const CATALOG = {
       yes: 'Yes',
       no: 'No',
       showMoreQuestions: 'Show more questions',
+      addProfile: 'Add profile',
       update: 'Update',
       reset: 'Reset',
+      switchProfile: 'Switch profile',
       showChart: 'Show chart'
     },
     prompts: {
       onboardingChat: 'I can answer that properly from your chart.\nFirst I need your birth date and birth city.\n\nSend your birth date in YYYY-MM-DD format.',
       onboardingStart: 'I read charts from your birth details so later questions stay personal and precise.\n\nSend your birth date in YYYY-MM-DD format.',
+      profileNamePrompt: 'Send a name for this profile first.\nExample: Alice, Mom, or Partner',
       birthDateAccepted: 'Good. Your birth date anchors the core chart.\nNow send your birth city.\nExample: Paris or New York',
       cityConfirm: 'I found these city matches. Choose the right one.\nReply 1, 2, or 3 if buttons don’t appear.',
       cityAccepted: 'Good. Your birth city locks the location and timezone.\nDo you know your birth time? It helps with Rising sign and house accuracy.',
       birthTimePrompt: 'Send your birth time in 24-hour format.\nExample: 14:30',
       firstReady: 'We are ready now, What do you want to explore first?',
       welcomeBack: 'Welcome back. What do you want to explore today?',
-      chooseQuestion: 'Choose a question',
+      chooseQuestion: 'Choose a question or write directly your question in the chat.',
       moreQuestions: 'More questions',
       nextYouCanAsk: 'Next you can ask: {suggestions}.',
       readingChart: 'Reading your chart...',
       stillReading: 'Still reading your chart...',
       chartCaption: 'Your natal chart',
       profileActions: 'Profile actions',
+      profileSwitch: 'Choose which saved profile should become active.',
+      synastryPartner: 'Choose the saved profile to compare with your active chart.',
       languagePrompt: 'Choose your language.',
       languageUpdated: 'Language set to {language}.'
     },
     profile: {
       none: 'No birth details are saved yet.\n\nUse /start to set up your chart.',
       title: 'Saved birth details',
+      activeProfile: 'Active profile: {value}',
+      savedProfiles: 'Saved profiles: {value}',
       birthDate: 'Birth date: {value}',
       city: 'City: {value}',
       birthTimeSaved: 'Birth time: {value}',
       birthTimeMissing: 'Birth time: not saved',
       language: 'Language: {value}',
       billing: 'Plan: {value}',
-      footer: 'Use the buttons below to update, reset, or view your chart.',
+      footer: 'Use the buttons below to add, switch, update, reset, or view the active chart.',
       billingFooter: 'Use /billing to see quota details or /subscribe to unlock unlimited questions.',
+      switched: 'Active profile switched to {value}.',
+      added: 'Saved profile "{value}".',
+      deleted: 'Deleted profile "{value}".',
+      noOtherProfiles: 'There are no other saved profiles yet.',
       cleared: 'Your saved birth details were cleared. Send /start when you want to set them again.',
       chartUnavailable: 'Your chart image is not available right now.'
     },
@@ -144,9 +155,12 @@ const CATALOG = {
       cityOptionUnavailable: 'That city option is no longer available.',
       usingCity: 'Using {city}',
       invalidDate: 'Date format should look like 1990-05-15.',
+      invalidProfileName: 'Send a short profile name first.',
       invalidTime: 'Time format should look like 14:30.',
       cityLookupFailed: 'I could not look up that city right now.',
       chooseCityOption: 'Choose one of the city options above. Reply 1, 2, or 3 if buttons don’t appear.',
+      profileUnavailable: 'That saved profile is no longer available.',
+      choosePartnerProfile: 'Choose one of the saved profiles above to continue the synastry reading.',
       replyYesNo: 'Reply yes or no. Birth time helps with Rising sign and house accuracy.',
       noGroundedAnswer: 'I could not produce a grounded astrology answer.',
       conversationUnavailable: 'Conversational mode is unavailable right now.',
@@ -171,6 +185,10 @@ const CATALOG = {
         "How are today's transits affecting me?",
         'What area of life is about to change for me?'
       ],
+      starterButtons: [
+        "Today's transits",
+        'What changes next?'
+      ],
       followUps: {
         relocation: ['another city in France', 'career relocation', 'romantic relocation'],
         rising_sign: ['Moon sign meaning', 'love patterns', 'strongest aspect'],
@@ -180,7 +198,28 @@ const CATALOG = {
         chart_summary: ['love patterns', 'career themes', 'strongest aspect'],
         fallback: ['Rising sign', 'strongest aspect', 'love patterns']
       },
-      firstQuestions: BASE_FIRST_QUESTIONS.en
+      firstQuestions: BASE_FIRST_QUESTIONS.en,
+      firstQuestionButtons: [
+        'My personality',
+        'Sun, Moon, Rising',
+        'Love compatibility',
+        'Career path',
+        'Hidden strength',
+        'Karmic lessons',
+        'Saturn challenges',
+        'Venus in love',
+        'Current transits',
+        'Why this year is hard',
+        'Current moon meaning',
+        'What changes next',
+        'North Node purpose',
+        'Emotional compatibility',
+        'Friendship patterns',
+        'Next 12 months',
+        'Career relocation',
+        'City influence',
+        'Show my natal chart'
+      ]
     },
     natal: {
       snapshotTitle: 'Natal Snapshot',
@@ -198,7 +237,11 @@ const CATALOG = {
     maps: {
       worldTitle: 'Astrocartography map',
       franceTitle: 'Astrocartography map for France',
-      subtitle: 'Relevant lines and places from your latest relocation reading'
+      subtitle: 'Relevant lines and places from your latest relocation reading',
+      lineLegend: 'Relevant lines',
+      crossingsLegend: 'Relevant crossings',
+      placesLegend: 'Relevant places',
+      unnamedLocation: 'Relevant location'
     }
   },
   fr: {
@@ -220,7 +263,7 @@ const CATALOG = {
       birthTimePrompt: 'Envoyez votre heure de naissance au format 24 h.\nExemple : 14:30',
       firstReady: 'Nous sommes prêts maintenant, que voulez-vous explorer en premier ?',
       welcomeBack: 'Bon retour. Que voulez-vous explorer aujourd’hui ?',
-      chooseQuestion: 'Choisissez une question',
+      chooseQuestion: 'Choisissez une question ou écrivez directement votre question dans le chat.',
       moreQuestions: 'Plus de questions',
       nextYouCanAsk: 'Ensuite, vous pouvez demander : {suggestions}.',
       readingChart: 'Je lis votre thème...',
@@ -279,6 +322,10 @@ const CATALOG = {
         'Comment les transits du jour m’affectent-ils ?',
         'Quel domaine de ma vie est sur le point de changer ?'
       ],
+      starterButtons: [
+        'Transits du jour',
+        'Quel changement ?'
+      ],
       followUps: {
         relocation: ['une autre ville en France', 'une relocalisation carrière', 'une relocalisation amoureuse'],
         rising_sign: ['le sens de ma Lune', 'mes schémas amoureux', 'mon aspect le plus fort'],
@@ -288,7 +335,28 @@ const CATALOG = {
         chart_summary: ['mes schémas amoureux', 'mes thèmes de carrière', 'mon aspect le plus fort'],
         fallback: ['mon Ascendant', 'mon aspect le plus fort', 'mes schémas amoureux']
       },
-      firstQuestions: BASE_FIRST_QUESTIONS.fr
+      firstQuestions: BASE_FIRST_QUESTIONS.fr,
+      firstQuestionButtons: [
+        'Ma personnalité',
+        'Soleil, Lune, Ascendant',
+        'Compatibilité amoureuse',
+        'Ma voie pro',
+        'Force cachée',
+        'Leçons karmiques',
+        'Défis de Saturne',
+        'Vénus et amour',
+        'Transits actuels',
+        'Pourquoi cette année',
+        'La lune actuelle',
+        'Quel changement ?',
+        'But du Nœud Nord',
+        'Compatibilité émotionnelle',
+        'Amitiés et conflits',
+        'Les 12 prochains mois',
+        'Relocalisation carrière',
+        'Influence de ma ville',
+        'Voir mon thème natal'
+      ]
     },
     natal: {
       snapshotTitle: 'Aperçu natal',
@@ -306,7 +374,11 @@ const CATALOG = {
     maps: {
       worldTitle: 'Carte astrocartographique',
       franceTitle: 'Carte astrocartographique pour la France',
-      subtitle: 'Lignes et lieux pertinents issus de votre dernière lecture de relocalisation'
+      subtitle: 'Lignes et lieux pertinents issus de votre dernière lecture de relocalisation',
+      lineLegend: 'Lignes pertinentes',
+      crossingsLegend: 'Croisements pertinents',
+      placesLegend: 'Lieux pertinents',
+      unnamedLocation: 'Lieu pertinent'
     }
   },
   de: {
@@ -328,7 +400,7 @@ const CATALOG = {
       birthTimePrompt: 'Sende deine Geburtszeit im 24-Stunden-Format.\nBeispiel: 14:30',
       firstReady: 'Wir sind jetzt bereit. Was möchtest du zuerst erkunden?',
       welcomeBack: 'Willkommen zurück. Was möchtest du heute erkunden?',
-      chooseQuestion: 'Wähle eine Frage',
+      chooseQuestion: 'Wähle eine Frage oder schreibe deine Frage direkt in den Chat.',
       moreQuestions: 'Mehr Fragen',
       nextYouCanAsk: 'Als Nächstes kannst du fragen: {suggestions}.',
       readingChart: 'Ich lese dein Horoskop...',
@@ -387,6 +459,10 @@ const CATALOG = {
         'Wie wirken sich die heutigen Transite auf mich aus?',
         'Welcher Lebensbereich wird sich bald verändern?'
       ],
+      starterButtons: [
+        'Heutige Transite',
+        'Was verändert sich?'
+      ],
       followUps: {
         relocation: ['eine andere Stadt in Frankreich', 'beruflicher Umzug', 'romantischer Umzug'],
         rising_sign: ['die Bedeutung meines Mondes', 'Liebesmuster', 'mein stärkster Aspekt'],
@@ -396,7 +472,28 @@ const CATALOG = {
         chart_summary: ['Liebesmuster', 'Berufsthemen', 'mein stärkster Aspekt'],
         fallback: ['mein Aszendent', 'mein stärkster Aspekt', 'Liebesmuster']
       },
-      firstQuestions: BASE_FIRST_QUESTIONS.de
+      firstQuestions: BASE_FIRST_QUESTIONS.de,
+      firstQuestionButtons: [
+        'Meine Persönlichkeit',
+        'Sonne, Mond, Aszendent',
+        'Liebes-Kompatibilität',
+        'Beruflicher Weg',
+        'Verborgene Stärke',
+        'Karmische Lektionen',
+        'Saturn-Herausforderungen',
+        'Venus und Liebe',
+        'Aktuelle Transite',
+        'Warum dieses Jahr schwer ist',
+        'Bedeutung des Mondes',
+        'Was sich verändert',
+        'Nordknoten-Zweck',
+        'Emotionale Kompatibilität',
+        'Freundschaften und Konflikte',
+        'Nächste 12 Monate',
+        'Karriere-Umzug',
+        'Einfluss meiner Stadt',
+        'Geburtshoroskop zeigen'
+      ]
     },
     natal: {
       snapshotTitle: 'Geburtsübersicht',
@@ -414,7 +511,11 @@ const CATALOG = {
     maps: {
       worldTitle: 'Astrokartographie-Karte',
       franceTitle: 'Astrokartographie-Karte für Frankreich',
-      subtitle: 'Relevante Linien und Orte aus deiner letzten Relokationsdeutung'
+      subtitle: 'Relevante Linien und Orte aus deiner letzten Relokationsdeutung',
+      lineLegend: 'Relevante Linien',
+      crossingsLegend: 'Relevante Kreuzungen',
+      placesLegend: 'Relevante Orte',
+      unnamedLocation: 'Relevanter Ort'
     }
   },
   es: {
@@ -436,7 +537,7 @@ const CATALOG = {
       birthTimePrompt: 'Envía tu hora de nacimiento en formato de 24 horas.\nEjemplo: 14:30',
       firstReady: 'Ya estamos listos, ¿qué quieres explorar primero?',
       welcomeBack: 'Bienvenido de nuevo. ¿Qué quieres explorar hoy?',
-      chooseQuestion: 'Elige una pregunta',
+      chooseQuestion: 'Elige una pregunta o escribe tu pregunta directamente en el chat.',
       moreQuestions: 'Más preguntas',
       nextYouCanAsk: 'Después puedes preguntar: {suggestions}.',
       readingChart: 'Estoy leyendo tu carta...',
@@ -495,6 +596,10 @@ const CATALOG = {
         '¿Cómo me están afectando los tránsitos de hoy?',
         '¿Qué área de mi vida está a punto de cambiar?'
       ],
+      starterButtons: [
+        'Tránsitos de hoy',
+        '¿Qué cambia ahora?'
+      ],
       followUps: {
         relocation: ['otra ciudad en Francia', 'reubicación laboral', 'reubicación romántica'],
         rising_sign: ['el significado de mi Luna', 'patrones de amor', 'mi aspecto más fuerte'],
@@ -504,7 +609,28 @@ const CATALOG = {
         chart_summary: ['patrones de amor', 'temas de carrera', 'mi aspecto más fuerte'],
         fallback: ['mi Ascendente', 'mi aspecto más fuerte', 'patrones de amor']
       },
-      firstQuestions: BASE_FIRST_QUESTIONS.es
+      firstQuestions: BASE_FIRST_QUESTIONS.es,
+      firstQuestionButtons: [
+        'Mi personalidad',
+        'Sol, Luna, Ascendente',
+        'Compatibilidad amorosa',
+        'Camino profesional',
+        'Fortaleza oculta',
+        'Lecciones kármicas',
+        'Desafíos de Saturno',
+        'Venus y amor',
+        'Tránsitos actuales',
+        'Por qué este año pesa',
+        'La luna actual',
+        'Qué cambia ahora',
+        'Propósito del Nodo Norte',
+        'Compatibilidad emocional',
+        'Patrones de amistad',
+        'Próximos 12 meses',
+        'Reubicación laboral',
+        'Influencia de mi ciudad',
+        'Mostrar mi carta natal'
+      ]
     },
     natal: {
       snapshotTitle: 'Resumen natal',
@@ -522,7 +648,11 @@ const CATALOG = {
     maps: {
       worldTitle: 'Mapa de astrocartografía',
       franceTitle: 'Mapa de astrocartografía para Francia',
-      subtitle: 'Líneas y lugares relevantes de tu última lectura de reubicación'
+      subtitle: 'Líneas y lugares relevantes de tu última lectura de reubicación',
+      lineLegend: 'Líneas relevantes',
+      crossingsLegend: 'Cruces relevantes',
+      placesLegend: 'Lugares relevantes',
+      unnamedLocation: 'Lugar relevante'
     }
   }
 };

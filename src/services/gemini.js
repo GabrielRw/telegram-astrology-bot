@@ -141,7 +141,7 @@ async function runFunctionCallingLoop({
     createUserContent(userText)
   ];
 
-  let toolResults = [];
+  const allToolResults = [];
 
   for (let step = 0; step < 4; step += 1) {
     const response = await generateContentWithRetry(ai, {
@@ -167,7 +167,7 @@ async function runFunctionCallingLoop({
     if (functionCalls.length === 0) {
       return {
         text: response.text || 'I could not generate a grounded astrology answer.',
-        toolResults
+        toolResults: allToolResults
       };
     }
 
@@ -175,7 +175,6 @@ async function runFunctionCallingLoop({
     contents.push(createModelContent(modelParts));
 
     const responseParts = [];
-    toolResults = [];
 
     for (const call of functionCalls) {
       let result;
@@ -186,7 +185,7 @@ async function runFunctionCallingLoop({
         result = { error: error.message || 'Tool execution failed.' };
       }
 
-      toolResults.push({
+      allToolResults.push({
         name: call.name,
         args: call.args || {},
         result
@@ -206,7 +205,7 @@ async function runFunctionCallingLoop({
 
   return {
     text: 'I hit the tool-calling limit before I could finish the reading.',
-    toolResults
+    toolResults: allToolResults
   };
 }
 
@@ -273,6 +272,14 @@ function createLocalFunctionDeclarations() {
           }
         },
         required: ['angle']
+      }
+    },
+    {
+      name: 'get_cached_monthly_transits',
+      description: 'Return the cached transit timeline for the active profile and current month when available.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {}
       }
     },
     {

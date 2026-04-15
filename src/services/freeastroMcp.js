@@ -13,6 +13,7 @@ class FreeAstroMcpService {
     this.cacheExpiryMs = 60 * 60 * 1000;
     this.toolsFetchedAt = 0;
     this.toolNameMap = new Map();
+    this.originalToSanitizedMap = new Map();
   }
 
   getServerUrl() {
@@ -161,6 +162,9 @@ class FreeAstroMcpService {
           this.toolNameMap = new Map(
             this.tools.map((tool) => [this.sanitizeToolName(tool.name), tool.name])
           );
+          this.originalToSanitizedMap = new Map(
+            this.tools.map((tool) => [tool.name, this.sanitizeToolName(tool.name)])
+          );
           this.toolsFetchedAt = Date.now();
           this.functionDeclarations = null;
           return this.tools;
@@ -226,8 +230,45 @@ class FreeAstroMcpService {
     };
   }
 
+  async callToolByOriginalName(name, args) {
+    await this.listTools();
+
+    const originalName = Array.from(this.originalToSanitizedMap.keys()).find((toolName) => toolName === name);
+
+    if (!originalName) {
+      throw new Error(`Unknown MCP tool: ${name}`);
+    }
+
+    const result = await this.client.callTool({
+      name: originalName,
+      arguments: args || {}
+    });
+
+    const textContent = Array.isArray(result?.content)
+      ? result.content
+          .filter((item) => item?.type === 'text' && item.text)
+          .map((item) => item.text)
+          .join('\n')
+      : '';
+
+    return {
+      tool: originalName,
+      structuredContent: result?.structuredContent || null,
+      text: textContent || null,
+      isError: Boolean(result?.isError)
+    };
+  }
+
+  resolveOriginalToolName(name) {
+    if (this.toolNameMap.has(name)) {
+      return this.toolNameMap.get(name);
+    }
+
+    return this.originalToSanitizedMap.has(name) ? name : null;
+  }
+
   isMcpTool(name) {
-    return this.toolNameMap.has(name);
+    return this.toolNameMap.has(name) || this.originalToSanitizedMap.has(name);
   }
 }
 

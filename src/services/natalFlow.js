@@ -3,6 +3,7 @@ const { setActiveFlow, clearActiveFlow } = require('../state/chatState');
 
 const sessions = new Map();
 let persistenceHook = null;
+const MAX_PROFILE_NAME_LENGTH = 60;
 
 function resolveIdentity(identity) {
   if (identity && typeof identity === 'object') {
@@ -54,15 +55,28 @@ function clearSession(chatId) {
   notifyPersistence(chatId);
 }
 
-function startNatalFlow(chatId, source = 'command') {
+function startNatalFlow(chatId, source = 'command', options = {}) {
   const session = {
-    step: 'date',
+    step: options.mode === 'add_secondary' ? 'name' : 'date',
     source,
+    mode: options.mode || 'create_primary',
+    targetProfileId: options.targetProfileId || null,
+    profileName: options.profileName || null,
     pendingQuestion: null,
     cityCandidates: [],
     locked: false
   };
   return setSession(chatId, session);
+}
+
+function parseProfileNameInput(input) {
+  const value = String(input || '').trim().replace(/\s+/g, ' ');
+
+  if (!value) {
+    return null;
+  }
+
+  return value.slice(0, MAX_PROFILE_NAME_LENGTH);
 }
 
 function createSessionCheckpoint(session) {
@@ -194,7 +208,7 @@ function parseTimeInput(input) {
 
 function createNatalPayload(session, cityMatch) {
   return {
-    name: session.name || 'Chart User',
+    name: session.profileName || session.name || 'Chart User',
     year: session.birthDate.year,
     month: session.birthDate.month,
     day: session.birthDate.day,
@@ -221,7 +235,7 @@ function createNatalPayload(session, cityMatch) {
 
 function createNatalChartPayload(session, cityMatch) {
   return {
-    name: session.name || 'Chart User',
+    name: session.profileName || session.name || 'Chart User',
     year: session.birthDate.year,
     month: session.birthDate.month,
     day: session.birthDate.day,
@@ -278,6 +292,7 @@ module.exports = {
   isSessionCurrent,
   lockSession,
   parseDateInput,
+  parseProfileNameInput,
   parseTimeInput,
   replaceSession,
   setSession,

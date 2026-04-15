@@ -3,13 +3,16 @@ const { renderAstrocartographyMap } = require('../services/astroMap');
 const billing = require('../services/billing');
 const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
 const { getGeminiErrorMessage } = require('../services/gemini');
+const profiles = require('../services/profiles');
 const {
   getFirstQuestionPrompts,
+  getFirstQuestionButtonLabels,
   getFollowUpSuggestions,
   getLanguageName,
   getLanguageOptions,
   getLocale,
   getStarterSuggestions,
+  getStarterSuggestionButtons,
   refreshLocaleFromProfile,
   setManualLocale,
   syncLocaleFromEvent,
@@ -17,6 +20,7 @@ const {
   translateUserError
 } = require('../services/locale');
 const persistence = require('../services/persistence');
+const toolCache = require('../services/toolCache');
 const {
   clearSession,
   createNatalChartPayload,
@@ -26,18 +30,19 @@ const {
   isSessionCurrent,
   lockSession,
   parseDateInput,
+  parseProfileNameInput,
   parseTimeInput,
   setSession,
   startNatalFlow,
   unlockSession
 } = require('../services/natalFlow');
 const {
-  clearNatalProfile,
   consumePendingQuestion,
   getChoiceMap,
   getChatState,
+  notifyPersistence,
   setChoiceMap,
-  setNatalProfile,
+  setPendingSynastryQuestion,
   setPendingQuestion
 } = require('../state/chatState');
 const {
@@ -51,11 +56,14 @@ const ACTIONS = {
   CITY_PREFIX: 'NATAL_CITY_',
   STARTER_QUESTION_PREFIX: 'STARTER_QUESTION_',
   FULL_QUESTION_PREFIX: 'FULL_QUESTION_',
-  SHOW_MORE_QUESTIONS: 'SHOW_MORE_QUESTIONS',
+  SHOW_MORE_QUESTIONS_PREFIX: 'SHOW_MORE_QUESTIONS_',
   LANGUAGE_PREFIX: 'LANGUAGE_',
+  PROFILE_ADD: 'PROFILE_ADD',
+  PROFILE_SWITCH_PREFIX: 'PROFILE_SWITCH_',
   PROFILE_UPDATE: 'PROFILE_UPDATE',
   PROFILE_RESET: 'PROFILE_RESET',
-  PROFILE_SHOW_CHART: 'PROFILE_SHOW_CHART'
+  PROFILE_SHOW_CHART: 'PROFILE_SHOW_CHART',
+  SYNASTRY_PARTNER_PREFIX: 'SYNASTRY_PARTNER_'
 };
 
 function formatCityOption(city) {
@@ -71,6 +79,22 @@ function chunkQuestions(questions, size = 3) {
   }
 
   return chunks;
+}
+
+async function sendChoiceBatches(event, channelApi, prompt, choices, size = 3) {
+  for (const batch of chunkQuestions(choices, size)) {
+    await channelApi.sendChoices(event, prompt, batch);
+  }
+}
+
+function resetConversationContext(identity) {
+  const state = getChatState(identity);
+  state.history = [];
+  state.lastToolResults = [];
+  state.pendingQuestion = null;
+  state.pendingSynastryQuestion = null;
+  state.choiceMap = {};
+  notifyPersistence(identity);
 }
 
 function formatSuggestionLine(locale, suggestions) {
@@ -145,7 +169,7 @@ async function sendBillingStatus(event, channelApi) {
 async function handleQuestionLimit(event, channelApi, loadingRef = null) {
   const checkoutUrl = await maybeBuildCheckoutLink(event);
   const message = checkoutUrl
-    ? formatBillingLinkMessage(event)
+    ? formatBillingLinkMessage(event, checkoutUrl)
     : [t(event, 'billing.limitReached', { limit: billing.FREE_QUESTIONS_PER_DAY }), t(event, 'billing.checkoutUnavailable')].join('\n\n');
 
   if (loadingRef && !checkoutUrl) {
@@ -176,6 +200,22 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
 
   try {
     const result = await answerConversation(event, userText);
+
+    if (result?.requiresSynastryProfileSelection) {
+      setPendingSynastryQuestion(event, userText);
+      await channelApi.editText(
+        event,
+        loadingRef,
+        result.candidates?.length > 0 ? t(event, 'errors.choosePartnerProfile') : t(event, 'profile.noOtherProfiles')
+      );
+
+      if (result.candidates?.length > 0) {
+        await sendSynastryPartnerChoices(event, channelApi, result.candidates);
+      }
+
+      return true;
+    }
+
     const chunks = splitConversationReply(result.text);
 
     if (chunks.length === 0) {
@@ -208,6 +248,10 @@ async function promptForBirthDate(event, channelApi, source = 'start') {
   await channelApi.sendText(event, getOnboardingIntro(locale, source));
 }
 
+async function promptForProfileName(event, channelApi) {
+  await channelApi.sendText(event, t(event, 'prompts.profileNamePrompt'));
+}
+
 async function promptForCity(event, channelApi) {
   await channelApi.sendText(event, t(event, 'prompts.birthDateAccepted'));
 }
@@ -236,19 +280,6 @@ async function promptForBirthTimeKnown(event, channelApi) {
 
 async function promptForBirthTime(event, channelApi) {
   await channelApi.sendText(event, t(event, 'prompts.birthTimePrompt'));
-}
-
-async function sendConversationAnswer(event, channelApi, answerText) {
-  const chunks = splitConversationReply(answerText);
-
-  if (chunks.length === 0) {
-    await channelApi.sendText(event, t(event, 'errors.noGroundedAnswer'));
-    return;
-  }
-
-  for (const chunk of chunks) {
-    await channelApi.sendText(event, chunk);
-  }
 }
 
 async function sendFollowUpPrompt(event, channelApi, intentId) {
@@ -287,43 +318,54 @@ async function maybeSendAstroMap(event, channelApi, userText, conversationResult
 async function sendStarterQuestionButtons(event, channelApi) {
   const locale = getLocale(event);
   const starterQuestions = getStarterSuggestions(locale);
+  const starterButtonLabels = getStarterSuggestionButtons(locale);
 
   await channelApi.sendChoices(event, t(locale, 'prompts.chooseQuestion'), [
     {
       id: `${ACTIONS.STARTER_QUESTION_PREFIX}0`,
-      title: starterQuestions[0]
+      title: starterButtonLabels[0] || starterQuestions[0]
     },
     {
       id: `${ACTIONS.STARTER_QUESTION_PREFIX}1`,
-      title: starterQuestions[1]
+      title: starterButtonLabels[1] || starterQuestions[1]
     },
     {
-      id: ACTIONS.SHOW_MORE_QUESTIONS,
+      id: `${ACTIONS.SHOW_MORE_QUESTIONS_PREFIX}0`,
       title: t(locale, 'buttons.showMoreQuestions')
     }
   ]);
 }
 
-async function sendAllSuggestedQuestions(event, channelApi) {
+async function sendSuggestedQuestionPage(event, channelApi, startIndex = 0) {
   const locale = getLocale(event);
   const questions = getFirstQuestionPrompts(locale);
-  const chunks = chunkQuestions(questions, 3);
+  const buttonLabels = getFirstQuestionButtonLabels(locale);
+  const pageSize = 2;
+  const chunk = questions.slice(startIndex, startIndex + pageSize);
 
-  for (const [chunkIndex, chunk] of chunks.entries()) {
-    await channelApi.sendChoices(
-      event,
-      t(locale, 'prompts.moreQuestions'),
-      chunk.map((question, index) => ({
-        id: `${ACTIONS.FULL_QUESTION_PREFIX}${chunkIndex * 3 + index}`,
-        title: question.slice(0, 60)
-      }))
-    );
+  if (chunk.length === 0) {
+    return;
   }
+
+  const choices = chunk.map((question, index) => ({
+    id: `${ACTIONS.FULL_QUESTION_PREFIX}${startIndex + index}`,
+    title: (buttonLabels[startIndex + index] || question).slice(0, 60)
+  }));
+
+  if (startIndex + chunk.length < questions.length) {
+    choices.push({
+      id: `${ACTIONS.SHOW_MORE_QUESTIONS_PREFIX}${startIndex + chunk.length}`,
+      title: t(locale, 'buttons.showMoreQuestions')
+    });
+  }
+
+  await channelApi.sendChoices(event, t(locale, 'prompts.moreQuestions'), choices);
 }
 
 function buildProfileMessage(chatState, access) {
   const profile = chatState.natalProfile;
   const locale = getLocale(chatState);
+  const directory = Array.isArray(chatState.profileDirectory) ? chatState.profileDirectory : [];
 
   if (!profile) {
     return [
@@ -335,6 +377,12 @@ function buildProfileMessage(chatState, access) {
 
   const birthDate = profile.birthDatetime ? String(profile.birthDatetime).slice(0, 10) : 'Unknown';
   const city = profile.city || 'Unknown';
+  const activeProfileName = directory.find((entry) => entry.profileId === chatState.activeProfileId)?.profileName || profile.name || 'Chart User';
+  const savedProfiles = directory.length > 0
+    ? directory
+        .map((entry) => entry.profileId === chatState.activeProfileId ? `${entry.profileName} (active)` : entry.profileName)
+        .join(', ')
+    : activeProfileName;
   const timeLine = profile.timeKnown
     ? t(locale, 'profile.birthTimeSaved', { value: String(profile.birthDatetime).slice(11, 16) || 'Saved' })
     : t(locale, 'profile.birthTimeMissing');
@@ -342,6 +390,8 @@ function buildProfileMessage(chatState, access) {
   return [
     t(locale, 'profile.title'),
     '',
+    t(locale, 'profile.activeProfile', { value: activeProfileName }),
+    t(locale, 'profile.savedProfiles', { value: savedProfiles }),
     t(locale, 'profile.birthDate', { value: birthDate }),
     t(locale, 'profile.city', { value: city }),
     timeLine,
@@ -353,6 +403,49 @@ function buildProfileMessage(chatState, access) {
     t(locale, 'profile.footer'),
     t(locale, 'profile.billingFooter')
   ].join('\n');
+}
+
+async function sendProfileActions(event, channelApi, chatState) {
+  const choices = [
+    { id: ACTIONS.PROFILE_ADD, title: t(event, 'buttons.addProfile') },
+    { id: ACTIONS.PROFILE_UPDATE, title: t(event, 'buttons.update') },
+    { id: ACTIONS.PROFILE_RESET, title: t(event, 'buttons.reset') },
+    { id: ACTIONS.PROFILE_SHOW_CHART, title: t(event, 'buttons.showChart') }
+  ];
+
+  const otherProfiles = (chatState.profileDirectory || []).filter((entry) => entry.profileId !== chatState.activeProfileId);
+  if (otherProfiles.length > 0) {
+    choices.splice(1, 0, {
+      id: `${ACTIONS.PROFILE_SWITCH_PREFIX}${otherProfiles[0].profileId}`,
+      title: `${t(event, 'buttons.switchProfile')}: ${otherProfiles[0].profileName}`.slice(0, 60)
+    });
+  }
+
+  await sendChoiceBatches(event, channelApi, t(event, 'prompts.profileActions'), choices);
+
+  if (otherProfiles.length > 1) {
+    const switchChoices = otherProfiles.slice(1).map((entry) => ({
+      id: `${ACTIONS.PROFILE_SWITCH_PREFIX}${entry.profileId}`,
+      title: entry.profileName.slice(0, 60)
+    }));
+
+    await sendChoiceBatches(event, channelApi, t(event, 'prompts.profileSwitch'), switchChoices);
+  }
+}
+
+async function sendSynastryPartnerChoices(event, channelApi, candidates) {
+  const choices = candidates.map((candidate) => ({
+    id: `${ACTIONS.SYNASTRY_PARTNER_PREFIX}${candidate.profileId}`,
+    title: `${candidate.profileName}${candidate.cityLabel ? ` • ${candidate.cityLabel}` : ''}`.slice(0, 60)
+  }));
+
+  if (choices.length === 0) {
+    await channelApi.sendText(event, t(event, 'profile.noOtherProfiles'));
+    return;
+  }
+
+  setChoiceMap(event, Object.fromEntries(choices.map((choice, index) => [String(index + 1), choice.id])));
+  await sendChoiceBatches(event, channelApi, t(event, 'prompts.synastryPartner'), choices);
 }
 
 async function sendCompactChart(event, channelApi) {
@@ -399,24 +492,35 @@ async function finishNatalFlow(event, channelApi, session) {
     }
 
     clearSession(event);
-    setNatalProfile(
-      event,
-      result,
-      `${lockedSession.cityMatch.name}, ${lockedSession.cityMatch.country}`,
-      {
-        birthCountry: lockedSession.cityMatch.country,
-        natalRequestPayload: natalPayload,
-        chartRequestPayload: chartPayload
-      }
-    );
+    const savedProfile = await profiles.saveProfile(event, {
+      profileId: lockedSession.targetProfileId || null,
+      profileName: lockedSession.profileName || result?.subject?.name || 'Chart User',
+      rawNatalPayload: result,
+      natalRequestPayload: natalPayload,
+      chartRequestPayload: chartPayload,
+      birthCountry: lockedSession.cityMatch.country,
+      cityLabel: `${lockedSession.cityMatch.name}, ${lockedSession.cityMatch.country}`,
+      isActive: lockedSession.mode !== 'add_secondary'
+    });
+
+    toolCache.prewarmMonthlyTransitTimeline(event, savedProfile);
     refreshLocaleFromProfile(event);
     setChoiceMap(event, {});
 
     const pendingQuestion = consumePendingQuestion(event);
 
+    if (lockedSession.mode === 'add_secondary' && !pendingQuestion) {
+      await channelApi.editText(
+        event,
+        loadingRef,
+        t(event, 'profile.added', { value: savedProfile.profileName })
+      );
+      return true;
+    }
+
     if (!pendingQuestion) {
       await channelApi.editText(event, loadingRef, t(event, 'prompts.firstReady'));
-      await sendAllSuggestedQuestions(event, channelApi);
+      await sendSuggestedQuestionPage(event, channelApi, 0);
       return true;
     }
 
@@ -446,7 +550,7 @@ async function handleStart(event, channelApi) {
   }
 
   setPendingQuestion(event, null);
-  startNatalFlow(event, 'start');
+  startNatalFlow(event, 'start', { mode: 'create_primary' });
   await promptForBirthDate(event, channelApi, 'start');
   return true;
 }
@@ -459,11 +563,7 @@ async function handleProfile(event, channelApi) {
   await channelApi.sendText(event, buildProfileMessage(chatState, access));
 
   if (chatState.natalProfile) {
-    await channelApi.sendChoices(event, t(event, 'prompts.profileActions'), [
-      { id: ACTIONS.PROFILE_UPDATE, title: t(event, 'buttons.update') },
-      { id: ACTIONS.PROFILE_RESET, title: t(event, 'buttons.reset') },
-      { id: ACTIONS.PROFILE_SHOW_CHART, title: t(event, 'buttons.showChart') }
-    ]);
+    await sendProfileActions(event, channelApi, chatState);
   }
 
   return true;
@@ -508,7 +608,9 @@ async function handleCancel(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
   clearSession(event);
+  resetConversationContext(event);
   setPendingQuestion(event, null);
+  setPendingSynastryQuestion(event, null);
   setChoiceMap(event, {});
   await channelApi.sendText(event, t(event, 'errors.cancelled'));
   return true;
@@ -529,6 +631,11 @@ async function repromptCurrentStep(event, channelApi) {
   const session = getSession(event);
 
   if (!session) {
+    return;
+  }
+
+  if (session.step === 'name') {
+    await promptForProfileName(event, channelApi);
     return;
   }
 
@@ -566,9 +673,10 @@ async function handleIncomingAction(event, channelApi) {
     return false;
   }
 
-  if (actionId === ACTIONS.SHOW_MORE_QUESTIONS) {
+  if (actionId.startsWith(ACTIONS.SHOW_MORE_QUESTIONS_PREFIX)) {
+    const startIndex = Number(actionId.slice(ACTIONS.SHOW_MORE_QUESTIONS_PREFIX.length) || 0);
     await channelApi.ackAction(event);
-    await sendAllSuggestedQuestions(event, channelApi);
+    await sendSuggestedQuestionPage(event, channelApi, Number.isFinite(startIndex) ? startIndex : 0);
     return true;
   }
 
@@ -631,27 +739,89 @@ async function handleIncomingAction(event, channelApi) {
     );
   }
 
+  if (actionId === ACTIONS.PROFILE_ADD) {
+    await channelApi.ackAction(event);
+    setPendingQuestion(event, null);
+    startNatalFlow(event, 'profile', { mode: 'add_secondary' });
+    await promptForProfileName(event, channelApi);
+    return true;
+  }
+
+  if (actionId.startsWith(ACTIONS.PROFILE_SWITCH_PREFIX)) {
+    const profileId = actionId.slice(ACTIONS.PROFILE_SWITCH_PREFIX.length);
+
+    if (!profileId) {
+      await channelApi.ackAction(event, t(event, 'errors.profileUnavailable'));
+      return true;
+    }
+
+    const nextProfile = await profiles.setActiveProfile(event, profileId);
+
+    if (!nextProfile) {
+      await channelApi.ackAction(event, t(event, 'errors.profileUnavailable'));
+      return true;
+    }
+
+    clearSession(event);
+    resetConversationContext(event);
+    refreshLocaleFromProfile(event);
+    await channelApi.ackAction(event);
+    await channelApi.sendText(event, t(event, 'profile.switched', { value: nextProfile.profileName }));
+    return true;
+  }
+
   if (actionId === ACTIONS.PROFILE_UPDATE) {
     await channelApi.ackAction(event);
     setPendingQuestion(event, null);
-    startNatalFlow(event, 'profile');
+    const activeProfile = await profiles.getActiveProfile(event);
+
+    startNatalFlow(event, 'profile', {
+      mode: 'update_active',
+      targetProfileId: activeProfile?.profileId || null,
+      profileName: activeProfile?.profileName || null
+    });
     await promptForBirthDate(event, channelApi, 'start');
     return true;
   }
 
   if (actionId === ACTIONS.PROFILE_RESET) {
     await channelApi.ackAction(event);
+    const activeProfile = await profiles.getActiveProfile(event);
+
+    if (!activeProfile) {
+      await channelApi.sendText(event, t(event, 'profile.cleared'));
+      return true;
+    }
+
+    await profiles.deleteProfile(event, activeProfile.profileId);
     clearSession(event);
-    clearNatalProfile(event);
-    setPendingQuestion(event, null);
+    resetConversationContext(event);
     setChoiceMap(event, {});
-    await channelApi.sendText(event, t(event, 'profile.cleared'));
+    refreshLocaleFromProfile(event);
+    await channelApi.sendText(event, t(event, 'profile.deleted', { value: activeProfile.profileName }));
     return true;
   }
 
   if (actionId === ACTIONS.PROFILE_SHOW_CHART) {
     await channelApi.ackAction(event);
     return sendCompactChart(event, channelApi);
+  }
+
+  if (actionId.startsWith(ACTIONS.SYNASTRY_PARTNER_PREFIX)) {
+    const profileId = actionId.slice(ACTIONS.SYNASTRY_PARTNER_PREFIX.length);
+    const selectedProfile = await profiles.getProfileById(event, profileId);
+
+    if (!selectedProfile) {
+      await channelApi.ackAction(event, t(event, 'errors.profileUnavailable'));
+      return true;
+    }
+
+    await channelApi.ackAction(event);
+    return answerPaidConversation(
+      event,
+      channelApi,
+      `Compare me with ${selectedProfile.profileName}`
+    );
   }
 
   if (actionId === ACTIONS.TIME_YES || actionId === ACTIONS.TIME_NO) {
@@ -722,6 +892,21 @@ async function handleActiveFlowText(event, channelApi, text) {
 
   if (session.locked) {
     await channelApi.sendText(event, t(event, 'prompts.stillReading'));
+    return true;
+  }
+
+  if (session.step === 'name') {
+    const profileName = parseProfileNameInput(text);
+
+    if (!profileName) {
+      await channelApi.sendText(event, t(event, 'errors.invalidProfileName'));
+      return true;
+    }
+
+    session.profileName = profileName;
+    session.step = 'date';
+    setSession(event, session);
+    await promptForBirthDate(event, channelApi, 'start');
     return true;
   }
 
@@ -835,6 +1020,19 @@ async function handleIncomingText(event, channelApi) {
     return handleSubscribe(event, channelApi);
   }
 
+  const mappedAction = getChoiceMap(event)[text];
+  if (mappedAction && (
+    mappedAction.startsWith(ACTIONS.SYNASTRY_PARTNER_PREFIX) ||
+    mappedAction.startsWith(ACTIONS.PROFILE_SWITCH_PREFIX) ||
+    mappedAction.startsWith(ACTIONS.CITY_PREFIX)
+  )) {
+    return handleIncomingAction({ ...event, actionId: mappedAction, type: 'action' }, channelApi);
+  }
+
+  if (getChatState(event).pendingSynastryQuestion) {
+    setPendingSynastryQuestion(event, null);
+  }
+
   const handledFlow = await handleActiveFlowText(event, channelApi, text);
   if (handledFlow) {
     return true;
@@ -844,7 +1042,7 @@ async function handleIncomingText(event, channelApi) {
 
   if (!chatState.natalProfile) {
     setPendingQuestion(event, text);
-    startNatalFlow(event, 'chat');
+    startNatalFlow(event, 'chat', { mode: 'create_primary' });
     await promptForBirthDate(event, channelApi, 'chat');
     return true;
   }

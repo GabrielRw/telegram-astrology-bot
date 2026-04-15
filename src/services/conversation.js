@@ -1,7 +1,14 @@
 const { detectConversationIntent } = require('../config/conversationIntents');
 const mcpService = require('./freeastroMcp');
+const profiles = require('./profiles');
+const toolCache = require('./toolCache');
 const { createLocalFunctionDeclarations, runFunctionCallingLoop } = require('./gemini');
-const { getChatState, pushHistory, setLastToolResults } = require('../state/chatState');
+const {
+  consumePendingSynastryQuestion,
+  getChatState,
+  pushHistory,
+  setLastToolResults
+} = require('../state/chatState');
 const { getLocale } = require('./locale');
 
 const LOCALE_INSTRUCTION = {
@@ -10,6 +17,14 @@ const LOCALE_INSTRUCTION = {
   de: 'German',
   es: 'Spanish'
 };
+
+const SYNSTRY_TOOL_NAMES = new Set([
+  'v1_western_synastry',
+  'v1_western_synastry_summary',
+  'v1_western_synastry_simplified',
+  'v1_western_synastry_horoscope',
+  'v1_western_synastrycards'
+]);
 
 function findPlanet(profile, planet) {
   const key = String(planet || '').trim().toLowerCase();
@@ -24,7 +39,19 @@ function findAngle(profile, angle) {
   return profile?.angles?.[String(angle || '').trim().toLowerCase()] || null;
 }
 
-function buildSystemInstruction(chatState, mcpStatus, intent) {
+function describeSynastryContext(context) {
+  if (!context?.secondaryProfile) {
+    return 'No comparison profile selected.';
+  }
+
+  return [
+    `Active profile: ${context.activeProfile.profileName}`,
+    `Comparison profile: ${context.secondaryProfile.profileName}`,
+    'For relationship questions, default to synastry summary first and use full synastry only if the summary is insufficient.'
+  ].join('\n');
+}
+
+function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
   const profile = chatState.natalProfile;
   const locale = getLocale(chatState);
   const relocationRules = intent.id === 'relocation'
@@ -34,7 +61,9 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
         'When you answer, state the raw returned evidence first, such as distances, scores, city names, or line types.',
         'Then interpret those values in plain language.',
         'If score meaning is not explicitly documented in the tool result, present your reading as an inference, not as endpoint fact.',
-        'Do not invent generic distance-orb rules such as "300 to 500 km" unless the tool result explicitly provides that rule.'
+        'Do not invent generic distance-orb rules such as "300 to 500 km" unless the tool result explicitly provides that rule.',
+        'Do not say that you cannot show images, maps, or visuals in chat.',
+        'If the user asks for lines on the map, answer the question normally and assume the system may attach a relevant astrocartography map image after your text reply.'
       ]
     : [];
 
@@ -44,13 +73,13 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
     'Write in plain text only. Do not use Markdown emphasis, especially **.',
     'Keep each response block short. Aim for multiple small blocks, with no block over 80 words.',
     'Do not repeat the same point twice in one answer, even in different wording.',
-    'Ground every answer in the user natal chart or explicit tool results.',
+    'Ground every answer in the user natal chart, cached tool results, or explicit tool results.',
     'Never invent placements, houses, angles, aspects, timings, or predictions.',
     'If information is missing, say so clearly and ask a narrow follow-up only when required.',
-    'If the user asks for transits, ephemeris, or a month-specific forecast and the needed date window is missing, ask for that date or month before answering.',
+    'If the user asks for transits, ephemeris, or a month-specific forecast and the needed date window is missing, first prefer the cached monthly transit timeline.',
     'Do not give medical, legal, or financial advice.',
     'Never answer personal astrology questions without natal data.',
-    'Prefer cached natal tools first. Use FreeAstro MCP only when cached chart data is insufficient.',
+    'Prefer cached natal and monthly transit tools first. Use FreeAstro MCP only when cached data is insufficient.',
     'When using tool data, interpret it like an astrologer, but stay specific to the chart and concise.',
     ...relocationRules,
     `Detected user intent: ${intent.id}.`,
@@ -58,9 +87,14 @@ function buildSystemInstruction(chatState, mcpStatus, intent) {
     `Preferred cached tools: ${intent.prefersCachedTools.join(', ') || 'none'}.`,
     `Preferred MCP tools: ${intent.prefersMcpTools.join(', ') || 'none'}.`,
     `MCP status: ${mcpStatus}.`,
+    `Active profile name: ${options.activeProfileName || 'Unknown'}.`,
+    `Cached monthly transit timeline: ${options.monthlyTransitAvailable ? 'available for the active month' : 'not cached yet'}.`,
     '',
     'Natal profile facts:',
-    profile?.summaryText || 'No natal profile available.'
+    profile?.summaryText || 'No natal profile available.',
+    '',
+    'Synastry context:',
+    describeSynastryContext(options.synastryContext)
   ].join('\n');
 }
 
@@ -154,8 +188,8 @@ function dedupeRepeatedSentences(text) {
   return keptParagraphs.join('\n\n').trim();
 }
 
-function createLocalToolExecutor(chatState) {
-  const profile = chatState.natalProfile;
+async function createLocalToolExecutor(identity, activeProfile) {
+  const profile = getChatState(identity).natalProfile;
 
   return async (name, args) => {
     switch (name) {
@@ -200,6 +234,16 @@ function createLocalToolExecutor(chatState) {
           ? { angle }
           : { error: `Angle "${args.angle}" is not available in the cached natal profile.` };
       }
+      case 'get_cached_monthly_transits':
+        {
+          const monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, activeProfile);
+        return {
+          available: Boolean(monthlyTransitCache),
+          cacheMonth: monthlyTransitCache?.cacheMonth || null,
+          tool: monthlyTransitCache?.toolName || null,
+          timeline: monthlyTransitCache?.response || null
+        };
+        }
       case 'get_profile_completeness':
         return {
           hasNatalProfile: Boolean(profile),
@@ -214,8 +258,62 @@ function createLocalToolExecutor(chatState) {
   };
 }
 
-async function answerConversation(chatId, userText) {
-  const chatState = getChatState(chatId);
+function buildResolvedToolArgs(originalToolName, args, context) {
+  const nextArgs = { ...(args || {}) };
+
+  if (originalToolName === toolCache.TRANSIT_TOOL && !nextArgs.natal && context.activeProfile?.natalRequestPayload) {
+    const monthWindow = toolCache.getCurrentMonthWindow(context.activeProfile.timezone || 'UTC');
+    nextArgs.natal = context.activeProfile.natalRequestPayload;
+
+    if (monthWindow && !nextArgs.range_start && !nextArgs.range_end) {
+      nextArgs.range_start = monthWindow.rangeStart;
+      nextArgs.range_end = monthWindow.rangeEnd;
+      nextArgs.mode = nextArgs.mode || 'month';
+    }
+  }
+
+  if (SYNSTRY_TOOL_NAMES.has(originalToolName) && context.synastryContext?.secondaryProfile) {
+    if (!nextArgs.person_a) {
+      nextArgs.person_a = profiles.buildSynastryPersonPayload(context.activeProfile);
+    }
+
+    if (!nextArgs.person_b) {
+      nextArgs.person_b = profiles.buildSynastryPersonPayload(context.synastryContext.secondaryProfile);
+    }
+  }
+
+  return nextArgs;
+}
+
+async function detectSynastryContext(identity, userText, intent, activeProfile) {
+  if (intent.id !== 'synastry' || !activeProfile) {
+    return { secondaryProfile: null, needsUserChoice: false, candidates: [] };
+  }
+
+  const matches = await profiles.findMentionedProfiles(identity, userText, {
+    excludeProfileId: activeProfile.profileId
+  });
+
+  if (matches.length === 1) {
+    return {
+      secondaryProfile: matches[0],
+      needsUserChoice: false,
+      candidates: matches
+    };
+  }
+
+  const allCandidates = (await profiles.listProfiles(identity))
+    .filter((profile) => profile.profileId !== activeProfile.profileId);
+
+  return {
+    secondaryProfile: null,
+    needsUserChoice: true,
+    candidates: matches.length > 1 ? matches : allCandidates
+  };
+}
+
+async function answerConversation(identity, userText) {
+  const chatState = getChatState(identity);
   const intent = detectConversationIntent(userText, chatState.history);
   const locale = getLocale(chatState);
 
@@ -223,7 +321,9 @@ async function answerConversation(chatId, userText) {
     throw new Error('Missing GEMINI_API_KEY. Conversational mode is disabled.');
   }
 
-  if (!chatState.natalProfile) {
+  const activeProfile = await profiles.getActiveProfile(identity);
+
+  if (!activeProfile || !chatState.natalProfile) {
     return {
       text: {
         en: 'I need your birth details before I can answer personal astrology questions from your chart.',
@@ -236,8 +336,27 @@ async function answerConversation(chatId, userText) {
     };
   }
 
+  const synastryContext = await detectSynastryContext(identity, userText, intent, activeProfile);
+  if (synastryContext.needsUserChoice) {
+    return {
+      intent: intent.id,
+      requiresSynastryProfileSelection: true,
+      candidates: synastryContext.candidates.map((profile) => ({
+        profileId: profile.profileId,
+        profileName: profile.profileName,
+        cityLabel: profile.cityLabel
+      }))
+    };
+  }
+
+  const pendingComparisonText = consumePendingSynastryQuestion(identity);
+  if (pendingComparisonText && synastryContext.secondaryProfile) {
+    userText = pendingComparisonText;
+  }
+
   const localDeclarations = createLocalFunctionDeclarations();
-  const localExecutor = createLocalToolExecutor(chatState);
+  const localExecutor = await createLocalToolExecutor(identity, activeProfile);
+  const monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, activeProfile);
   let mcpDeclarations = [];
   let mcpStatus = 'available';
 
@@ -248,6 +367,10 @@ async function answerConversation(chatId, userText) {
   }
 
   const allDeclarations = [...localDeclarations, ...mcpDeclarations];
+  const executionContext = {
+    activeProfile,
+    synastryContext
+  };
 
   const executeFunction = async (name, args) => {
     if (name.startsWith('get_cached_') || name === 'get_profile_completeness') {
@@ -255,23 +378,44 @@ async function answerConversation(chatId, userText) {
     }
 
     if (mcpService.isMcpTool(name)) {
-      return mcpService.callSanitizedTool(name, args);
+      const originalToolName = mcpService.resolveOriginalToolName(name);
+      const requestArgs = buildResolvedToolArgs(originalToolName, args, executionContext);
+      const cacheMonth = toolCache.inferCacheMonth(originalToolName, requestArgs, activeProfile.timezone || 'UTC');
+      const result = await toolCache.resolveCachedToolCall(identity, {
+        toolName: originalToolName,
+        requestArgs,
+        primaryProfileId: activeProfile.profileId,
+        secondaryProfileId: synastryContext.secondaryProfile?.profileId || null,
+        questionText: userText,
+        cacheMonth,
+        source: 'runtime',
+        executor: (resolvedArgs) => mcpService.callToolByOriginalName(originalToolName, resolvedArgs)
+      });
+
+      return result.result;
     }
 
     throw new Error(`Unknown tool call: ${name}`);
   };
 
   const result = await runFunctionCallingLoop({
-    systemInstruction: buildSystemInstruction(chatState, mcpStatus, intent),
+    systemInstruction: buildSystemInstruction(chatState, mcpStatus, intent, {
+      activeProfileName: activeProfile.profileName,
+      monthlyTransitAvailable: Boolean(monthlyTransitCache),
+      synastryContext: {
+        activeProfile,
+        secondaryProfile: synastryContext.secondaryProfile
+      }
+    }),
     history: chatState.history,
     userText,
     functionDeclarations: allDeclarations,
     executeFunction
   });
 
-  pushHistory(chatId, 'user', userText);
-  pushHistory(chatId, 'model', result.text);
-  setLastToolResults(chatId, result.toolResults);
+  pushHistory(identity, 'user', userText);
+  pushHistory(identity, 'model', result.text);
+  setLastToolResults(identity, result.toolResults);
 
   return {
     text: normalizeAssistantText(result.text),

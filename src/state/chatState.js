@@ -45,6 +45,8 @@ function createDefaultState(identity) {
     locale: 'en',
     localeSource: 'default',
     platformLocaleHint: null,
+    activeProfileId: null,
+    profileDirectory: [],
     natalProfile: null,
     rawNatalPayload: null,
     natalRequestPayload: null,
@@ -53,6 +55,7 @@ function createDefaultState(identity) {
     activeFlow: null,
     lastToolResults: [],
     pendingQuestion: null,
+    pendingSynastryQuestion: null,
     choiceMap: {},
     uiCache: {
       aspects: [],
@@ -63,6 +66,7 @@ function createDefaultState(identity) {
 
 function clearNatalProfile(identity) {
   const state = getChatState(identity);
+  state.activeProfileId = null;
   state.natalProfile = null;
   state.rawNatalPayload = null;
   state.natalRequestPayload = null;
@@ -70,6 +74,7 @@ function clearNatalProfile(identity) {
   state.history = [];
   state.lastToolResults = [];
   state.pendingQuestion = null;
+  state.pendingSynastryQuestion = null;
   state.choiceMap = {};
   state.uiCache = {
     aspects: [],
@@ -155,6 +160,20 @@ function consumePendingQuestion(chatId) {
   const state = getChatState(chatId);
   const question = state.pendingQuestion;
   state.pendingQuestion = null;
+  notifyPersistence(chatId);
+  return question;
+}
+
+function setPendingSynastryQuestion(chatId, question) {
+  const state = getChatState(chatId);
+  state.pendingSynastryQuestion = question ? String(question) : null;
+  notifyPersistence(chatId);
+}
+
+function consumePendingSynastryQuestion(chatId) {
+  const state = getChatState(chatId);
+  const question = state.pendingSynastryQuestion;
+  state.pendingSynastryQuestion = null;
   notifyPersistence(chatId);
   return question;
 }
@@ -287,19 +306,86 @@ function normalizeNatalProfile(payload, cityLabel, options = {}) {
   };
 }
 
+function setProfileDirectory(identity, directory, options = {}) {
+  const state = getChatState(identity);
+  state.profileDirectory = Array.isArray(directory) ? directory.map((item) => ({ ...item })) : [];
+
+  if (options.notify !== false) {
+    notifyPersistence(identity);
+  }
+
+  return state.profileDirectory;
+}
+
+function getProfileDirectory(identity) {
+  return getChatState(identity).profileDirectory || [];
+}
+
 function setNatalProfile(chatId, rawNatalPayload, cityLabel, options = {}) {
   const state = getChatState(chatId);
+  state.activeProfileId = options.activeProfileId || state.activeProfileId || null;
   state.rawNatalPayload = rawNatalPayload;
   state.natalRequestPayload = options.natalRequestPayload || null;
   state.chartRequestPayload = options.chartRequestPayload || null;
   state.natalProfile = normalizeNatalProfile(rawNatalPayload, cityLabel, options);
-  notifyPersistence(chatId);
+
+  if (options.notify !== false) {
+    notifyPersistence(chatId);
+  }
+
   return state.natalProfile;
+}
+
+function hydrateActiveProfile(chatId, profileRecord, options = {}) {
+  const state = getChatState(chatId);
+
+  if (!profileRecord) {
+    state.activeProfileId = null;
+    state.rawNatalPayload = null;
+    state.natalRequestPayload = null;
+    state.chartRequestPayload = null;
+    state.natalProfile = null;
+
+    if (options.notify !== false) {
+      notifyPersistence(chatId);
+    }
+
+    return null;
+  }
+
+  return setNatalProfile(
+    chatId,
+    profileRecord.rawNatalPayload,
+    profileRecord.cityLabel,
+    {
+      activeProfileId: profileRecord.profileId,
+      natalRequestPayload: profileRecord.natalRequestPayload,
+      chartRequestPayload: profileRecord.chartRequestPayload,
+      birthCountry: profileRecord.birthCountry,
+      notify: options.notify
+    }
+  );
 }
 
 function getChatStateSnapshot(identity) {
   const state = getChatState(identity);
-  return JSON.parse(JSON.stringify(state));
+  return JSON.parse(JSON.stringify({
+    channel: state.channel,
+    userId: state.userId,
+    chatId: state.chatId,
+    locale: state.locale,
+    localeSource: state.localeSource,
+    platformLocaleHint: state.platformLocaleHint,
+    activeProfileId: state.activeProfileId,
+    profileDirectory: state.profileDirectory,
+    history: state.history,
+    activeFlow: state.activeFlow,
+    lastToolResults: state.lastToolResults,
+    pendingQuestion: state.pendingQuestion,
+    pendingSynastryQuestion: state.pendingSynastryQuestion,
+    choiceMap: state.choiceMap,
+    uiCache: state.uiCache
+  }));
 }
 
 function replaceChatState(identity, snapshot) {
@@ -331,11 +417,15 @@ function notifyPersistence(identity) {
 module.exports = {
   clearNatalProfile,
   clearActiveFlow,
+  consumePendingSynastryQuestion,
   consumePendingQuestion,
   getChoiceMap,
   getChatState,
   getChatStateSnapshot,
+  getProfileDirectory,
   getUiCache,
+  hydrateActiveProfile,
+  normalizeNatalProfile,
   pushHistory,
   replaceChatState,
   resolveIdentity,
@@ -345,7 +435,9 @@ module.exports = {
   setLastToolResults,
   setNatalProfile,
   notifyPersistence,
+  setPendingSynastryQuestion,
   setPendingQuestion,
   setPersistenceHook,
+  setProfileDirectory,
   setUiCache
 };

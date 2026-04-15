@@ -9,9 +9,9 @@ module.exports = function registerStartCommand(bot) {
     );
   });
 
-  bot.action(ACTIONS.SHOW_MORE_QUESTIONS, async (ctx) => {
+  bot.action(/^SHOW_MORE_QUESTIONS_(\d+)$/, async (ctx) => {
     await handleIncomingAction(
-      createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.SHOW_MORE_QUESTIONS }),
+      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
       createTelegramChannelApi(ctx)
     );
   });

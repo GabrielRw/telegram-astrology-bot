@@ -160,8 +160,18 @@ function getStarterSuggestions(locale) {
   return [...getCatalog(locale).suggestions.starter];
 }
 
+function getStarterSuggestionButtons(locale) {
+  const catalog = getCatalog(locale);
+  return [...(catalog.suggestions.starterButtons || catalog.suggestions.starter)];
+}
+
 function getFirstQuestionPrompts(locale) {
   return [...getCatalog(locale).suggestions.firstQuestions];
+}
+
+function getFirstQuestionButtonLabels(locale) {
+  const catalog = getCatalog(locale);
+  return [...(catalog.suggestions.firstQuestionButtons || catalog.suggestions.firstQuestions)];
 }
 
 function getFollowUpSuggestions(locale, intentId) {
@@ -266,11 +276,13 @@ function translateUserError(locale, error) {
 module.exports = {
   SUPPORTED_LOCALES,
   getFirstQuestionPrompts,
+  getFirstQuestionButtonLabels,
   getFollowUpSuggestions,
   getLanguageName,
   getLanguageOptions,
   getLocale,
   getStarterSuggestions,
+  getStarterSuggestionButtons,
   mapCountryToLocale,
   mapPlatformLocale,
   normalizeLocale,

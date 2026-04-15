@@ -12,6 +12,7 @@ const {
   replaceSession,
   setPersistenceHook: setSessionPersistenceHook
 } = require('./natalFlow');
+const profiles = require('./profiles');
 
 class ConversationPersistence {
   constructor() {
@@ -52,6 +53,7 @@ class ConversationPersistence {
     }
 
     const task = this.loadConversation(identity)
+      .then(() => profiles.ensureHydrated(identity))
       .catch((error) => reportError('persistence.hydrate', error, { stateKey: key }))
       .finally(() => {
         this.hydrating.delete(key);

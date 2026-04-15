@@ -16,6 +16,13 @@ module.exports = function registerProfileCommand(bot) {
     );
   });
 
+  bot.action(ACTIONS.PROFILE_ADD, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.PROFILE_ADD }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
   bot.action(ACTIONS.PROFILE_RESET, async (ctx) => {
     await handleIncomingAction(
       createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.PROFILE_RESET }),
@@ -26,6 +33,20 @@ module.exports = function registerProfileCommand(bot) {
   bot.action(ACTIONS.PROFILE_SHOW_CHART, async (ctx) => {
     await handleIncomingAction(
       createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.PROFILE_SHOW_CHART }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
+  bot.action(/^PROFILE_SWITCH_.+$/, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
+  bot.action(/^SYNASTRY_PARTNER_.+$/, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
       createTelegramChannelApi(ctx)
     );
   });
