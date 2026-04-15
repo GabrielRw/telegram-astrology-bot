@@ -5,14 +5,9 @@ const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../se
 const { getGeminiErrorMessage } = require('../services/gemini');
 const profiles = require('../services/profiles');
 const {
-  getFirstQuestionPrompts,
-  getFirstQuestionButtonLabels,
-  getFollowUpSuggestions,
   getLanguageName,
   getLanguageOptions,
   getLocale,
-  getStarterSuggestions,
-  getStarterSuggestionButtons,
   refreshLocaleFromProfile,
   setManualLocale,
   syncLocaleFromEvent,
@@ -54,9 +49,6 @@ const ACTIONS = {
   TIME_YES: 'NATAL_TIME_YES',
   TIME_NO: 'NATAL_TIME_NO',
   CITY_PREFIX: 'NATAL_CITY_',
-  STARTER_QUESTION_PREFIX: 'STARTER_QUESTION_',
-  FULL_QUESTION_PREFIX: 'FULL_QUESTION_',
-  SHOW_MORE_QUESTIONS_PREFIX: 'SHOW_MORE_QUESTIONS_',
   LANGUAGE_PREFIX: 'LANGUAGE_',
   PROFILE_ADD: 'PROFILE_ADD',
   PROFILE_SWITCH_PREFIX: 'PROFILE_SWITCH_',
@@ -95,10 +87,6 @@ function resetConversationContext(identity) {
   state.pendingSynastryQuestion = null;
   state.choiceMap = {};
   notifyPersistence(identity);
-}
-
-function formatSuggestionLine(locale, suggestions) {
-  return t(locale, 'prompts.nextYouCanAsk', { suggestions: suggestions.join(', ') });
 }
 
 function getWelcomeBackMessage(locale) {
@@ -231,7 +219,6 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
 
     await billing.recordAnsweredQuestion(event);
     await maybeSendAstroMap(event, channelApi, userText, result);
-    await sendFollowUpPrompt(event, channelApi, result.intent);
   } catch (error) {
     await channelApi.editText(
       event,
@@ -282,11 +269,6 @@ async function promptForBirthTime(event, channelApi) {
   await channelApi.sendText(event, t(event, 'prompts.birthTimePrompt'));
 }
 
-async function sendFollowUpPrompt(event, channelApi, intentId) {
-  const locale = getLocale(event);
-  await channelApi.sendText(event, formatSuggestionLine(locale, getFollowUpSuggestions(locale, intentId)));
-}
-
 async function maybeSendAstroMap(event, channelApi, userText, conversationResult) {
   if (conversationResult?.intent !== 'relocation') {
     return;
@@ -313,53 +295,6 @@ async function maybeSendAstroMap(event, channelApi, userText, conversationResult
   } catch (error) {
     return;
   }
-}
-
-async function sendStarterQuestionButtons(event, channelApi) {
-  const locale = getLocale(event);
-  const starterQuestions = getStarterSuggestions(locale);
-  const starterButtonLabels = getStarterSuggestionButtons(locale);
-
-  await channelApi.sendChoices(event, t(locale, 'prompts.chooseQuestion'), [
-    {
-      id: `${ACTIONS.STARTER_QUESTION_PREFIX}0`,
-      title: starterButtonLabels[0] || starterQuestions[0]
-    },
-    {
-      id: `${ACTIONS.STARTER_QUESTION_PREFIX}1`,
-      title: starterButtonLabels[1] || starterQuestions[1]
-    },
-    {
-      id: `${ACTIONS.SHOW_MORE_QUESTIONS_PREFIX}0`,
-      title: t(locale, 'buttons.showMoreQuestions')
-    }
-  ]);
-}
-
-async function sendSuggestedQuestionPage(event, channelApi, startIndex = 0) {
-  const locale = getLocale(event);
-  const questions = getFirstQuestionPrompts(locale);
-  const buttonLabels = getFirstQuestionButtonLabels(locale);
-  const pageSize = 2;
-  const chunk = questions.slice(startIndex, startIndex + pageSize);
-
-  if (chunk.length === 0) {
-    return;
-  }
-
-  const choices = chunk.map((question, index) => ({
-    id: `${ACTIONS.FULL_QUESTION_PREFIX}${startIndex + index}`,
-    title: (buttonLabels[startIndex + index] || question).slice(0, 60)
-  }));
-
-  if (startIndex + chunk.length < questions.length) {
-    choices.push({
-      id: `${ACTIONS.SHOW_MORE_QUESTIONS_PREFIX}${startIndex + chunk.length}`,
-      title: t(locale, 'buttons.showMoreQuestions')
-    });
-  }
-
-  await channelApi.sendChoices(event, t(locale, 'prompts.moreQuestions'), choices);
 }
 
 function buildProfileMessage(chatState, access) {
@@ -520,7 +455,6 @@ async function finishNatalFlow(event, channelApi, session) {
 
     if (!pendingQuestion) {
       await channelApi.editText(event, loadingRef, t(event, 'prompts.firstReady'));
-      await sendSuggestedQuestionPage(event, channelApi, 0);
       return true;
     }
 
@@ -545,7 +479,6 @@ async function handleStart(event, channelApi) {
 
   if (chatState.natalProfile) {
     await channelApi.sendText(event, getWelcomeBackMessage(getLocale(event)));
-    await sendStarterQuestionButtons(event, channelApi);
     return true;
   }
 
@@ -673,13 +606,6 @@ async function handleIncomingAction(event, channelApi) {
     return false;
   }
 
-  if (actionId.startsWith(ACTIONS.SHOW_MORE_QUESTIONS_PREFIX)) {
-    const startIndex = Number(actionId.slice(ACTIONS.SHOW_MORE_QUESTIONS_PREFIX.length) || 0);
-    await channelApi.ackAction(event);
-    await sendSuggestedQuestionPage(event, channelApi, Number.isFinite(startIndex) ? startIndex : 0);
-    return true;
-  }
-
   if (actionId.startsWith(ACTIONS.LANGUAGE_PREFIX)) {
     const locale = actionId.slice(ACTIONS.LANGUAGE_PREFIX.length);
 
@@ -695,48 +621,6 @@ async function handleIncomingAction(event, channelApi) {
     }));
     await repromptCurrentStep(event, channelApi);
     return true;
-  }
-
-  if (actionId.startsWith(ACTIONS.STARTER_QUESTION_PREFIX)) {
-    const questionIndex = Number(actionId.slice(ACTIONS.STARTER_QUESTION_PREFIX.length));
-    const question = getStarterSuggestions(getLocale(event))[questionIndex];
-
-    if (!question) {
-      await channelApi.ackAction(event, t(event, 'errors.questionExpired'));
-      return true;
-    }
-
-    await channelApi.ackAction(event);
-    return handleIncomingText(
-      {
-        ...event,
-        type: 'text',
-        text: question,
-        actionId: null
-      },
-      channelApi
-    );
-  }
-
-  if (actionId.startsWith(ACTIONS.FULL_QUESTION_PREFIX)) {
-    const questionIndex = Number(actionId.slice(ACTIONS.FULL_QUESTION_PREFIX.length));
-    const question = getFirstQuestionPrompts(getLocale(event))[questionIndex];
-
-    if (!question) {
-      await channelApi.ackAction(event, t(event, 'errors.questionExpired'));
-      return true;
-    }
-
-    await channelApi.ackAction(event);
-    return handleIncomingText(
-      {
-        ...event,
-        type: 'text',
-        text: question,
-        actionId: null
-      },
-      channelApi
-    );
   }
 
   if (actionId === ACTIONS.PROFILE_ADD) {

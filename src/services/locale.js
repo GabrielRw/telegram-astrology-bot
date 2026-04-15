@@ -174,11 +174,6 @@ function getFirstQuestionButtonLabels(locale) {
   return [...(catalog.suggestions.firstQuestionButtons || catalog.suggestions.firstQuestions)];
 }
 
-function getFollowUpSuggestions(locale, intentId) {
-  const followUps = getCatalog(locale).suggestions.followUps;
-  return [...(followUps[intentId] || followUps.fallback)];
-}
-
 function getLanguageOptions() {
   return SUPPORTED_LOCALES.map((locale) => ({
     locale,
@@ -277,7 +272,6 @@ module.exports = {
   SUPPORTED_LOCALES,
   getFirstQuestionPrompts,
   getFirstQuestionButtonLabels,
-  getFollowUpSuggestions,
   getLanguageName,
   getLanguageOptions,
   getLocale,

@@ -117,7 +117,6 @@ const CATALOG = {
       welcomeBack: 'Welcome back. What do you want to explore today?',
       chooseQuestion: 'Choose a question or write directly your question in the chat.',
       moreQuestions: 'More questions',
-      nextYouCanAsk: 'Next you can ask: {suggestions}.',
       readingChart: 'Reading your chart...',
       stillReading: 'Still reading your chart...',
       chartCaption: 'Your natal chart',
@@ -189,15 +188,6 @@ const CATALOG = {
         "Today's transits",
         'What changes next?'
       ],
-      followUps: {
-        relocation: ['another city in France', 'career relocation', 'romantic relocation'],
-        rising_sign: ['Moon sign meaning', 'love patterns', 'strongest aspect'],
-        planet_placement: ['strongest aspect', 'career themes', 'Rising sign'],
-        major_aspects: ['how that aspect plays out in love', 'chart summary', 'Rising sign'],
-        house_question: ['another house focus', 'Rising sign', 'career themes'],
-        chart_summary: ['love patterns', 'career themes', 'strongest aspect'],
-        fallback: ['Rising sign', 'strongest aspect', 'love patterns']
-      },
       firstQuestions: BASE_FIRST_QUESTIONS.en,
       firstQuestionButtons: [
         'My personality',
@@ -265,7 +255,6 @@ const CATALOG = {
       welcomeBack: 'Bon retour. Que voulez-vous explorer aujourd’hui ?',
       chooseQuestion: 'Choisissez une question ou écrivez directement votre question dans le chat.',
       moreQuestions: 'Plus de questions',
-      nextYouCanAsk: 'Ensuite, vous pouvez demander : {suggestions}.',
       readingChart: 'Je lis votre thème...',
       stillReading: 'Je lis encore votre thème...',
       chartCaption: 'Votre thème natal',
@@ -326,15 +315,6 @@ const CATALOG = {
         'Transits du jour',
         'Quel changement ?'
       ],
-      followUps: {
-        relocation: ['une autre ville en France', 'une relocalisation carrière', 'une relocalisation amoureuse'],
-        rising_sign: ['le sens de ma Lune', 'mes schémas amoureux', 'mon aspect le plus fort'],
-        planet_placement: ['mon aspect le plus fort', 'mes thèmes de carrière', 'mon Ascendant'],
-        major_aspects: ['cet aspect en amour', 'résume mon thème', 'mon Ascendant'],
-        house_question: ['une autre maison', 'mon Ascendant', 'mes thèmes de carrière'],
-        chart_summary: ['mes schémas amoureux', 'mes thèmes de carrière', 'mon aspect le plus fort'],
-        fallback: ['mon Ascendant', 'mon aspect le plus fort', 'mes schémas amoureux']
-      },
       firstQuestions: BASE_FIRST_QUESTIONS.fr,
       firstQuestionButtons: [
         'Ma personnalité',
@@ -402,7 +382,6 @@ const CATALOG = {
       welcomeBack: 'Willkommen zurück. Was möchtest du heute erkunden?',
       chooseQuestion: 'Wähle eine Frage oder schreibe deine Frage direkt in den Chat.',
       moreQuestions: 'Mehr Fragen',
-      nextYouCanAsk: 'Als Nächstes kannst du fragen: {suggestions}.',
       readingChart: 'Ich lese dein Horoskop...',
       stillReading: 'Ich lese dein Horoskop noch...',
       chartCaption: 'Dein Geburtshoroskop',
@@ -463,15 +442,6 @@ const CATALOG = {
         'Heutige Transite',
         'Was verändert sich?'
       ],
-      followUps: {
-        relocation: ['eine andere Stadt in Frankreich', 'beruflicher Umzug', 'romantischer Umzug'],
-        rising_sign: ['die Bedeutung meines Mondes', 'Liebesmuster', 'mein stärkster Aspekt'],
-        planet_placement: ['mein stärkster Aspekt', 'Berufsthemen', 'mein Aszendent'],
-        major_aspects: ['dieser Aspekt in der Liebe', 'mein Horoskop zusammenfassen', 'mein Aszendent'],
-        house_question: ['ein anderes Haus', 'mein Aszendent', 'Berufsthemen'],
-        chart_summary: ['Liebesmuster', 'Berufsthemen', 'mein stärkster Aspekt'],
-        fallback: ['mein Aszendent', 'mein stärkster Aspekt', 'Liebesmuster']
-      },
       firstQuestions: BASE_FIRST_QUESTIONS.de,
       firstQuestionButtons: [
         'Meine Persönlichkeit',
@@ -539,7 +509,6 @@ const CATALOG = {
       welcomeBack: 'Bienvenido de nuevo. ¿Qué quieres explorar hoy?',
       chooseQuestion: 'Elige una pregunta o escribe tu pregunta directamente en el chat.',
       moreQuestions: 'Más preguntas',
-      nextYouCanAsk: 'Después puedes preguntar: {suggestions}.',
       readingChart: 'Estoy leyendo tu carta...',
       stillReading: 'Sigo leyendo tu carta...',
       chartCaption: 'Tu carta natal',
@@ -600,15 +569,6 @@ const CATALOG = {
         'Tránsitos de hoy',
         '¿Qué cambia ahora?'
       ],
-      followUps: {
-        relocation: ['otra ciudad en Francia', 'reubicación laboral', 'reubicación romántica'],
-        rising_sign: ['el significado de mi Luna', 'patrones de amor', 'mi aspecto más fuerte'],
-        planet_placement: ['mi aspecto más fuerte', 'temas de carrera', 'mi Ascendente'],
-        major_aspects: ['ese aspecto en el amor', 'resume mi carta', 'mi Ascendente'],
-        house_question: ['otra casa', 'mi Ascendente', 'temas de carrera'],
-        chart_summary: ['patrones de amor', 'temas de carrera', 'mi aspecto más fuerte'],
-        fallback: ['mi Ascendente', 'mi aspecto más fuerte', 'patrones de amor']
-      },
       firstQuestions: BASE_FIRST_QUESTIONS.es,
       firstQuestionButtons: [
         'Mi personalidad',
