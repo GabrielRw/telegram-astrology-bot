@@ -39,6 +39,16 @@ function getPort() {
   return Number(process.env.PORT || 10000);
 }
 
+function stopBotSafely(bot, signal) {
+  try {
+    bot.stop(signal);
+  } catch (error) {
+    if (!String(error?.message || '').includes('Bot is not running')) {
+      throw error;
+    }
+  }
+}
+
 function renderBillingPage(title, body) {
   return `<!doctype html>
 <html lang="en">
@@ -327,12 +337,12 @@ async function main() {
     process.once('SIGINT', () => {
       server?.close();
       eventQueue.stop();
-      bot.stop('SIGINT');
+      stopBotSafely(bot, 'SIGINT');
     });
     process.once('SIGTERM', () => {
       server?.close();
       eventQueue.stop();
-      bot.stop('SIGTERM');
+      stopBotSafely(bot, 'SIGTERM');
     });
   } else {
     await bot.telegram.deleteWebhook({ drop_pending_updates: false });
@@ -342,12 +352,12 @@ async function main() {
     process.once('SIGINT', () => {
       server?.close();
       eventQueue.stop();
-      bot.stop('SIGINT');
+      stopBotSafely(bot, 'SIGINT');
     });
     process.once('SIGTERM', () => {
       server?.close();
       eventQueue.stop();
-      bot.stop('SIGTERM');
+      stopBotSafely(bot, 'SIGTERM');
     });
   }
 

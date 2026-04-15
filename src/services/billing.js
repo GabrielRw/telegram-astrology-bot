@@ -12,6 +12,7 @@ const memoryProfiles = new Map();
 const memoryUsage = new Map();
 
 let stripeClient = null;
+let billingStorageAvailable = true;
 
 function getRequiredEnv(name) {
   const value = String(process.env[name] || '').trim();
@@ -47,6 +48,26 @@ function getStripePriceId() {
 
 function getStateKey(identity) {
   return String(identity?.stateKey || '').trim() || resolveStateKey(identity);
+}
+
+function isBillingStorageEnabled() {
+  return isSupabaseConfigured() && billingStorageAvailable;
+}
+
+function isMissingBillingTableError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('bot_daily_usage') || message.includes('bot_billing_profiles');
+}
+
+function disableBillingStorage(error) {
+  if (!billingStorageAvailable) {
+    return;
+  }
+
+  billingStorageAvailable = false;
+  warn('billing persistence disabled; using in-memory fallback', {
+    reason: error?.message || 'billing tables unavailable'
+  });
 }
 
 function isStripeConfigured() {
@@ -113,7 +134,7 @@ function normalizeUsageRow(identity, dateKey, row = {}) {
 async function getBillingProfile(identity) {
   const stateKey = getStateKey(identity);
 
-  if (!isSupabaseConfigured()) {
+  if (!isBillingStorageEnabled()) {
     return normalizeBillingProfile(identity, memoryProfiles.get(stateKey) || {});
   }
 
@@ -125,6 +146,11 @@ async function getBillingProfile(identity) {
     .maybeSingle();
 
   if (error) {
+    if (isMissingBillingTableError(error)) {
+      disableBillingStorage(error);
+      return normalizeBillingProfile(identity, memoryProfiles.get(stateKey) || {});
+    }
+
     throw error;
   }
 
@@ -136,7 +162,7 @@ async function getBillingProfileByCustomerId(customerId) {
     return null;
   }
 
-  if (!isSupabaseConfigured()) {
+  if (!isBillingStorageEnabled()) {
     for (const profile of memoryProfiles.values()) {
       if (profile.stripe_customer_id === customerId) {
         return profile;
@@ -154,6 +180,17 @@ async function getBillingProfileByCustomerId(customerId) {
     .maybeSingle();
 
   if (error) {
+    if (isMissingBillingTableError(error)) {
+      disableBillingStorage(error);
+      for (const profile of memoryProfiles.values()) {
+        if (profile.stripe_customer_id === customerId) {
+          return profile;
+        }
+      }
+
+      return null;
+    }
+
     throw error;
   }
 
@@ -168,7 +205,7 @@ async function upsertBillingProfile(identity, patch = {}) {
   };
   const normalized = normalizeBillingProfile(identity, next);
 
-  if (!isSupabaseConfigured()) {
+  if (!isBillingStorageEnabled()) {
     memoryProfiles.set(normalized.state_key, normalized);
     return normalized;
   }
@@ -179,6 +216,12 @@ async function upsertBillingProfile(identity, patch = {}) {
     .upsert(normalized, { onConflict: 'state_key' });
 
   if (error) {
+    if (isMissingBillingTableError(error)) {
+      disableBillingStorage(error);
+      memoryProfiles.set(normalized.state_key, normalized);
+      return normalized;
+    }
+
     throw error;
   }
 
@@ -188,7 +231,7 @@ async function upsertBillingProfile(identity, patch = {}) {
 async function getUsageCount(identity, dateKey = normalizeDateKey()) {
   const stateKey = getStateKey(identity);
 
-  if (!isSupabaseConfigured()) {
+  if (!isBillingStorageEnabled()) {
     return Number(memoryUsage.get(getUsageMapKey(stateKey, dateKey)) || 0);
   }
 
@@ -201,6 +244,11 @@ async function getUsageCount(identity, dateKey = normalizeDateKey()) {
     .maybeSingle();
 
   if (error) {
+    if (isMissingBillingTableError(error)) {
+      disableBillingStorage(error);
+      return Number(memoryUsage.get(getUsageMapKey(stateKey, dateKey)) || 0);
+    }
+
     throw error;
   }
 
@@ -211,7 +259,7 @@ async function incrementUsage(identity, dateKey = normalizeDateKey()) {
   const stateKey = getStateKey(identity);
   const nextCount = (await getUsageCount(identity, dateKey)) + 1;
 
-  if (!isSupabaseConfigured()) {
+  if (!isBillingStorageEnabled()) {
     memoryUsage.set(getUsageMapKey(stateKey, dateKey), nextCount);
     return nextCount;
   }
@@ -223,6 +271,12 @@ async function incrementUsage(identity, dateKey = normalizeDateKey()) {
     .upsert(row, { onConflict: 'state_key,question_date' });
 
   if (error) {
+    if (isMissingBillingTableError(error)) {
+      disableBillingStorage(error);
+      memoryUsage.set(getUsageMapKey(stateKey, dateKey), nextCount);
+      return nextCount;
+    }
+
     throw error;
   }
 
