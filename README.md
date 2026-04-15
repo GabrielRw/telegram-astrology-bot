@@ -28,6 +28,7 @@ It shows how to:
 - `/start` guided onboarding and re-entry
 - `/profile` to inspect, update, reset, or view the saved chart
 - `/language` to switch the bot UI and answer language
+- `/billing` and `/subscribe` for plan status and Stripe checkout
 - shared conversation and natal-intake core across channels
 - direct plain-language onboarding that can start natal intake from a normal chat message
 - natal chart PNG available on demand
@@ -42,6 +43,8 @@ It shows how to:
 - locale detection from platform language, then birth-country fallback
 - support for unknown birth time
 - clean env-based setup with no hardcoded secrets
+- 3 free chart questions per day, then Stripe-hosted upgrade flow to unlimited questions for $4/month
+- Stripe webhook sync for subscription status plus Customer Portal management links
 
 ### Guided setup
 
@@ -199,6 +202,10 @@ FREEASTRO_MCP_URL=https://api.freeastroapi.com/mcp
 TELEGRAM_ALERT_CHAT_ID=
 WEBHOOK_BASE_URL=https://your-service-name.onrender.com
 WEBHOOK_PATH=/telegram/webhook
+STRIPE_SECRET_KEY=your_stripe_secret_key
+STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
+STRIPE_MONTHLY_PRICE_ID=price_xxx
+STRIPE_WEBHOOK_PATH=/stripe/webhook
 WHATSAPP_ACCESS_TOKEN=your_meta_whatsapp_access_token
 WHATSAPP_PHONE_NUMBER_ID=your_whatsapp_phone_number_id
 WHATSAPP_VERIFY_TOKEN=your_whatsapp_verify_token
@@ -206,6 +213,8 @@ WHATSAPP_WEBHOOK_PATH=/whatsapp/webhook
 ```
 
 Before first production deploy, run the SQL in [schema.sql](/Users/gabriel/Documents/telegram-bot/supabase/schema.sql) against your Supabase project.
+
+Create a recurring Stripe price for `$4/month`, copy its price id into `STRIPE_MONTHLY_PRICE_ID`, and point your Stripe webhook endpoint at `https://your-service-name.onrender.com/stripe/webhook`.
 
 ### Important
 
@@ -228,6 +237,11 @@ Before first production deploy, run the SQL in [schema.sql](/Users/gabriel/Docum
 | `TELEGRAM_ALERT_CHAT_ID` | Optional | Telegram chat id that receives owner alerts when FreeAstro API credits are exhausted or operational failures happen |
 | `WEBHOOK_BASE_URL` | Render only | Public HTTPS base URL for webhook mode, for example `https://your-service-name.onrender.com` |
 | `WEBHOOK_PATH` | Optional | Webhook route path, defaults to `/telegram/webhook` |
+| `STRIPE_SECRET_KEY` | Billing | Stripe secret key used to create Checkout and Customer Portal sessions |
+| `STRIPE_WEBHOOK_SECRET` | Billing | Stripe webhook signing secret for subscription sync |
+| `STRIPE_MONTHLY_PRICE_ID` | Billing | Stripe recurring monthly price id for the unlimited plan |
+| `STRIPE_WEBHOOK_PATH` | Optional | Stripe webhook route path, defaults to `/stripe/webhook` |
+| `APP_BASE_URL` | Optional | Optional override for hosted billing success and return pages; falls back to `WEBHOOK_BASE_URL` |
 | `WHATSAPP_ACCESS_TOKEN` | WhatsApp only | Meta Cloud API access token |
 | `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp only | Meta Cloud API phone number id |
 | `WHATSAPP_VERIFY_TOKEN` | WhatsApp only | Verify token used for Meta webhook challenge |
@@ -255,6 +269,14 @@ Lets the user switch between:
 - Français
 - Deutsch
 - Español
+
+### `/billing`
+
+Shows the current quota or unlimited plan status. If the user already subscribed, it also returns a Stripe Customer Portal link.
+
+### `/subscribe`
+
+Creates a Stripe Checkout link for the `$4/month` unlimited plan.
 
 ### Conversational chart chat
 

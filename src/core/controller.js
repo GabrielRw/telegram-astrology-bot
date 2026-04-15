@@ -1,5 +1,6 @@
 const { answerConversation } = require('../services/conversation');
 const { renderAstrocartographyMap } = require('../services/astroMap');
+const billing = require('../services/billing');
 const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
 const { getGeminiErrorMessage } = require('../services/gemini');
 const {
@@ -84,6 +85,104 @@ function getOnboardingIntro(locale, source = 'start') {
   return source === 'chat'
     ? t(locale, 'prompts.onboardingChat')
     : t(locale, 'prompts.onboardingStart');
+}
+
+function formatBillingLinkMessage(event, checkoutUrl) {
+  return [
+    t(event, 'billing.limitReached', { limit: billing.FREE_QUESTIONS_PER_DAY }),
+    billing.getUpgradePitch((path, args) => t(event, path, args)),
+    checkoutUrl
+  ].join('\n\n');
+}
+
+async function maybeBuildCheckoutLink(identity) {
+  if (!billing.isStripeConfigured()) {
+    return null;
+  }
+
+  try {
+    return await billing.createCheckoutSessionUrl(identity);
+  } catch (error) {
+    return null;
+  }
+}
+
+async function sendBillingStatus(event, channelApi) {
+  const access = await billing.getAccessSummary(event);
+  const lines = [billing.getBillingStatusLabel(access, (path, args) => t(event, path, args))];
+
+  if (access.unlimited) {
+    try {
+      const portalUrl = await billing.createCustomerPortalUrl(event);
+      lines.push(t(event, 'billing.portalReady'));
+      lines.push(portalUrl);
+    } catch (error) {
+      lines.push(t(event, 'billing.portalUnavailable'));
+    }
+  } else {
+    lines.push(billing.getUpgradePitch((path, args) => t(event, path, args)));
+    lines.push(
+      billing.isStripeConfigured()
+        ? t(event, 'billing.subscribePrompt')
+        : t(event, 'billing.checkoutUnavailable')
+    );
+  }
+
+  await channelApi.sendText(event, lines.join('\n\n'));
+  return true;
+}
+
+async function handleQuestionLimit(event, channelApi, loadingRef = null) {
+  const checkoutUrl = await maybeBuildCheckoutLink(event);
+  const message = checkoutUrl
+    ? formatBillingLinkMessage(event, checkoutUrl)
+    : [t(event, 'billing.limitReached', { limit: billing.FREE_QUESTIONS_PER_DAY }), t(event, 'billing.checkoutUnavailable')].join('\n\n');
+
+  if (loadingRef) {
+    await channelApi.editText(event, loadingRef, message);
+    return true;
+  }
+
+  await channelApi.sendText(event, message);
+  return true;
+}
+
+async function answerPaidConversation(event, channelApi, userText, options = {}) {
+  const access = await billing.getAccessSummary(event);
+
+  if (access.limitReached) {
+    return handleQuestionLimit(event, channelApi, options.loadingRef || null);
+  }
+
+  const loadingRef = options.loadingRef || await channelApi.sendText(event, t(event, 'prompts.readingChart'));
+
+  try {
+    const result = await answerConversation(event, userText);
+    const chunks = splitConversationReply(result.text);
+
+    if (chunks.length === 0) {
+      await channelApi.editText(event, loadingRef, t(event, 'errors.noGroundedAnswer'));
+      return true;
+    }
+
+    await channelApi.editText(event, loadingRef, chunks[0]);
+
+    for (const chunk of chunks.slice(1)) {
+      await channelApi.sendText(event, chunk);
+    }
+
+    await billing.recordAnsweredQuestion(event);
+    await maybeSendAstroMap(event, channelApi, userText, result);
+    await sendFollowUpPrompt(event, channelApi, result.intent);
+  } catch (error) {
+    await channelApi.editText(
+      event,
+      loadingRef,
+      `${t(event, 'errors.conversationUnavailable')}\n${getGeminiErrorMessage(error, getLocale(event))}`
+    );
+  }
+
+  return true;
 }
 
 async function promptForBirthDate(event, channelApi, source = 'start') {
@@ -204,12 +303,16 @@ async function sendAllSuggestedQuestions(event, channelApi) {
   }
 }
 
-function buildProfileMessage(chatState) {
+function buildProfileMessage(chatState, access) {
   const profile = chatState.natalProfile;
   const locale = getLocale(chatState);
 
   if (!profile) {
-    return t(locale, 'profile.none');
+    return [
+      t(locale, 'profile.none'),
+      '',
+      billing.getBillingStatusLabel(access, (path, args) => t(locale, path, args))
+    ].join('\n');
   }
 
   const birthDate = profile.birthDatetime ? String(profile.birthDatetime).slice(0, 10) : 'Unknown';
@@ -225,8 +328,12 @@ function buildProfileMessage(chatState) {
     t(locale, 'profile.city', { value: city }),
     timeLine,
     t(locale, 'profile.language', { value: getLanguageName(chatState.locale, locale) }),
+    t(locale, 'profile.billing', {
+      value: billing.getBillingStatusLabel(access, (path, args) => t(locale, path, args))
+    }),
     '',
-    t(locale, 'profile.footer')
+    t(locale, 'profile.footer'),
+    t(locale, 'profile.billingFooter')
   ].join('\n');
 }
 
@@ -295,28 +402,7 @@ async function finishNatalFlow(event, channelApi, session) {
       return true;
     }
 
-    try {
-      const answer = await answerConversation(event, pendingQuestion);
-      const chunks = splitConversationReply(answer.text);
-
-      if (chunks.length === 0) {
-        await channelApi.editText(event, loadingRef, t(event, 'errors.noGroundedAnswer'));
-        return true;
-      }
-
-      await channelApi.editText(event, loadingRef, chunks[0]);
-
-      for (const chunk of chunks.slice(1)) {
-        await channelApi.sendText(event, chunk);
-      }
-
-      await maybeSendAstroMap(event, channelApi, pendingQuestion, answer);
-      await sendFollowUpPrompt(event, channelApi, answer.intent);
-    } catch (error) {
-      await channelApi.editText(event, loadingRef, `${t(event, 'errors.conversationUnavailable')}\n${getGeminiErrorMessage(error, getLocale(event))}`);
-    }
-
-    return true;
+    return answerPaidConversation(event, channelApi, pendingQuestion, { loadingRef });
   } catch (error) {
     if (isSessionCurrent(event, createSessionCheckpoint(lockedSession))) {
       unlockSession(event, lockedSession.flowId);
@@ -351,7 +437,8 @@ async function handleProfile(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
   const chatState = getChatState(event);
-  await channelApi.sendText(event, buildProfileMessage(chatState));
+  const access = await billing.getAccessSummary(event);
+  await channelApi.sendText(event, buildProfileMessage(chatState, access));
 
   if (chatState.natalProfile) {
     await channelApi.sendChoices(event, t(event, 'prompts.profileActions'), [
@@ -361,6 +448,36 @@ async function handleProfile(event, channelApi) {
     ]);
   }
 
+  return true;
+}
+
+async function handleBilling(event, channelApi) {
+  await persistence.ensureHydrated(event);
+  syncLocaleFromEvent(event);
+  return sendBillingStatus(event, channelApi);
+}
+
+async function handleSubscribe(event, channelApi) {
+  await persistence.ensureHydrated(event);
+  syncLocaleFromEvent(event);
+
+  const access = await billing.getAccessSummary(event);
+
+  if (access.unlimited) {
+    return sendBillingStatus(event, channelApi);
+  }
+
+  const checkoutUrl = await maybeBuildCheckoutLink(event);
+
+  if (!checkoutUrl) {
+    await channelApi.sendText(event, t(event, 'billing.checkoutUnavailable'));
+    return true;
+  }
+
+  await channelApi.sendText(event, [
+    billing.getUpgradePitch((path, args) => t(event, path, args)),
+    checkoutUrl
+  ].join('\n\n'));
   return true;
 }
 
@@ -687,6 +804,14 @@ async function handleIncomingText(event, channelApi) {
     return true;
   }
 
+  if (text === '/billing') {
+    return handleBilling(event, channelApi);
+  }
+
+  if (text === '/subscribe') {
+    return handleSubscribe(event, channelApi);
+  }
+
   const handledFlow = await handleActiveFlowText(event, channelApi, text);
   if (handledFlow) {
     return true;
@@ -701,42 +826,17 @@ async function handleIncomingText(event, channelApi) {
     return true;
   }
 
-  const loadingRef = await channelApi.sendText(event, t(event, 'prompts.readingChart'));
-
-  try {
-    const result = await answerConversation(event, text);
-    const chunks = splitConversationReply(result.text);
-
-    if (chunks.length === 0) {
-      await channelApi.editText(event, loadingRef, t(event, 'errors.noGroundedAnswer'));
-      return true;
-    }
-
-    await channelApi.editText(event, loadingRef, chunks[0]);
-
-    for (const chunk of chunks.slice(1)) {
-      await channelApi.sendText(event, chunk);
-    }
-
-    await maybeSendAstroMap(event, channelApi, text, result);
-    await sendFollowUpPrompt(event, channelApi, result.intent);
-  } catch (error) {
-    await channelApi.editText(
-      event,
-      loadingRef,
-      `${t(event, 'errors.conversationUnavailable')}\n${getGeminiErrorMessage(error, getLocale(event))}`
-    );
-  }
-
-  return true;
+  return answerPaidConversation(event, channelApi, text);
 }
 
 module.exports = {
   ACTIONS,
+  handleBilling,
   handleCancel,
   handleIncomingAction,
   handleIncomingText,
   promptForLanguage,
   handleProfile,
+  handleSubscribe,
   handleStart
 };
