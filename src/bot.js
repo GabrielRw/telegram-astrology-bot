@@ -3,6 +3,7 @@ require('dotenv').config();
 const http = require('node:http');
 const { createHash } = require('node:crypto');
 const { Telegraf } = require('telegraf');
+const registerBillingCommand = require('./commands/billing');
 const registerStartCommand = require('./commands/start');
 const registerNatalCommand = require('./commands/natal');
 const registerLanguageCommand = require('./commands/language');
@@ -10,6 +11,7 @@ const registerProfileCommand = require('./commands/profile');
 const registerChatCommand = require('./commands/chat');
 const { getWhatsappPaths } = require('./channels/whatsapp/api');
 const { handleWhatsAppVerification, handleWhatsAppWebhook, processWhatsAppEvent } = require('./channels/whatsapp/webhook');
+const billing = require('./services/billing');
 const eventQueue = require('./services/eventQueue');
 const { info, reportError, warn } = require('./services/logger');
 const persistence = require('./services/persistence');
@@ -35,6 +37,30 @@ function getWebhookPath() {
 
 function getPort() {
   return Number(process.env.PORT || 10000);
+}
+
+function renderBillingPage(title, body) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f7f2ea; color: #1f1f1f; margin: 0; }
+      main { max-width: 640px; margin: 10vh auto; padding: 32px 24px; background: #fffdf8; border: 1px solid #e8dcc8; border-radius: 18px; }
+      h1 { margin-top: 0; font-size: 32px; }
+      p { line-height: 1.55; }
+      code { background: #f3eadb; padding: 2px 6px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${title}</h1>
+      ${body}
+    </main>
+  </body>
+</html>`;
 }
 
 function hasWhatsAppConfig() {
@@ -83,13 +109,16 @@ function createAppServer(bot, webhookPath) {
   const { webhookPath: whatsappWebhookPath } = getWhatsappPaths();
 
   return http.createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    const pathname = url.pathname;
+
     if (req.method === 'GET' && req.url === '/healthz') {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
       return;
     }
 
-    if (req.url === webhookPath) {
+    if (pathname === webhookPath) {
       if (req.method !== 'POST') {
         res.writeHead(405, { 'Content-Type': 'text/plain' });
         res.end('method not allowed');
@@ -100,9 +129,45 @@ function createAppServer(bot, webhookPath) {
       return;
     }
 
-    if (hasWhatsAppConfig()) {
-      const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (pathname === billing.getStripeWebhookPath()) {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'text/plain' });
+        res.end('method not allowed');
+        return;
+      }
 
+      await handleStripeWebhook(req, res);
+      return;
+    }
+
+    if (pathname === '/billing/success') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderBillingPage(
+        'Subscription started',
+        '<p>Your checkout completed. Stripe will confirm the subscription by webhook.</p><p>Return to the bot and send <code>/billing</code> to verify your unlimited access.</p>'
+      ));
+      return;
+    }
+
+    if (pathname === '/billing/cancel') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderBillingPage(
+        'Checkout canceled',
+        '<p>No subscription was created. You can return to the bot and start checkout again whenever you want.</p>'
+      ));
+      return;
+    }
+
+    if (pathname === '/billing/return') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderBillingPage(
+        'Billing updated',
+        '<p>Your Stripe billing session is complete.</p><p>Return to the bot and send <code>/billing</code> to see your current plan status.</p>'
+      ));
+      return;
+    }
+
+    if (hasWhatsAppConfig()) {
       if (pathname === whatsappWebhookPath && req.method === 'GET') {
         await handleWhatsAppVerification(req, res);
         return;
@@ -134,6 +199,22 @@ function readRequestBody(req) {
       } catch (error) {
         reject(error);
       }
+    });
+
+    req.on('error', reject);
+  });
+}
+
+function readRawRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+
+    req.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => {
+      resolve(Buffer.concat(chunks));
     });
 
     req.on('error', reject);
@@ -177,6 +258,25 @@ async function handleTelegramWebhook(req, res, bot) {
   }
 }
 
+async function handleStripeWebhook(req, res) {
+  if (!billing.isStripeWebhookConfigured()) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'stripe_webhook_not_configured' }));
+    return;
+  }
+
+  try {
+    const rawBody = await readRawRequestBody(req);
+    await billing.handleStripeWebhook(rawBody, req.headers['stripe-signature']);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ received: true }));
+  } catch (error) {
+    await reportError('stripe.webhook', error);
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'invalid_webhook' }));
+  }
+}
+
 async function main() {
   const botToken = requireEnv('BOT_TOKEN');
   requireEnv('FREEASTRO_API_KEY');
@@ -184,7 +284,9 @@ async function main() {
   const bot = new Telegraf(botToken);
   setTelegramNotifier(bot.telegram);
   persistence.initialize();
+  billing.initialize();
 
+  registerBillingCommand(bot);
   registerStartCommand(bot);
   registerNatalCommand(bot);
   registerLanguageCommand(bot);

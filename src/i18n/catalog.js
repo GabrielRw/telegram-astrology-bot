@@ -130,7 +130,9 @@ const CATALOG = {
       birthTimeSaved: 'Birth time: {value}',
       birthTimeMissing: 'Birth time: not saved',
       language: 'Language: {value}',
+      billing: 'Plan: {value}',
       footer: 'Use the buttons below to update, reset, or view your chart.',
+      billingFooter: 'Use /billing to see quota details or /subscribe to unlock unlimited questions.',
       cleared: 'Your saved birth details were cleared. Send /start when you want to set them again.',
       chartUnavailable: 'Your chart image is not available right now.'
     },
@@ -150,6 +152,17 @@ const CATALOG = {
       conversationUnavailable: 'Conversational mode is unavailable right now.',
       starsUnavailable: 'Could not fetch the stars right now.',
       genericUnexpected: 'Unexpected error.'
+    },
+    billing: {
+      statusFree: 'Free plan: {used}/{limit} free questions used today.',
+      statusActive: 'Unlimited plan: active.',
+      statusActiveUntil: 'Unlimited plan: active until {date}.',
+      limitReached: 'You have used all {limit} free questions for today.',
+      upgradePitch: 'Upgrade to unlimited questions for {price}/month.',
+      subscribePrompt: 'Send /subscribe when you want a fresh checkout link.',
+      checkoutUnavailable: 'Stripe checkout is not configured yet. Add your Stripe environment variables and a recurring price first.',
+      portalReady: 'Manage your subscription here:',
+      portalUnavailable: 'Your billing portal is not ready yet. Complete one subscription checkout first.'
     },
     suggestions: {
       starter: [
@@ -223,7 +236,9 @@ const CATALOG = {
       birthTimeSaved: 'Heure de naissance : {value}',
       birthTimeMissing: 'Heure de naissance : non enregistrée',
       language: 'Langue : {value}',
+      billing: 'Offre : {value}',
       footer: 'Utilisez les boutons ci-dessous pour modifier, réinitialiser ou voir votre thème.',
+      billingFooter: 'Utilisez /billing pour voir votre quota ou /subscribe pour débloquer les questions illimitées.',
       cleared: 'Vos données de naissance ont été effacées. Envoyez /start quand vous voudrez les reconfigurer.',
       chartUnavailable: 'L’image de votre thème n’est pas disponible pour le moment.'
     },
@@ -243,6 +258,17 @@ const CATALOG = {
       conversationUnavailable: 'Le mode conversationnel est indisponible pour le moment.',
       starsUnavailable: 'Je ne peux pas interroger les astres pour le moment.',
       genericUnexpected: 'Erreur inattendue.'
+    },
+    billing: {
+      statusFree: 'Offre gratuite : {used}/{limit} questions gratuites utilisées aujourd’hui.',
+      statusActive: 'Offre illimitée : active.',
+      statusActiveUntil: 'Offre illimitée : active jusqu’au {date}.',
+      limitReached: 'Vous avez utilisé vos {limit} questions gratuites du jour.',
+      upgradePitch: 'Passez aux questions illimitées pour {price}/mois.',
+      subscribePrompt: 'Envoyez /subscribe quand vous voulez un nouveau lien de paiement.',
+      checkoutUnavailable: 'Stripe Checkout n’est pas encore configuré. Ajoutez vos variables Stripe et un prix récurrent.',
+      portalReady: 'Gérez votre abonnement ici :',
+      portalUnavailable: 'Votre portail client n’est pas encore prêt. Terminez d’abord un abonnement.'
     },
     suggestions: {
       starter: [
@@ -316,7 +342,9 @@ const CATALOG = {
       birthTimeSaved: 'Geburtszeit: {value}',
       birthTimeMissing: 'Geburtszeit: nicht gespeichert',
       language: 'Sprache: {value}',
+      billing: 'Tarif: {value}',
       footer: 'Nutze die Buttons unten, um dein Profil zu aktualisieren, zurückzusetzen oder dein Horoskop zu sehen.',
+      billingFooter: 'Nutze /billing für dein Kontingent oder /subscribe für unbegrenzte Fragen.',
       cleared: 'Deine gespeicherten Geburtsdaten wurden gelöscht. Sende /start, wenn du sie erneut einrichten möchtest.',
       chartUnavailable: 'Das Bild deines Horoskops ist gerade nicht verfügbar.'
     },
@@ -336,6 +364,17 @@ const CATALOG = {
       conversationUnavailable: 'Der Konversationsmodus ist im Moment nicht verfügbar.',
       starsUnavailable: 'Ich kann die Sterne gerade nicht abrufen.',
       genericUnexpected: 'Unerwarteter Fehler.'
+    },
+    billing: {
+      statusFree: 'Free-Tarif: {used}/{limit} kostenlose Fragen heute genutzt.',
+      statusActive: 'Unbegrenzter Tarif: aktiv.',
+      statusActiveUntil: 'Unbegrenzter Tarif: aktiv bis {date}.',
+      limitReached: 'Du hast heute alle {limit} kostenlosen Fragen verbraucht.',
+      upgradePitch: 'Upgrade auf unbegrenzte Fragen für {price}/Monat.',
+      subscribePrompt: 'Sende /subscribe, wenn du einen neuen Checkout-Link möchtest.',
+      checkoutUnavailable: 'Stripe Checkout ist noch nicht konfiguriert. Lege zuerst die Stripe-Variablen und einen wiederkehrenden Preis an.',
+      portalReady: 'Verwalte dein Abo hier:',
+      portalUnavailable: 'Dein Kundenportal ist noch nicht bereit. Schließe zuerst ein Abo-Checkout ab.'
     },
     suggestions: {
       starter: [
@@ -409,7 +448,9 @@ const CATALOG = {
       birthTimeSaved: 'Hora de nacimiento: {value}',
       birthTimeMissing: 'Hora de nacimiento: no guardada',
       language: 'Idioma: {value}',
+      billing: 'Plan: {value}',
       footer: 'Usa los botones de abajo para actualizar, restablecer o ver tu carta.',
+      billingFooter: 'Usa /billing para ver tu cupo o /subscribe para desbloquear preguntas ilimitadas.',
       cleared: 'Tus datos de nacimiento guardados se borraron. Envía /start cuando quieras configurarlos otra vez.',
       chartUnavailable: 'La imagen de tu carta no está disponible ahora mismo.'
     },
@@ -429,6 +470,17 @@ const CATALOG = {
       conversationUnavailable: 'El modo conversacional no está disponible ahora mismo.',
       starsUnavailable: 'No pude consultar a las estrellas ahora mismo.',
       genericUnexpected: 'Error inesperado.'
+    },
+    billing: {
+      statusFree: 'Plan gratis: {used}/{limit} preguntas gratis usadas hoy.',
+      statusActive: 'Plan ilimitado: activo.',
+      statusActiveUntil: 'Plan ilimitado: activo hasta {date}.',
+      limitReached: 'Ya usaste tus {limit} preguntas gratis de hoy.',
+      upgradePitch: 'Pásate a preguntas ilimitadas por {price}/mes.',
+      subscribePrompt: 'Envía /subscribe cuando quieras un enlace nuevo de pago.',
+      checkoutUnavailable: 'Stripe Checkout todavía no está configurado. Añade primero las variables de Stripe y un precio recurrente.',
+      portalReady: 'Gestiona tu suscripción aquí:',
+      portalUnavailable: 'Tu portal de cliente todavía no está listo. Completa primero una suscripción.'
     },
     suggestions: {
       starter: [
