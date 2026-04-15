@@ -160,6 +160,8 @@ const CATALOG = {
       limitReached: 'You have used all {limit} free questions for today.',
       upgradePitch: 'Upgrade to unlimited questions for {price}/month.',
       subscribePrompt: 'Send /subscribe when you want a fresh checkout link.',
+      subscribeButton: 'Subscribe',
+      manageButton: 'Manage subscription',
       checkoutUnavailable: 'Stripe checkout is not configured yet. Add your Stripe environment variables and a recurring price first.',
       portalReady: 'Manage your subscription here:',
       portalUnavailable: 'Your billing portal is not ready yet. Complete one subscription checkout first.'
@@ -266,6 +268,8 @@ const CATALOG = {
       limitReached: 'Vous avez utilisé vos {limit} questions gratuites du jour.',
       upgradePitch: 'Passez aux questions illimitées pour {price}/mois.',
       subscribePrompt: 'Envoyez /subscribe quand vous voulez un nouveau lien de paiement.',
+      subscribeButton: 'S’abonner',
+      manageButton: 'Gérer l’abonnement',
       checkoutUnavailable: 'Stripe Checkout n’est pas encore configuré. Ajoutez vos variables Stripe et un prix récurrent.',
       portalReady: 'Gérez votre abonnement ici :',
       portalUnavailable: 'Votre portail client n’est pas encore prêt. Terminez d’abord un abonnement.'
@@ -372,6 +376,8 @@ const CATALOG = {
       limitReached: 'Du hast heute alle {limit} kostenlosen Fragen verbraucht.',
       upgradePitch: 'Upgrade auf unbegrenzte Fragen für {price}/Monat.',
       subscribePrompt: 'Sende /subscribe, wenn du einen neuen Checkout-Link möchtest.',
+      subscribeButton: 'Abonnieren',
+      manageButton: 'Abo verwalten',
       checkoutUnavailable: 'Stripe Checkout ist noch nicht konfiguriert. Lege zuerst die Stripe-Variablen und einen wiederkehrenden Preis an.',
       portalReady: 'Verwalte dein Abo hier:',
       portalUnavailable: 'Dein Kundenportal ist noch nicht bereit. Schließe zuerst ein Abo-Checkout ab.'
@@ -478,6 +484,8 @@ const CATALOG = {
       limitReached: 'Ya usaste tus {limit} preguntas gratis de hoy.',
       upgradePitch: 'Pásate a preguntas ilimitadas por {price}/mes.',
       subscribePrompt: 'Envía /subscribe cuando quieras un enlace nuevo de pago.',
+      subscribeButton: 'Suscribirse',
+      manageButton: 'Gestionar suscripción',
       checkoutUnavailable: 'Stripe Checkout todavía no está configurado. Añade primero las variables de Stripe y un precio recurrente.',
       portalReady: 'Gestiona tu suscripción aquí:',
       portalUnavailable: 'Tu portal de cliente todavía no está listo. Completa primero una suscripción.'

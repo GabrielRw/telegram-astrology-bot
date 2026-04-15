@@ -90,9 +90,18 @@ function getOnboardingIntro(locale, source = 'start') {
 function formatBillingLinkMessage(event, checkoutUrl) {
   return [
     t(event, 'billing.limitReached', { limit: billing.FREE_QUESTIONS_PER_DAY }),
-    billing.getUpgradePitch((path, args) => t(event, path, args)),
-    checkoutUrl
+    billing.getUpgradePitch((path, args) => t(event, path, args))
   ].join('\n\n');
+}
+
+async function sendExternalLink(event, channelApi, prompt, labelKey, url) {
+  if (typeof channelApi.sendLink === 'function') {
+    await channelApi.sendLink(event, prompt, t(event, labelKey), url);
+    return true;
+  }
+
+  await channelApi.sendText(event, `${prompt}\n\n${t(event, labelKey)}: ${url}`);
+  return true;
 }
 
 async function maybeBuildCheckoutLink(identity) {
@@ -114,8 +123,9 @@ async function sendBillingStatus(event, channelApi) {
   if (access.unlimited) {
     try {
       const portalUrl = await billing.createCustomerPortalUrl(event);
-      lines.push(t(event, 'billing.portalReady'));
-      lines.push(portalUrl);
+      const prompt = [...lines, t(event, 'billing.portalReady')].join('\n\n');
+      await sendExternalLink(event, channelApi, prompt, 'billing.manageButton', portalUrl);
+      return true;
     } catch (error) {
       lines.push(t(event, 'billing.portalUnavailable'));
     }
@@ -135,12 +145,20 @@ async function sendBillingStatus(event, channelApi) {
 async function handleQuestionLimit(event, channelApi, loadingRef = null) {
   const checkoutUrl = await maybeBuildCheckoutLink(event);
   const message = checkoutUrl
-    ? formatBillingLinkMessage(event, checkoutUrl)
+    ? formatBillingLinkMessage(event)
     : [t(event, 'billing.limitReached', { limit: billing.FREE_QUESTIONS_PER_DAY }), t(event, 'billing.checkoutUnavailable')].join('\n\n');
 
-  if (loadingRef) {
+  if (loadingRef && !checkoutUrl) {
     await channelApi.editText(event, loadingRef, message);
     return true;
+  }
+
+  if (checkoutUrl) {
+    if (loadingRef) {
+      await channelApi.editText(event, loadingRef, message);
+    }
+
+    return sendExternalLink(event, channelApi, message, 'billing.subscribeButton', checkoutUrl);
   }
 
   await channelApi.sendText(event, message);
@@ -474,11 +492,16 @@ async function handleSubscribe(event, channelApi) {
     return true;
   }
 
-  await channelApi.sendText(event, [
-    billing.getUpgradePitch((path, args) => t(event, path, args)),
+  return sendExternalLink(
+    event,
+    channelApi,
+    [
+      billing.getUpgradePitch((path, args) => t(event, path, args)),
+      t(event, 'billing.subscribePrompt')
+    ].join('\n\n'),
+    'billing.subscribeButton',
     checkoutUrl
-  ].join('\n\n'));
-  return true;
+  );
 }
 
 async function handleCancel(event, channelApi) {

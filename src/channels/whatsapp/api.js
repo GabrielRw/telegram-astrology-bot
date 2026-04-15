@@ -123,6 +123,9 @@ function createWhatsAppChannelApi() {
 
       return createWhatsAppMessageRef(data);
     },
+    async sendLink(event, prompt, label, url) {
+      return this.sendText(event, `${prompt}\n\n${label}: ${url}`);
+    },
     async ackAction() {}
   };
 }

@@ -2,7 +2,11 @@ const { Markup } = require('telegraf');
 
 function toReplyMarkup(choices) {
   return Markup.inlineKeyboard(
-    choices.map((choice) => [Markup.button.callback(choice.title, choice.id)])
+    choices.map((choice) => [
+      choice.url
+        ? Markup.button.url(choice.title, choice.url)
+        : Markup.button.callback(choice.title, choice.id)
+    ])
   );
 }
 
@@ -54,6 +58,13 @@ function createTelegramChannelApi(ctx) {
     },
     async sendChoices(event, prompt, choices) {
       const message = await ctx.reply(prompt, toReplyMarkup(choices));
+      return createTelegramMessageRef(ctx, message);
+    },
+    async sendLink(event, prompt, label, url) {
+      const message = await ctx.reply(
+        prompt,
+        Markup.inlineKeyboard([[Markup.button.url(label, url)]])
+      );
       return createTelegramMessageRef(ctx, message);
     },
     async ackAction(event, text) {
