@@ -1,4 +1,5 @@
 const { randomUUID, createHash } = require('node:crypto');
+const { performance } = require('node:perf_hooks');
 const factIndex = require('./factIndex');
 const { getNatalInsights, getTransitInsights } = require('./freeastro');
 const { getSupabaseClient, isSupabaseConfigured } = require('./supabase');
@@ -14,6 +15,14 @@ const TRANSIT_INSIGHTS_TOOL = 'rest_western_transits_insights';
 
 const memoryEntries = new Map();
 const memoryLogs = [];
+
+function scheduleAsync(label, meta, task) {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      reportError(label, error, meta);
+    });
+}
 
 function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -296,7 +305,12 @@ async function resolveCachedToolCall(identity, input) {
   if (cached) {
     await markCacheEntryUsed(identity, cached);
     if (input.toolName === TRANSIT_TOOL && input.profile) {
-      await factIndex.safeEnsureTransitFacts(identity, input.profile, cached, { cacheMonth });
+      scheduleAsync('tool-cache.timeline-fact-index', {
+        stateKey: resolveStateKey(identity),
+        profileId: input.profile.profileId,
+        cacheEntryId: cached.cacheEntryId,
+        cacheMonth
+      }, () => factIndex.safeEnsureTransitFacts(identity, input.profile, cached, { cacheMonth }));
     }
     await logToolCall(identity, {
       ...input,
@@ -341,7 +355,12 @@ async function resolveCachedToolCall(identity, input) {
   });
 
   if (input.toolName === TRANSIT_TOOL && input.profile) {
-    await factIndex.safeEnsureTransitFacts(identity, input.profile, stored, { cacheMonth });
+    scheduleAsync('tool-cache.timeline-fact-index', {
+      stateKey: resolveStateKey(identity),
+      profileId: input.profile.profileId,
+      cacheEntryId: stored.cacheEntryId,
+      cacheMonth
+    }, () => factIndex.safeEnsureTransitFacts(identity, input.profile, stored, { cacheMonth }));
   }
 
   await logToolCall(identity, {
@@ -421,9 +440,42 @@ async function ensureNatalInsights(identity, profile, options = {}) {
     return null;
   }
 
+  const startedAt = performance.now();
+  const stateKey = resolveStateKey(identity);
+
   const requestArgs = buildNatalInsightsArgs(profile);
   if (!requestArgs) {
     return null;
+  }
+
+  const factsReady = await factIndex.hasFacts(identity, {
+    primaryProfileId: profile.profileId,
+    secondaryProfileId: null,
+    sourceKind: factIndex.NATAL_SOURCE_KIND,
+    cacheMonth: ''
+  });
+  const factsPending = factIndex.hasPendingSourceWrite(identity, {
+    primaryProfileId: profile.profileId,
+    secondaryProfileId: null,
+    sourceKind: factIndex.NATAL_SOURCE_KIND,
+    sourceToolName: NATAL_INSIGHTS_TOOL,
+    cacheMonth: ''
+  });
+
+  if ((factsReady || factsPending) && options.force !== true) {
+    info('natal insights ready from indexed facts', {
+      stateKey,
+      profileId: profile.profileId,
+      pending: factsPending,
+      durationMs: Math.round(performance.now() - startedAt)
+    });
+    return {
+      skipped: true,
+      factsReady: factsReady || factsPending,
+      cacheHit: true,
+      cacheEntry: null,
+      result: null
+    };
   }
 
   try {
@@ -439,8 +491,25 @@ async function ensureNatalInsights(identity, profile, options = {}) {
       executor: (args) => getNatalInsights(args)
     });
 
-    await factIndex.safeStoreNatalInsightFacts(identity, profile, resolved.result, resolved.cacheEntry, {
+    const indexTask = () => factIndex.safeStoreNatalInsightFacts(identity, profile, resolved.result, resolved.cacheEntry, {
       sourceToolName: NATAL_INSIGHTS_TOOL
+    });
+
+    if (options.awaitIndexing) {
+      await indexTask();
+    } else {
+      scheduleAsync('tool-cache.natal-insights-index', {
+        stateKey,
+        profileId: profile.profileId,
+        cacheEntryId: resolved.cacheEntry?.cacheEntryId || null
+      }, indexTask);
+    }
+
+    info('natal insights ensured', {
+      stateKey,
+      profileId: profile.profileId,
+      cacheHit: resolved.cacheHit,
+      durationMs: Math.round(performance.now() - startedAt)
     });
 
     return resolved;
@@ -459,11 +528,46 @@ async function ensureMonthlyTransitInsights(identity, profile, options = {}) {
     return null;
   }
 
+  const startedAt = performance.now();
+  const stateKey = resolveStateKey(identity);
+
   const monthWindow = getCurrentMonthWindow(profile.timezone || 'UTC');
   const requestArgs = buildTransitInsightsArgs(profile, monthWindow);
 
   if (!requestArgs || !monthWindow) {
     return null;
+  }
+
+  const factsReady = await factIndex.hasFacts(identity, {
+    primaryProfileId: profile.profileId,
+    secondaryProfileId: null,
+    sourceKind: factIndex.MONTHLY_TRANSIT_SOURCE_KIND,
+    cacheMonth: monthWindow.cacheMonth
+  });
+  const factsPending = factIndex.hasPendingSourceWrite(identity, {
+    primaryProfileId: profile.profileId,
+    secondaryProfileId: null,
+    sourceKind: factIndex.MONTHLY_TRANSIT_SOURCE_KIND,
+    sourceToolName: TRANSIT_INSIGHTS_TOOL,
+    cacheMonth: monthWindow.cacheMonth
+  });
+
+  if ((factsReady || factsPending) && options.force !== true) {
+    info('monthly transit insights ready from indexed facts', {
+      stateKey,
+      profileId: profile.profileId,
+      cacheMonth: monthWindow.cacheMonth,
+      pending: factsPending,
+      durationMs: Math.round(performance.now() - startedAt)
+    });
+    return {
+      skipped: true,
+      factsReady: factsReady || factsPending,
+      cacheHit: true,
+      cacheMonth: monthWindow.cacheMonth,
+      cacheEntry: null,
+      result: null
+    };
   }
 
   try {
@@ -479,9 +583,28 @@ async function ensureMonthlyTransitInsights(identity, profile, options = {}) {
       executor: (args) => getTransitInsights(args)
     });
 
-    await factIndex.safeStoreTransitInsightFacts(identity, profile, resolved.result, resolved.cacheEntry, {
+    const indexTask = () => factIndex.safeStoreTransitInsightFacts(identity, profile, resolved.result, resolved.cacheEntry, {
       cacheMonth: monthWindow.cacheMonth,
       sourceToolName: TRANSIT_INSIGHTS_TOOL
+    });
+
+    if (options.awaitIndexing) {
+      await indexTask();
+    } else {
+      scheduleAsync('tool-cache.transit-insights-index', {
+        stateKey,
+        profileId: profile.profileId,
+        cacheEntryId: resolved.cacheEntry?.cacheEntryId || null,
+        cacheMonth: monthWindow.cacheMonth
+      }, indexTask);
+    }
+
+    info('monthly transit insights ensured', {
+      stateKey,
+      profileId: profile.profileId,
+      cacheHit: resolved.cacheHit,
+      cacheMonth: monthWindow.cacheMonth,
+      durationMs: Math.round(performance.now() - startedAt)
     });
 
     return {

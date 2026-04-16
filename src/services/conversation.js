@@ -1,9 +1,11 @@
+const { performance } = require('node:perf_hooks');
 const { detectConversationIntent } = require('../config/conversationIntents');
 const factIndex = require('./factIndex');
 const mcpService = require('./freeastroMcp');
 const profiles = require('./profiles');
 const toolCache = require('./toolCache');
-const { createLocalFunctionDeclarations, runFunctionCallingLoop } = require('./gemini');
+const { createLocalFunctionDeclarations, generatePlainText, getFastPathModelName, runFunctionCallingLoop } = require('./gemini');
+const { info } = require('./logger');
 const {
   consumePendingSynastryQuestion,
   getChatState,
@@ -68,7 +70,7 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
       ]
     : [];
 
-  return [
+  const lines = [
     'You are a concise professional astrologer answering natal-chart questions in a messaging chat.',
     `Always answer in ${LOCALE_INSTRUCTION[locale] || 'English'}.`,
     'Write in plain text only. Do not use Markdown emphasis, especially **.',
@@ -92,14 +94,24 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
     `Active profile name: ${options.activeProfileName || 'Unknown'}.`,
     `Indexed natal facts: ${options.factAvailability?.hasNatalFacts ? 'available' : 'not indexed yet'}.`,
     `Indexed monthly transit facts: ${options.factAvailability?.indexedTransitCacheMonth || 'not indexed for the active month'}.`,
-    `Cached monthly transit timeline: ${options.monthlyTransitAvailable ? 'available for the active month' : 'not cached yet'}.`,
-    '',
-    'Natal profile facts:',
-    profile?.summaryText || 'No natal profile available.',
+    `Cached monthly transit timeline: ${options.monthlyTransitAvailable ? 'available for the active month' : 'not cached yet'}.`
+  ];
+
+  if (options.includeNatalSummary !== false) {
+    lines.push(
+      '',
+      'Natal profile facts:',
+      profile?.summaryText || 'No natal profile available.'
+    );
+  }
+
+  lines.push(
     '',
     'Synastry context:',
     describeSynastryContext(options.synastryContext)
-  ].join('\n');
+  );
+
+  return lines.join('\n');
 }
 
 function normalizeAssistantText(text) {
@@ -204,6 +216,254 @@ function isLocalOnlyPreferred(intent, factAvailability) {
   return Boolean(factAvailability?.hasNatalFacts);
 }
 
+function isFactFastPathEligible(intent, factAvailability) {
+  if (!intent || intent.id === 'relocation' || intent.id === 'synastry') {
+    return false;
+  }
+
+  if (intent.id === 'transits') {
+    return Boolean(factAvailability?.indexedTransitCacheMonth);
+  }
+
+  return Boolean(factAvailability?.hasNatalFacts);
+}
+
+function extractQuestionTags(text) {
+  const value = String(text || '').toLowerCase();
+  const tags = new Set();
+
+  const keywordMap = [
+    ['career', ['life_path', 'structure', 'career', 'work', 'profession', 'public_life']],
+    ['work', ['life_path', 'structure', 'career', 'work']],
+    ['job', ['life_path', 'structure', 'career', 'work']],
+    ['purpose', ['life_path', 'identity']],
+    ['relationship', ['relationships', 'love', 'partnership']],
+    ['love', ['relationships', 'love', 'partnership']],
+    ['partner', ['relationships', 'partnership']],
+    ['money', ['resources', 'money', 'security']],
+    ['emotion', ['emotions', 'feelings']],
+    ['feel', ['emotions', 'feelings']],
+    ['mind', ['mind', 'thinking', 'communication']],
+    ['communication', ['mind', 'communication']],
+    ['family', ['roots', 'family', 'home']],
+    ['home', ['roots', 'home', 'family']],
+    ['identity', ['identity', 'self']],
+    ['strength', ['identity', 'strength', 'talent']],
+    ['challenge', ['challenge', 'growth', 'pressure']],
+    ['transit', ['transit']],
+    ['month', ['month']],
+    ['forecast', ['forecast', 'month']],
+    ['today', ['timing', 'current']],
+    ['current', ['timing', 'current']]
+  ];
+
+  keywordMap.forEach(([needle, mappedTags]) => {
+    if (value.includes(needle)) {
+      mappedTags.forEach((tag) => tags.add(tag));
+    }
+  });
+
+  const planets = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'chiron'];
+  planets.forEach((planet) => {
+    if (new RegExp(`\\b${planet}\\b`, 'i').test(value)) {
+      tags.add(`planet:${planet}`);
+    }
+  });
+
+  for (let house = 1; house <= 12; house += 1) {
+    if (new RegExp(`\\b${house}(st|nd|rd|th)?\\b`, 'i').test(value) || new RegExp(`\\bhouse\\s+${house}\\b`, 'i').test(value)) {
+      tags.add(`house:${house}`);
+    }
+  }
+
+  if (/\brising|ascendant|asc\b/i.test(value)) {
+    tags.add('angle:asc');
+  }
+
+  if (/\bmidheaven|mc\b/i.test(value)) {
+    tags.add('angle:mc');
+  }
+
+  return [...tags];
+}
+
+function buildFactSearchInput(intent, userText, activeProfile, factAvailability) {
+  const tags = extractQuestionTags(userText);
+  const input = {
+    primaryProfileId: activeProfile.profileId,
+    secondaryProfileId: null,
+    categories: [],
+    tags,
+    sourceKinds: [],
+    cacheMonth: null,
+    limit: 6
+  };
+
+  if (intent.id === 'transits') {
+    input.sourceKinds = [factIndex.MONTHLY_TRANSIT_SOURCE_KIND];
+    input.cacheMonth = factAvailability?.indexedTransitCacheMonth || null;
+    input.limit = 5;
+  } else {
+    input.sourceKinds = [factIndex.NATAL_SOURCE_KIND];
+  }
+
+  return input;
+}
+
+function sentenceCase(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+
+  return text.endsWith('.') || text.endsWith('!') || text.endsWith('?')
+    ? text
+    : `${text}.`;
+}
+
+function summarizeFactTags(tags, limit = 5) {
+  return (Array.isArray(tags) ? tags : [])
+    .filter((tag) => !String(tag).startsWith('month:'))
+    .filter((tag) => !['natal', 'monthly_transit', 'timing', 'theme'].includes(String(tag)))
+    .slice(0, limit)
+    .join(', ');
+}
+
+function buildDeterministicFactAnswer(userText, facts, intent, activeProfile) {
+  const selectedFacts = Array.isArray(facts) ? facts.slice(0, 4) : [];
+  if (selectedFacts.length === 0) {
+    return '';
+  }
+
+  const intro = intent.id === 'transits'
+    ? `For ${activeProfile.profileName || 'your chart'}, the current transit picture is led by these active themes.`
+    : `For ${activeProfile.profileName || 'your chart'}, the clearest answer comes from these chart factors.`;
+
+  const body = selectedFacts
+    .map((fact) => sentenceCase(fact.factText))
+    .join(' ');
+
+  const closing = intent.id === 'transits'
+    ? 'This is the strongest current emphasis in the indexed monthly transit data.'
+    : `That is the strongest pattern connected to your question: "${String(userText || '').trim()}".`;
+
+  return normalizeAssistantText([intro, body, closing].join('\n\n'));
+}
+
+function buildFactRewritePrompt(userText, facts, intent, activeProfile, draftAnswer) {
+  const factLines = facts.slice(0, 4).map((fact, index) => {
+    const parts = [
+      `${index + 1}. Title: ${fact.title || 'Untitled fact'}`,
+      `Category: ${fact.category}`,
+      fact.sourceKind ? `Source: ${fact.sourceKind}` : null,
+      summarizeFactTags(fact.tags) ? `Tags: ${summarizeFactTags(fact.tags)}` : null,
+      `Evidence: ${fact.factText}`
+    ].filter(Boolean);
+
+    return parts.join('\n');
+  });
+
+  return [
+    `Profile: ${activeProfile.profileName || 'Chart User'}`,
+    `Intent: ${intent.id}`,
+    `Question: ${String(userText || '').trim()}`,
+    '',
+    'Grounded facts:',
+    ...factLines,
+    '',
+    'Fallback draft:',
+    draftAnswer
+  ].join('\n');
+}
+
+async function maybeRewriteFactAnswer(locale, userText, facts, intent, activeProfile, draftAnswer) {
+  if (!draftAnswer || process.env.FAST_PATH_GEMINI_REWRITE === 'false') {
+    return draftAnswer;
+  }
+
+  const systemInstruction = [
+    'Write a short astrology answer from grounded facts only.',
+    `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}.`,
+    'Use plain text only.',
+    'Translate metadata and evidence into natural astrological language.',
+    'Do not expose labels such as category, kind, subjects, tags, source, or metadata.',
+    'Do not list raw taxonomy terms unless they are naturally readable astrology terms.',
+    'Do not add any new facts, timings, placements, or interpretations.',
+    'Answer the user question directly first, then support it with 2 or 3 grounded chart factors.',
+    'Keep it to 2 or 3 short paragraphs.'
+  ].join('\n');
+
+  const rewritten = await generatePlainText({
+    systemInstruction,
+    userText: buildFactRewritePrompt(userText, facts, intent, activeProfile, draftAnswer),
+    history: [],
+    model: getFastPathModelName()
+  });
+
+  return normalizeAssistantText(rewritten || draftAnswer);
+}
+
+async function tryFactFastPath(identity, userText, intent, activeProfile, factAvailability, locale) {
+  if (!isFactFastPathEligible(intent, factAvailability)) {
+    return null;
+  }
+
+  const startedAt = performance.now();
+  const searchInput = buildFactSearchInput(intent, userText, activeProfile, factAvailability);
+  let facts = await factIndex.searchFacts(identity, searchInput);
+
+  if (facts.length < 2 && searchInput.tags.length > 0) {
+    facts = await factIndex.searchFacts(identity, {
+      ...searchInput,
+      tags: [],
+      limit: intent.id === 'transits' ? 5 : 4
+    });
+  }
+
+  if (facts.length < 2) {
+    return null;
+  }
+
+  const draftAnswer = buildDeterministicFactAnswer(userText, facts, intent, activeProfile);
+  if (!draftAnswer) {
+    return null;
+  }
+
+  let rewrittenAnswer = draftAnswer;
+  let rewriteDurationMs = 0;
+
+  try {
+    const rewriteStartedAt = performance.now();
+    rewrittenAnswer = await maybeRewriteFactAnswer(locale, userText, facts, intent, activeProfile, draftAnswer);
+    rewriteDurationMs = Math.round(performance.now() - rewriteStartedAt);
+  } catch (error) {
+    info('conversation fact fast-path rewrite failed', {
+      stateKey: `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`,
+      intent: intent.id,
+      error: error.message || 'unknown'
+    });
+  }
+
+  return {
+    text: rewrittenAnswer,
+    usedTools: [{
+      name: 'search_cached_profile_facts',
+      args: searchInput,
+      result: {
+        available: true,
+        facts: facts.map((fact) => ({
+          category: fact.category,
+          title: fact.title,
+          tags: fact.tags,
+          fact_text: fact.factText
+        }))
+      }
+    }],
+    durationMs: Math.round(performance.now() - startedAt),
+    rewriteDurationMs
+  };
+}
+
 function localToolResultHasData(toolResult) {
   const result = toolResult?.result;
 
@@ -249,7 +509,7 @@ function localResultLooksSufficient(loopResult, intent) {
   return !/could not generate|tool-calling limit|missing|need your birth details/i.test(text);
 }
 
-async function createLocalToolExecutor(identity, activeProfile) {
+async function createLocalToolExecutor(identity, activeProfile, factAvailability = {}) {
   const profile = getChatState(identity).natalProfile;
 
   return async (name, args) => {
@@ -265,10 +525,15 @@ async function createLocalToolExecutor(identity, activeProfile) {
           Boolean(args.cacheMonth)
         );
 
-        await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'runtime' });
+        if (!factAvailability.hasNatalFacts) {
+          await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'runtime' });
+        }
 
         if (wantsTransitFacts) {
-          await toolCache.ensureMonthlyTransitInsights(identity, activeProfile, { source: 'runtime' });
+          const requestedCacheMonth = args.cacheMonth || toolCache.getCurrentMonthWindow(activeProfile.timezone || 'UTC')?.cacheMonth || null;
+          if (!requestedCacheMonth || factAvailability.indexedTransitCacheMonth !== requestedCacheMonth) {
+            await toolCache.ensureMonthlyTransitInsights(identity, activeProfile, { source: 'runtime' });
+          }
         }
 
         const facts = await factIndex.searchFacts(identity, {
@@ -420,6 +685,7 @@ async function answerConversation(identity, userText) {
   const chatState = getChatState(identity);
   const intent = detectConversationIntent(userText, chatState.history);
   const locale = getLocale(chatState);
+  const stateKey = chatState.stateKey || `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`;
 
   if (!process.env.GEMINI_API_KEY) {
     throw new Error('Missing GEMINI_API_KEY. Conversational mode is disabled.');
@@ -459,7 +725,6 @@ async function answerConversation(identity, userText) {
   }
 
   const localDeclarations = createLocalFunctionDeclarations();
-  const localExecutor = await createLocalToolExecutor(identity, activeProfile);
   await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'runtime' });
   const monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, activeProfile);
   if (monthlyTransitCache) {
@@ -480,6 +745,7 @@ async function answerConversation(identity, userText) {
 
   const allDeclarations = [...localDeclarations, ...mcpDeclarations];
   const localOnlyPreferred = isLocalOnlyPreferred(intent, factAvailability);
+  const localExecutor = await createLocalToolExecutor(identity, activeProfile, factAvailability);
   const executionContext = {
     activeProfile,
     synastryContext
@@ -516,11 +782,33 @@ async function answerConversation(identity, userText) {
     activeProfileName: activeProfile.profileName,
     factAvailability,
     monthlyTransitAvailable: Boolean(monthlyTransitCache),
+    includeNatalSummary: !factAvailability?.hasNatalFacts,
     synastryContext: {
       activeProfile,
       secondaryProfile: synastryContext.secondaryProfile
     }
   });
+
+  const fastPathResult = await tryFactFastPath(identity, userText, intent, activeProfile, factAvailability, locale);
+  if (fastPathResult) {
+    info('conversation fact fast-path complete', {
+      stateKey,
+      intent: intent.id,
+      durationMs: fastPathResult.durationMs,
+      rewriteDurationMs: fastPathResult.rewriteDurationMs,
+      factCount: fastPathResult.usedTools[0]?.result?.facts?.length || 0
+    });
+
+    pushHistory(identity, 'user', userText);
+    pushHistory(identity, 'model', fastPathResult.text);
+    setLastToolResults(identity, fastPathResult.usedTools);
+
+    return {
+      text: normalizeAssistantText(fastPathResult.text),
+      usedTools: fastPathResult.usedTools,
+      intent: intent.id
+    };
+  }
 
   let result;
 
@@ -533,6 +821,7 @@ async function answerConversation(identity, userText) {
       'Only if those local sources are insufficient will the runtime allow a second pass with MCP.'
     ].join('\n');
 
+    const localOnlyStartedAt = performance.now();
     const localOnlyResult = await runFunctionCallingLoop({
       systemInstruction: localOnlyInstruction,
       history: chatState.history,
@@ -540,10 +829,20 @@ async function answerConversation(identity, userText) {
       functionDeclarations: localDeclarations,
       executeFunction
     });
+    const localOnlySufficient = localResultLooksSufficient(localOnlyResult, intent);
 
-    if (localResultLooksSufficient(localOnlyResult, intent)) {
+    info('conversation local-only pass complete', {
+      stateKey,
+      intent: intent.id,
+      durationMs: Math.round(performance.now() - localOnlyStartedAt),
+      toolCalls: Array.isArray(localOnlyResult.toolResults) ? localOnlyResult.toolResults.length : 0,
+      sufficient: localOnlySufficient
+    });
+
+    if (localOnlySufficient) {
       result = localOnlyResult;
     } else {
+      const fallbackStartedAt = performance.now();
       result = await runFunctionCallingLoop({
         systemInstruction,
         history: chatState.history,
@@ -551,14 +850,29 @@ async function answerConversation(identity, userText) {
         functionDeclarations: allDeclarations,
         executeFunction
       });
+
+      info('conversation mcp fallback pass complete', {
+        stateKey,
+        intent: intent.id,
+        durationMs: Math.round(performance.now() - fallbackStartedAt),
+        toolCalls: Array.isArray(result.toolResults) ? result.toolResults.length : 0
+      });
     }
   } else {
+    const fallbackStartedAt = performance.now();
     result = await runFunctionCallingLoop({
       systemInstruction,
       history: chatState.history,
       userText,
       functionDeclarations: allDeclarations,
       executeFunction
+    });
+
+    info('conversation mcp fallback pass complete', {
+      stateKey,
+      intent: intent.id,
+      durationMs: Math.round(performance.now() - fallbackStartedAt),
+      toolCalls: Array.isArray(result.toolResults) ? result.toolResults.length : 0
     });
   }
 

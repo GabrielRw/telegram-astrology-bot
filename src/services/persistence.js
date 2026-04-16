@@ -1,3 +1,4 @@
+const { performance } = require('node:perf_hooks');
 const { getSupabaseClient, isSupabaseConfigured } = require('./supabase');
 const { info, reportError, warn } = require('./logger');
 const {
@@ -52,9 +53,17 @@ class ConversationPersistence {
       return;
     }
 
+    const startedAt = performance.now();
+
     const task = this.loadConversation(identity)
       .then(() => profiles.ensureHydrated(identity))
       .catch((error) => reportError('persistence.hydrate', error, { stateKey: key }))
+      .finally(() => {
+        info('persistence hydrated', {
+          stateKey: key,
+          durationMs: Math.round(performance.now() - startedAt)
+        });
+      })
       .finally(() => {
         this.hydrating.delete(key);
         this.hydratedKeys.add(key);

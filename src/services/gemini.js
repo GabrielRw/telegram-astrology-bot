@@ -22,6 +22,10 @@ function getModelName() {
   return process.env.GEMINI_MODEL || 'gemma-4-31b-it';
 }
 
+function getFastPathModelName() {
+  return process.env.GEMINI_FAST_PATH_MODEL || getModelName();
+}
+
 function getLocalizedGeminiMessage(locale, key, fallback) {
   const messages = {
     invalidKey: {
@@ -209,6 +213,33 @@ async function runFunctionCallingLoop({
   };
 }
 
+async function generatePlainText({
+  systemInstruction,
+  userText,
+  history = [],
+  model
+}) {
+  const ai = getGeminiClient();
+  const contents = [
+    ...history.map((item) => (
+      item.role === 'model'
+        ? createModelContent(item.text)
+        : createUserContent(item.text)
+    )),
+    createUserContent(userText)
+  ];
+
+  const response = await generateContentWithRetry(ai, {
+    model: model || getModelName(),
+    contents,
+    config: {
+      systemInstruction
+    }
+  });
+
+  return response.text || '';
+}
+
 function createLocalFunctionDeclarations() {
   return [
     {
@@ -337,6 +368,8 @@ function createLocalFunctionDeclarations() {
 
 module.exports = {
   createLocalFunctionDeclarations,
+  generatePlainText,
+  getFastPathModelName,
   getGeminiErrorMessage,
   runFunctionCallingLoop
 };

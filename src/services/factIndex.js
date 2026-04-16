@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const { performance } = require('node:perf_hooks');
 const { getSupabaseClient, isSupabaseConfigured } = require('./supabase');
 const { info, reportError } = require('./logger');
 const {
@@ -27,6 +28,7 @@ const CATEGORY = {
 };
 
 const memoryFacts = new Map();
+const pendingSourceWrites = new Map();
 
 function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -160,6 +162,55 @@ function compareFacts(left, right) {
   return String(right.createdAt || '').localeCompare(String(left.createdAt || ''));
 }
 
+function shouldReplaceFact(existing, candidate) {
+  if (!existing) {
+    return true;
+  }
+
+  if (Number(candidate.importance || 0) !== Number(existing.importance || 0)) {
+    return Number(candidate.importance || 0) > Number(existing.importance || 0);
+  }
+
+  return Number(candidate.sortOrder || 0) < Number(existing.sortOrder || 0);
+}
+
+function dedupeFactsByFactKey(facts) {
+  const deduped = new Map();
+
+  for (const fact of toArray(facts)) {
+    const factKey = String(fact?.factKey || '').trim();
+    if (!factKey) {
+      continue;
+    }
+
+    const current = deduped.get(factKey);
+    if (!current) {
+      deduped.set(factKey, {
+        ...fact,
+        tags: [...new Set(toArray(fact.tags))],
+        factPayload: clone(fact.factPayload || {})
+      });
+      continue;
+    }
+
+    const preferred = shouldReplaceFact(current, fact)
+      ? {
+          ...fact,
+          tags: [...new Set([...toArray(current.tags), ...toArray(fact.tags)])],
+          factPayload: clone(fact.factPayload || {})
+        }
+      : {
+          ...current,
+          tags: [...new Set([...toArray(current.tags), ...toArray(fact.tags)])],
+          factPayload: clone(current.factPayload || {})
+        };
+
+    deduped.set(factKey, preferred);
+  }
+
+  return [...deduped.values()];
+}
+
 function buildFactPayload(identity, scope, fact, timestamp) {
   const normalized = resolveIdentity(identity);
 
@@ -205,6 +256,44 @@ function matchesSourceScope(fact, scope) {
   );
 }
 
+function getSourceScopeKey(scope) {
+  return [
+    String(scope.stateKey || ''),
+    String(scope.primaryProfileId || ''),
+    String(scope.secondaryProfileId || ''),
+    String(scope.sourceKind || ''),
+    String(scope.sourceToolName || ''),
+    String(scope.cacheMonth || '')
+  ].join('::');
+}
+
+function hasPendingSourceWrite(identity, scope) {
+  return pendingSourceWrites.has(getSourceScopeKey({
+    stateKey: resolveStateKey(identity),
+    primaryProfileId: scope.primaryProfileId || null,
+    secondaryProfileId: scope.secondaryProfileId || null,
+    sourceKind: scope.sourceKind,
+    sourceToolName: scope.sourceToolName || '',
+    cacheMonth: String(scope.cacheMonth || '')
+  }));
+}
+
+async function runScopedSourceWrite(scope, task) {
+  const scopeKey = getSourceScopeKey(scope);
+  if (pendingSourceWrites.has(scopeKey)) {
+    return pendingSourceWrites.get(scopeKey);
+  }
+
+  const pending = Promise.resolve()
+    .then(task)
+    .finally(() => {
+      pendingSourceWrites.delete(scopeKey);
+    });
+
+  pendingSourceWrites.set(scopeKey, pending);
+  return pending;
+}
+
 async function replaceSourceFacts(identity, scope, facts) {
   const normalizedScope = {
     stateKey: resolveStateKey(identity),
@@ -215,45 +304,47 @@ async function replaceSourceFacts(identity, scope, facts) {
     sourceCacheEntryId: scope.sourceCacheEntryId || null,
     cacheMonth: String(scope.cacheMonth || '')
   };
-  const timestamp = new Date().toISOString();
-  const rows = facts.map((fact) => buildFactPayload(identity, normalizedScope, fact, timestamp));
+  return runScopedSourceWrite(normalizedScope, async () => {
+    const timestamp = new Date().toISOString();
+    const rows = dedupeFactsByFactKey(facts).map((fact) => buildFactPayload(identity, normalizedScope, fact, timestamp));
 
-  if (!isSupabaseConfigured()) {
-    const current = getMemoryFacts(normalizedScope.stateKey)
-      .filter((fact) => !matchesSourceScope(fact, normalizedScope));
-    setMemoryFacts(normalizedScope.stateKey, [...current, ...rows]);
+    if (!isSupabaseConfigured()) {
+      const current = getMemoryFacts(normalizedScope.stateKey)
+        .filter((fact) => !matchesSourceScope(fact, normalizedScope));
+      setMemoryFacts(normalizedScope.stateKey, [...current, ...rows]);
+      return rows.map(normalizeFactRecord);
+    }
+
+    const client = getSupabaseClient();
+    let deleteQuery = client
+      .from(FACT_TABLE)
+      .delete()
+      .eq('state_key', normalizedScope.stateKey)
+      .eq('primary_profile_id', normalizedScope.primaryProfileId)
+      .eq('source_kind', normalizedScope.sourceKind)
+      .eq('cache_month', normalizedScope.cacheMonth);
+
+    deleteQuery = applyNullableEquals(deleteQuery, 'secondary_profile_id', normalizedScope.secondaryProfileId);
+
+    const { error: deleteError } = await deleteQuery;
+    if (deleteError) {
+      throw deleteError;
+    }
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    const { error: insertError } = await client
+      .from(FACT_TABLE)
+      .insert(rows);
+
+    if (insertError) {
+      throw insertError;
+    }
+
     return rows.map(normalizeFactRecord);
-  }
-
-  const client = getSupabaseClient();
-  let deleteQuery = client
-    .from(FACT_TABLE)
-    .delete()
-    .eq('state_key', normalizedScope.stateKey)
-    .eq('primary_profile_id', normalizedScope.primaryProfileId)
-    .eq('source_kind', normalizedScope.sourceKind)
-    .eq('cache_month', normalizedScope.cacheMonth);
-
-  deleteQuery = applyNullableEquals(deleteQuery, 'secondary_profile_id', normalizedScope.secondaryProfileId);
-
-  const { error: deleteError } = await deleteQuery;
-  if (deleteError) {
-    throw deleteError;
-  }
-
-  if (rows.length === 0) {
-    return [];
-  }
-
-  const { error: insertError } = await client
-    .from(FACT_TABLE)
-    .insert(rows);
-
-  if (insertError) {
-    throw insertError;
-  }
-
-  return rows.map(normalizeFactRecord);
+  });
 }
 
 function parseStructuredContent(response) {
@@ -954,6 +1045,7 @@ function filterFacts(records, input) {
 }
 
 async function searchFacts(identity, input) {
+  const startedAt = performance.now();
   const stateKey = resolveStateKey(identity);
   const limit = Math.max(1, Math.min(Number(input.limit || 12), 30));
   const normalizedInput = {
@@ -970,7 +1062,17 @@ async function searchFacts(identity, input) {
   }
 
   if (!isSupabaseConfigured()) {
-    return filterFacts(getMemoryFacts(stateKey), normalizedInput).slice(0, limit);
+    const result = filterFacts(getMemoryFacts(stateKey), normalizedInput).slice(0, limit);
+    info('fact search complete', {
+      stateKey,
+      primaryProfileId: normalizedInput.primaryProfileId,
+      sourceKinds: normalizedInput.sourceKinds,
+      categories: normalizedInput.categories,
+      cacheMonth: normalizedInput.cacheMonth,
+      count: result.length,
+      durationMs: Math.round(performance.now() - startedAt)
+    });
+    return result;
   }
 
   const client = getSupabaseClient();
@@ -1007,7 +1109,17 @@ async function searchFacts(identity, input) {
     throw error;
   }
 
-  return toArray(data).map(normalizeFactRecord).filter(Boolean);
+  const result = toArray(data).map(normalizeFactRecord).filter(Boolean);
+  info('fact search complete', {
+    stateKey,
+    primaryProfileId: normalizedInput.primaryProfileId,
+    sourceKinds: normalizedInput.sourceKinds,
+    categories: normalizedInput.categories,
+    cacheMonth: normalizedInput.cacheMonth,
+    count: result.length,
+    durationMs: Math.round(performance.now() - startedAt)
+  });
+  return result;
 }
 
 async function hasFacts(identity, input) {
@@ -1184,6 +1296,23 @@ async function storeNatalInsightFacts(identity, profile, insightResponse, cacheE
     return [];
   }
 
+  if (!options.force) {
+    const exists = await hasFacts(identity, {
+      primaryProfileId: profile.profileId,
+      secondaryProfileId: null,
+      sourceKind: NATAL_SOURCE_KIND,
+      sourceToolName: options.sourceToolName || cacheEntry?.toolName || 'rest_western_natal_insights',
+      cacheMonth: ''
+    });
+
+    if (exists) {
+      if (getChatState(identity).activeProfileId === profile.profileId) {
+        await syncActiveProfileFactAvailability(identity, profile, { notify: false });
+      }
+      return [];
+    }
+  }
+
   const facts = extractNatalInsightFacts(insightResponse);
   if (facts.length === 0) {
     return [];
@@ -1213,6 +1342,26 @@ async function storeTransitInsightFacts(identity, profile, insightResponse, cach
   const cacheMonth = String(options.cacheMonth || cacheEntry?.cacheMonth || '');
   if (!cacheMonth) {
     return [];
+  }
+
+  if (!options.force) {
+    const exists = await hasFacts(identity, {
+      primaryProfileId: profile.profileId,
+      secondaryProfileId: null,
+      sourceKind: MONTHLY_TRANSIT_SOURCE_KIND,
+      sourceToolName: options.sourceToolName || cacheEntry?.toolName || 'rest_western_transits_insights',
+      cacheMonth
+    });
+
+    if (exists) {
+      if (getChatState(identity).activeProfileId === profile.profileId) {
+        await syncActiveProfileFactAvailability(identity, profile, {
+          cacheMonth,
+          notify: false
+        });
+      }
+      return [];
+    }
   }
 
   const facts = extractTransitInsightFacts(insightResponse, cacheMonth);
@@ -1337,6 +1486,7 @@ module.exports = {
   extractNatalFacts,
   extractTransitFacts,
   hasFacts,
+  hasPendingSourceWrite,
   safeEnsureNatalFacts,
   safeEnsureTransitFacts,
   safeStoreNatalInsightFacts,
