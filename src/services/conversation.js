@@ -192,6 +192,63 @@ function dedupeRepeatedSentences(text) {
   return keptParagraphs.join('\n\n').trim();
 }
 
+function isLocalOnlyPreferred(intent, factAvailability) {
+  if (!intent || intent.id === 'relocation' || intent.id === 'synastry') {
+    return false;
+  }
+
+  if (intent.id === 'transits') {
+    return Boolean(factAvailability?.indexedTransitCacheMonth);
+  }
+
+  return Boolean(factAvailability?.hasNatalFacts);
+}
+
+function localToolResultHasData(toolResult) {
+  const result = toolResult?.result;
+
+  if (!result || typeof result !== 'object' || result.error) {
+    return false;
+  }
+
+  if (result.available === true) {
+    return true;
+  }
+
+  if (Array.isArray(result.facts) && result.facts.length > 0) {
+    return true;
+  }
+
+  if (Array.isArray(result.aspects) && result.aspects.length > 0) {
+    return true;
+  }
+
+  if (result.summary || result.planet || result.house || result.angle || result.timeline) {
+    return true;
+  }
+
+  return false;
+}
+
+function localResultLooksSufficient(loopResult, intent) {
+  const toolResults = Array.isArray(loopResult?.toolResults) ? loopResult.toolResults : [];
+
+  if (toolResults.some(localToolResultHasData)) {
+    return true;
+  }
+
+  const text = String(loopResult?.text || '').trim();
+  if (!text) {
+    return false;
+  }
+
+  if (intent?.id === 'transits') {
+    return false;
+  }
+
+  return !/could not generate|tool-calling limit|missing|need your birth details/i.test(text);
+}
+
 async function createLocalToolExecutor(identity, activeProfile) {
   const profile = getChatState(identity).natalProfile;
 
@@ -422,6 +479,7 @@ async function answerConversation(identity, userText) {
   }
 
   const allDeclarations = [...localDeclarations, ...mcpDeclarations];
+  const localOnlyPreferred = isLocalOnlyPreferred(intent, factAvailability);
   const executionContext = {
     activeProfile,
     synastryContext
@@ -454,21 +512,55 @@ async function answerConversation(identity, userText) {
     throw new Error(`Unknown tool call: ${name}`);
   };
 
-  const result = await runFunctionCallingLoop({
-    systemInstruction: buildSystemInstruction(chatState, mcpStatus, intent, {
-      activeProfileName: activeProfile.profileName,
-      factAvailability,
-      monthlyTransitAvailable: Boolean(monthlyTransitCache),
-      synastryContext: {
-        activeProfile,
-        secondaryProfile: synastryContext.secondaryProfile
-      }
-    }),
-    history: chatState.history,
-    userText,
-    functionDeclarations: allDeclarations,
-    executeFunction
+  const systemInstruction = buildSystemInstruction(chatState, mcpStatus, intent, {
+    activeProfileName: activeProfile.profileName,
+    factAvailability,
+    monthlyTransitAvailable: Boolean(monthlyTransitCache),
+    synastryContext: {
+      activeProfile,
+      secondaryProfile: synastryContext.secondaryProfile
+    }
   });
+
+  let result;
+
+  if (localOnlyPreferred) {
+    const localOnlyInstruction = [
+      systemInstruction,
+      '',
+      'For this pass, do not call any FreeAstro MCP tools.',
+      'Answer only from Supabase-backed indexed facts and cached local tools.',
+      'Only if those local sources are insufficient will the runtime allow a second pass with MCP.'
+    ].join('\n');
+
+    const localOnlyResult = await runFunctionCallingLoop({
+      systemInstruction: localOnlyInstruction,
+      history: chatState.history,
+      userText,
+      functionDeclarations: localDeclarations,
+      executeFunction
+    });
+
+    if (localResultLooksSufficient(localOnlyResult, intent)) {
+      result = localOnlyResult;
+    } else {
+      result = await runFunctionCallingLoop({
+        systemInstruction,
+        history: chatState.history,
+        userText,
+        functionDeclarations: allDeclarations,
+        executeFunction
+      });
+    }
+  } else {
+    result = await runFunctionCallingLoop({
+      systemInstruction,
+      history: chatState.history,
+      userText,
+      functionDeclarations: allDeclarations,
+      executeFunction
+    });
+  }
 
   pushHistory(identity, 'user', userText);
   pushHistory(identity, 'model', result.text);
