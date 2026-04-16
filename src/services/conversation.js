@@ -1,4 +1,5 @@
 const { detectConversationIntent } = require('../config/conversationIntents');
+const factIndex = require('./factIndex');
 const mcpService = require('./freeastroMcp');
 const profiles = require('./profiles');
 const toolCache = require('./toolCache');
@@ -79,7 +80,8 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
     'If the user asks for transits, ephemeris, or a month-specific forecast and the needed date window is missing, first prefer the cached monthly transit timeline.',
     'Do not give medical, legal, or financial advice.',
     'Never answer personal astrology questions without natal data.',
-    'Prefer cached natal and monthly transit tools first. Use FreeAstro MCP only when cached data is insufficient.',
+    'For natal and monthly transit questions, call search_cached_profile_facts first whenever possible, then use the older cached natal/monthly transit tools only if the fact index is insufficient.',
+    'Use FreeAstro MCP only when indexed facts and cached data are insufficient.',
     'When using tool data, interpret it like an astrologer, but stay specific to the chart and concise.',
     ...relocationRules,
     `Detected user intent: ${intent.id}.`,
@@ -88,6 +90,8 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
     `Preferred MCP tools: ${intent.prefersMcpTools.join(', ') || 'none'}.`,
     `MCP status: ${mcpStatus}.`,
     `Active profile name: ${options.activeProfileName || 'Unknown'}.`,
+    `Indexed natal facts: ${options.factAvailability?.hasNatalFacts ? 'available' : 'not indexed yet'}.`,
+    `Indexed monthly transit facts: ${options.factAvailability?.indexedTransitCacheMonth || 'not indexed for the active month'}.`,
     `Cached monthly transit timeline: ${options.monthlyTransitAvailable ? 'available for the active month' : 'not cached yet'}.`,
     '',
     'Natal profile facts:',
@@ -193,6 +197,46 @@ async function createLocalToolExecutor(identity, activeProfile) {
 
   return async (name, args) => {
     switch (name) {
+      case 'search_cached_profile_facts': {
+        const categories = Array.isArray(args.categories) ? args.categories : [];
+        const tags = Array.isArray(args.tags) ? args.tags : [];
+        const sourceKinds = Array.isArray(args.sourceKinds) ? args.sourceKinds : [];
+        const wantsTransitFacts = (
+          sourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND) ||
+          categories.some((category) => ['transit_event', 'transit_theme', 'timing_window'].includes(String(category))) ||
+          tags.some((tag) => String(tag).toLowerCase().includes('transit')) ||
+          Boolean(args.cacheMonth)
+        );
+
+        await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'runtime' });
+
+        if (wantsTransitFacts) {
+          await toolCache.ensureMonthlyTransitInsights(identity, activeProfile, { source: 'runtime' });
+        }
+
+        const facts = await factIndex.searchFacts(identity, {
+          primaryProfileId: activeProfile.profileId,
+          secondaryProfileId: args.secondaryProfileId || null,
+          categories,
+          tags,
+          sourceKinds,
+          cacheMonth: args.cacheMonth || null,
+          limit: args.limit || 12
+        });
+
+        return {
+          available: facts.length > 0,
+          facts: facts.map((fact) => ({
+            category: fact.category,
+            tags: fact.tags,
+            title: fact.title,
+            fact_text: fact.factText,
+            fact_payload: fact.factPayload,
+            source_kind: fact.sourceKind,
+            cache_month: fact.cacheMonth
+          }))
+        };
+      }
       case 'get_cached_natal_summary':
         return {
           available: Boolean(profile),
@@ -237,6 +281,9 @@ async function createLocalToolExecutor(identity, activeProfile) {
       case 'get_cached_monthly_transits':
         {
           const monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, activeProfile);
+          if (monthlyTransitCache) {
+            await toolCache.ensureMonthlyTransitInsights(identity, activeProfile, { source: 'runtime' });
+          }
         return {
           available: Boolean(monthlyTransitCache),
           cacheMonth: monthlyTransitCache?.cacheMonth || null,
@@ -356,7 +403,15 @@ async function answerConversation(identity, userText) {
 
   const localDeclarations = createLocalFunctionDeclarations();
   const localExecutor = await createLocalToolExecutor(identity, activeProfile);
+  await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'runtime' });
   const monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, activeProfile);
+  if (monthlyTransitCache) {
+    await toolCache.ensureMonthlyTransitInsights(identity, activeProfile, { source: 'runtime' });
+  }
+  const factAvailability = await factIndex.syncActiveProfileFactAvailability(identity, activeProfile, {
+    cacheMonth: monthlyTransitCache?.cacheMonth || null,
+    notify: false
+  });
   let mcpDeclarations = [];
   let mcpStatus = 'available';
 
@@ -373,7 +428,7 @@ async function answerConversation(identity, userText) {
   };
 
   const executeFunction = async (name, args) => {
-    if (name.startsWith('get_cached_') || name === 'get_profile_completeness') {
+    if (name === 'search_cached_profile_facts' || name.startsWith('get_cached_') || name === 'get_profile_completeness') {
       return localExecutor(name, args);
     }
 
@@ -384,6 +439,7 @@ async function answerConversation(identity, userText) {
       const result = await toolCache.resolveCachedToolCall(identity, {
         toolName: originalToolName,
         requestArgs,
+        profile: activeProfile,
         primaryProfileId: activeProfile.profileId,
         secondaryProfileId: synastryContext.secondaryProfile?.profileId || null,
         questionText: userText,
@@ -401,6 +457,7 @@ async function answerConversation(identity, userText) {
   const result = await runFunctionCallingLoop({
     systemInstruction: buildSystemInstruction(chatState, mcpStatus, intent, {
       activeProfileName: activeProfile.profileName,
+      factAvailability,
       monthlyTransitAvailable: Boolean(monthlyTransitCache),
       synastryContext: {
         activeProfile,

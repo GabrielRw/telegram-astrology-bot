@@ -192,6 +192,26 @@ async function getNatal(data) {
   });
 }
 
+async function getNatalInsights(data) {
+  return request('/api/v1/western/natal/insights', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(data)
+  });
+}
+
+async function getTransitInsights(data) {
+  return request('/api/v1/western/transits/insights', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(data)
+  });
+}
+
 async function getNatalChart(data) {
   return requestBinary('/api/v1/natal/chart/', {
     method: 'POST',
@@ -206,6 +226,8 @@ module.exports = {
   FreeAstroError,
   getNatalChart,
   getNatal,
+  getNatalInsights,
+  getTransitInsights,
   searchCities,
   searchCity
 };

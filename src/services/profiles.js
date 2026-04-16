@@ -1,5 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { getSupabaseClient, isSupabaseConfigured } = require('./supabase');
+const factIndex = require('./factIndex');
+const toolCache = require('./toolCache');
 const { info, reportError, warn } = require('./logger');
 const {
   getChatState,
@@ -215,8 +217,10 @@ async function applyProfilesToState(identity, profiles, options = {}) {
 
   if (activeProfile) {
     hydrateActiveProfile(identity, activeProfile, { notify: false });
+    await factIndex.syncActiveProfileFactAvailability(identity, activeProfile, { notify: false });
   } else {
     hydrateActiveProfile(identity, null, { notify: false });
+    await factIndex.syncActiveProfileFactAvailability(identity, null, { notify: false });
   }
 
   if (options.log !== false && activeProfile) {
@@ -303,7 +307,12 @@ async function saveProfile(identity, input) {
     nextProfiles.push(normalizeProfileRecord(payload));
     setMemoryProfiles(stateKey, nextProfiles);
     await refreshProfiles(identity, { log: false });
-    return getProfileById(identity, payload.profile_id);
+    const storedProfile = await getProfileById(identity, payload.profile_id);
+    await toolCache.ensureNatalInsights(identity, storedProfile, { source: 'prewarm', force: true });
+    if (storedProfile?.isActive) {
+      await factIndex.syncActiveProfileFactAvailability(identity, storedProfile, { notify: false });
+    }
+    return storedProfile;
   }
 
   if (shouldActivate) {
@@ -320,7 +329,12 @@ async function saveProfile(identity, input) {
   }
 
   await refreshProfiles(identity, { log: false });
-  return getProfileById(identity, payload.profile_id);
+  const storedProfile = await getProfileById(identity, payload.profile_id);
+  await toolCache.ensureNatalInsights(identity, storedProfile, { source: 'prewarm', force: true });
+  if (storedProfile?.isActive) {
+    await factIndex.syncActiveProfileFactAvailability(identity, storedProfile, { notify: false });
+  }
+  return storedProfile;
 }
 
 async function setActiveProfile(identity, profileId) {
@@ -353,7 +367,10 @@ async function setActiveProfile(identity, profileId) {
   }
 
   await refreshProfiles(identity, { log: false });
-  return getProfileById(identity, target.profileId);
+  const activeProfile = await getProfileById(identity, target.profileId);
+  await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'prewarm' });
+  await factIndex.syncActiveProfileFactAvailability(identity, activeProfile, { notify: false });
+  return activeProfile;
 }
 
 async function deleteProfile(identity, profileId) {
@@ -373,6 +390,7 @@ async function deleteProfile(identity, profileId) {
 
     setMemoryProfiles(stateKey, remaining);
     await refreshProfiles(identity, { log: false });
+    await factIndex.syncActiveProfileFactAvailability(identity, await getActiveProfile(identity), { notify: false });
     return {
       deleted: true,
       nextActiveProfile: await getActiveProfile(identity)
@@ -396,6 +414,8 @@ async function deleteProfile(identity, profileId) {
   } else {
     await refreshProfiles(identity, { log: false });
   }
+
+  await factIndex.syncActiveProfileFactAvailability(identity, await getActiveProfile(identity), { notify: false });
 
   return {
     deleted: true,
@@ -424,6 +444,9 @@ async function ensureHydrated(identity) {
 
   if (profiles.length > 0) {
     await applyProfilesToState(identity, profiles, { log: false, notify: false });
+    const activeProfile = profiles.find((profile) => profile.isActive) || profiles[0] || null;
+    await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'prewarm' });
+    await factIndex.syncActiveProfileFactAvailability(identity, activeProfile, { notify: false });
     return profiles;
   }
 

@@ -148,6 +148,51 @@ create index if not exists bot_tool_call_logs_state_created_idx
 create index if not exists bot_tool_call_logs_tool_created_idx
   on public.bot_tool_call_logs (tool_name, created_at desc);
 
+create table if not exists public.bot_profile_facts (
+  fact_id text primary key,
+  fact_key text not null,
+  state_key text not null,
+  channel text not null,
+  user_id text,
+  chat_id text,
+  primary_profile_id text not null,
+  secondary_profile_id text,
+  source_kind text not null,
+  source_tool_name text not null,
+  source_cache_entry_id text,
+  cache_month text not null default '',
+  category text not null,
+  tags text[] not null default '{}'::text[],
+  title text,
+  fact_text text not null,
+  sort_order integer not null default 0,
+  importance integer not null default 0,
+  confidence text,
+  fact_payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists bot_profile_facts_scope_uidx
+  on public.bot_profile_facts (
+    state_key,
+    primary_profile_id,
+    coalesce(secondary_profile_id, ''),
+    source_kind,
+    source_tool_name,
+    cache_month,
+    fact_key
+  );
+
+create index if not exists bot_profile_facts_lookup_idx
+  on public.bot_profile_facts (state_key, primary_profile_id, source_kind, cache_month, category);
+
+create index if not exists bot_profile_facts_importance_idx
+  on public.bot_profile_facts (state_key, primary_profile_id, importance desc, created_at desc);
+
+create index if not exists bot_profile_facts_tags_gin_idx
+  on public.bot_profile_facts using gin (tags);
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -186,4 +231,9 @@ for each row execute function public.set_updated_at();
 drop trigger if exists bot_tool_cache_entries_set_updated_at on public.bot_tool_cache_entries;
 create trigger bot_tool_cache_entries_set_updated_at
 before update on public.bot_tool_cache_entries
+for each row execute function public.set_updated_at();
+
+drop trigger if exists bot_profile_facts_set_updated_at on public.bot_profile_facts;
+create trigger bot_profile_facts_set_updated_at
+before update on public.bot_profile_facts
 for each row execute function public.set_updated_at();

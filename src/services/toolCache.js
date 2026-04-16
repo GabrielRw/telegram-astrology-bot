@@ -1,4 +1,6 @@
 const { randomUUID, createHash } = require('node:crypto');
+const factIndex = require('./factIndex');
+const { getNatalInsights, getTransitInsights } = require('./freeastro');
 const { getSupabaseClient, isSupabaseConfigured } = require('./supabase');
 const { info, reportError } = require('./logger');
 const mcpService = require('./freeastroMcp');
@@ -7,6 +9,8 @@ const { resolveIdentity, resolveStateKey } = require('../state/chatState');
 const CACHE_TABLE = 'bot_tool_cache_entries';
 const LOG_TABLE = 'bot_tool_call_logs';
 const TRANSIT_TOOL = 'v1_western_transits_timeline';
+const NATAL_INSIGHTS_TOOL = 'rest_western_natal_insights';
+const TRANSIT_INSIGHTS_TOOL = 'rest_western_transits_insights';
 
 const memoryEntries = new Map();
 const memoryLogs = [];
@@ -291,6 +295,9 @@ async function resolveCachedToolCall(identity, input) {
 
   if (cached) {
     await markCacheEntryUsed(identity, cached);
+    if (input.toolName === TRANSIT_TOOL && input.profile) {
+      await factIndex.safeEnsureTransitFacts(identity, input.profile, cached, { cacheMonth });
+    }
     await logToolCall(identity, {
       ...input,
       requestArgs,
@@ -333,6 +340,10 @@ async function resolveCachedToolCall(identity, input) {
     source: input.source || 'runtime'
   });
 
+  if (input.toolName === TRANSIT_TOOL && input.profile) {
+    await factIndex.safeEnsureTransitFacts(identity, input.profile, stored, { cacheMonth });
+  }
+
   await logToolCall(identity, {
     ...input,
     requestArgs,
@@ -362,6 +373,136 @@ function buildTransitTimelineArgs(profile, monthWindow) {
   };
 }
 
+function buildNatalInsightsArgs(profile) {
+  const natal = profile?.natalRequestPayload;
+  if (!natal) {
+    return null;
+  }
+
+  return {
+    year: natal.year,
+    month: natal.month,
+    day: natal.day,
+    hour: natal.time_known === false ? undefined : natal.hour,
+    minute: natal.time_known === false ? undefined : natal.minute,
+    time_known: natal.time_known !== false,
+    city: natal.city,
+    lat: natal.lat,
+    lng: natal.lng,
+    tz_str: natal.tz_str || profile.timezone || 'AUTO',
+    house_system: natal.house_system || 'placidus',
+    zodiac_type: natal.zodiac_type || 'tropical',
+    include_minor_aspects: natal.include_minor_aspects === true,
+    include_features: Array.isArray(natal.include_features) ? natal.include_features : ['chiron', 'lilith', 'true_node'],
+    lang: 'en'
+  };
+}
+
+function buildTransitInsightsArgs(profile, monthWindow) {
+  const natal = buildNatalInsightsArgs(profile);
+  if (!natal || !monthWindow) {
+    return null;
+  }
+
+  return {
+    natal,
+    range_start: monthWindow.rangeStart,
+    range_end: monthWindow.rangeEnd,
+    mode: 'month',
+    include_houses: profile.timeKnown !== false,
+    transit_planets: ['mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'chiron', 'true_node'],
+    natal_points: ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'ascendant', 'midheaven', 'descendant', 'ic'],
+    aspect_types: ['conjunction', 'square', 'opposition', 'trine', 'sextile', 'quincunx']
+  };
+}
+
+async function ensureNatalInsights(identity, profile, options = {}) {
+  if (!profile) {
+    return null;
+  }
+
+  const requestArgs = buildNatalInsightsArgs(profile);
+  if (!requestArgs) {
+    return null;
+  }
+
+  try {
+    const resolved = await resolveCachedToolCall(identity, {
+      toolName: NATAL_INSIGHTS_TOOL,
+      requestArgs,
+      profile,
+      primaryProfileId: profile.profileId,
+      secondaryProfileId: null,
+      cacheMonth: '',
+      questionText: options.questionText || null,
+      source: options.source || 'runtime',
+      executor: (args) => getNatalInsights(args)
+    });
+
+    await factIndex.safeStoreNatalInsightFacts(identity, profile, resolved.result, resolved.cacheEntry, {
+      sourceToolName: NATAL_INSIGHTS_TOOL
+    });
+
+    return resolved;
+  } catch (error) {
+    await reportError('tool-cache.natal-insights', error, {
+      stateKey: resolveStateKey(identity),
+      profileId: profile.profileId
+    });
+    await factIndex.safeEnsureNatalFacts(identity, profile, { force: options.force });
+    return null;
+  }
+}
+
+async function ensureMonthlyTransitInsights(identity, profile, options = {}) {
+  if (!profile) {
+    return null;
+  }
+
+  const monthWindow = getCurrentMonthWindow(profile.timezone || 'UTC');
+  const requestArgs = buildTransitInsightsArgs(profile, monthWindow);
+
+  if (!requestArgs || !monthWindow) {
+    return null;
+  }
+
+  try {
+    const resolved = await resolveCachedToolCall(identity, {
+      toolName: TRANSIT_INSIGHTS_TOOL,
+      requestArgs,
+      profile,
+      primaryProfileId: profile.profileId,
+      secondaryProfileId: null,
+      cacheMonth: monthWindow.cacheMonth,
+      questionText: options.questionText || null,
+      source: options.source || 'runtime',
+      executor: (args) => getTransitInsights(args)
+    });
+
+    await factIndex.safeStoreTransitInsightFacts(identity, profile, resolved.result, resolved.cacheEntry, {
+      cacheMonth: monthWindow.cacheMonth,
+      sourceToolName: TRANSIT_INSIGHTS_TOOL
+    });
+
+    return {
+      ...resolved,
+      cacheMonth: monthWindow.cacheMonth
+    };
+  } catch (error) {
+    await reportError('tool-cache.transit-insights', error, {
+      stateKey: resolveStateKey(identity),
+      profileId: profile.profileId
+    });
+    const monthlyTransitCache = await getCurrentMonthTransitCache(identity, profile);
+    if (monthlyTransitCache) {
+      await factIndex.safeEnsureTransitFacts(identity, profile, monthlyTransitCache, {
+        cacheMonth: monthlyTransitCache.cacheMonth
+      });
+    }
+    return null;
+  }
+}
+
 async function ensureMonthlyTransitTimeline(identity, profile, options = {}) {
   if (!profile) {
     return null;
@@ -377,6 +518,7 @@ async function ensureMonthlyTransitTimeline(identity, profile, options = {}) {
   const resolved = await resolveCachedToolCall(identity, {
     toolName: TRANSIT_TOOL,
     requestArgs,
+    profile,
     primaryProfileId: profile.profileId,
     secondaryProfileId: null,
     cacheMonth: monthWindow.cacheMonth,
@@ -419,17 +561,22 @@ function prewarmMonthlyTransitTimeline(identity, profile) {
   }
 
   Promise.resolve()
-    .then(() => ensureMonthlyTransitTimeline(identity, profile, { source: 'prewarm' }))
-    .then((result) => {
-      if (!result) {
+    .then(async () => {
+      const timelineResult = await ensureMonthlyTransitTimeline(identity, profile, { source: 'prewarm' });
+      const insightResult = await ensureMonthlyTransitInsights(identity, profile, { source: 'prewarm' });
+      return { timelineResult, insightResult };
+    })
+    .then(({ timelineResult, insightResult }) => {
+      if (!timelineResult && !insightResult) {
         return;
       }
 
-      info('monthly transit timeline ready', {
+      info('monthly transit prewarm ready', {
         stateKey: resolveStateKey(identity),
         profileId: profile.profileId,
-        cacheHit: result.cacheHit,
-        cacheMonth: result.cacheMonth
+        timelineCacheHit: timelineResult?.cacheHit ?? null,
+        insightsCacheHit: insightResult?.cacheHit ?? null,
+        cacheMonth: timelineResult?.cacheMonth || insightResult?.cacheMonth || null
       });
     })
     .catch((error) => {
@@ -441,9 +588,13 @@ function prewarmMonthlyTransitTimeline(identity, profile) {
 }
 
 module.exports = {
+  NATAL_INSIGHTS_TOOL,
+  TRANSIT_INSIGHTS_TOOL,
   TRANSIT_TOOL,
   buildRequestHash,
   canonicalizeArgs,
+  ensureNatalInsights,
+  ensureMonthlyTransitInsights,
   ensureMonthlyTransitTimeline,
   getCurrentMonthTransitCache,
   getCurrentMonthWindow,

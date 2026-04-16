@@ -47,6 +47,10 @@ function createDefaultState(identity) {
     platformLocaleHint: null,
     activeProfileId: null,
     profileDirectory: [],
+    factAvailability: {
+      hasNatalFacts: false,
+      indexedTransitCacheMonth: null
+    },
     natalProfile: null,
     rawNatalPayload: null,
     natalRequestPayload: null,
@@ -67,6 +71,10 @@ function createDefaultState(identity) {
 function clearNatalProfile(identity) {
   const state = getChatState(identity);
   state.activeProfileId = null;
+  state.factAvailability = {
+    hasNatalFacts: false,
+    indexedTransitCacheMonth: null
+  };
   state.natalProfile = null;
   state.rawNatalPayload = null;
   state.natalRequestPayload = null;
@@ -321,6 +329,22 @@ function getProfileDirectory(identity) {
   return getChatState(identity).profileDirectory || [];
 }
 
+function setFactAvailability(identity, availability, options = {}) {
+  const state = getChatState(identity);
+  state.factAvailability = {
+    hasNatalFacts: Boolean(availability?.hasNatalFacts),
+    indexedTransitCacheMonth: availability?.indexedTransitCacheMonth
+      ? String(availability.indexedTransitCacheMonth)
+      : null
+  };
+
+  if (options.notify !== false) {
+    notifyPersistence(identity);
+  }
+
+  return state.factAvailability;
+}
+
 function setNatalProfile(chatId, rawNatalPayload, cityLabel, options = {}) {
   const state = getChatState(chatId);
   state.activeProfileId = options.activeProfileId || state.activeProfileId || null;
@@ -341,6 +365,10 @@ function hydrateActiveProfile(chatId, profileRecord, options = {}) {
 
   if (!profileRecord) {
     state.activeProfileId = null;
+    state.factAvailability = {
+      hasNatalFacts: false,
+      indexedTransitCacheMonth: null
+    };
     state.rawNatalPayload = null;
     state.natalRequestPayload = null;
     state.chartRequestPayload = null;
@@ -377,8 +405,9 @@ function getChatStateSnapshot(identity) {
     localeSource: state.localeSource,
     platformLocaleHint: state.platformLocaleHint,
     activeProfileId: state.activeProfileId,
-    profileDirectory: state.profileDirectory,
-    history: state.history,
+      profileDirectory: state.profileDirectory,
+      factAvailability: state.factAvailability,
+      history: state.history,
     activeFlow: state.activeFlow,
     lastToolResults: state.lastToolResults,
     pendingQuestion: state.pendingQuestion,
@@ -432,6 +461,7 @@ module.exports = {
   resolveStateKey,
   setActiveFlow,
   setChoiceMap,
+  setFactAvailability,
   setLastToolResults,
   setNatalProfile,
   notifyPersistence,

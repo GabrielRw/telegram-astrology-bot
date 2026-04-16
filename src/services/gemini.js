@@ -212,6 +212,48 @@ async function runFunctionCallingLoop({
 function createLocalFunctionDeclarations() {
   return [
     {
+      name: 'search_cached_profile_facts',
+      description: 'Search indexed natal and monthly transit facts for the active profile using exact categories and tags before calling MCP tools.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          categories: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.STRING
+            },
+            description: 'Optional exact insight categories such as identity, emotions, relationships, structure, transformation, growth, drive, life_path, chart_pattern, or mind.'
+          },
+          tags: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.STRING
+            },
+            description: 'Optional exact tags such as planet:sun, house:10, kind:pressure_window, category:relationships, detector:signatures.question_oriented.v1, or 2027-07.'
+          },
+          sourceKinds: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.STRING
+            },
+            description: 'Optional source kinds: natal or monthly_transit.'
+          },
+          cacheMonth: {
+            type: Type.STRING,
+            description: 'Optional month filter in YYYY-MM format, for example 2026-04.'
+          },
+          limit: {
+            type: Type.INTEGER,
+            description: 'Maximum number of facts to return.'
+          },
+          secondaryProfileId: {
+            type: Type.STRING,
+            description: 'Optional comparison profile id for pair-specific facts. Leave empty for single-profile facts.'
+          }
+        }
+      }
+    },
+    {
       name: 'get_cached_natal_summary',
       description: 'Return a grounded summary of the current chat natal profile.',
       parameters: {
