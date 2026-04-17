@@ -228,6 +228,10 @@ function isFactFastPathEligible(intent, factAvailability) {
   return Boolean(factAvailability?.hasNatalFacts);
 }
 
+function hasIndexedCoverage(factAvailability) {
+  return Boolean(factAvailability?.hasNatalFacts || factAvailability?.indexedTransitCacheMonth);
+}
+
 function extractQuestionTags(text) {
   const value = String(text || '').toLowerCase();
   const tags = new Set();
@@ -254,7 +258,11 @@ function extractQuestionTags(text) {
     ['month', ['month']],
     ['forecast', ['forecast', 'month']],
     ['today', ['timing', 'current']],
-    ['current', ['timing', 'current']]
+    ['current', ['timing', 'current']],
+    ['sky', ['current', 'sky', 'transit']],
+    ['now', ['current', 'timing', 'transit']],
+    ['energy', ['current', 'transit']],
+    ['energies', ['current', 'transit']]
   ];
 
   keywordMap.forEach(([needle, mappedTags]) => {
@@ -289,6 +297,8 @@ function extractQuestionTags(text) {
 
 function buildFactSearchInput(intent, userText, activeProfile, factAvailability) {
   const tags = extractQuestionTags(userText);
+  const value = String(userText || '').toLowerCase();
+  const transitBiased = /\bcurrent sky\b|\bsky right now\b|\bright now\b|\bcurrent energies\b|\bwhat'?s happening now\b|\bwhat is happening now\b|\bsky\b/.test(value);
   const input = {
     primaryProfileId: activeProfile.profileId,
     secondaryProfileId: null,
@@ -299,7 +309,7 @@ function buildFactSearchInput(intent, userText, activeProfile, factAvailability)
     limit: 6
   };
 
-  if (intent.id === 'transits') {
+  if (intent.id === 'transits' || transitBiased) {
     input.sourceKinds = [factIndex.MONTHLY_TRANSIT_SOURCE_KIND];
     input.cacheMonth = factAvailability?.indexedTransitCacheMonth || null;
     input.limit = 5;
@@ -308,6 +318,99 @@ function buildFactSearchInput(intent, userText, activeProfile, factAvailability)
   }
 
   return input;
+}
+
+function isTransitBiasedQuestion(text) {
+  return /\bcurrent sky\b|\bsky right now\b|\bright now\b|\bcurrent energies\b|\bwhat'?s happening now\b|\bwhat is happening now\b|\bsky\b|\btoday\b|\bthis month\b/.test(String(text || '').toLowerCase());
+}
+
+function normalizePlannerArray(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+}
+
+function extractJsonObject(text) {
+  const value = String(text || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    const match = value.match(/\{[\s\S]*\}/);
+    if (!match) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(match[0]);
+    } catch (nestedError) {
+      return null;
+    }
+  }
+}
+
+async function planFactSearchQuery(locale, userText, intent, activeProfile, factAvailability) {
+  const systemInstruction = [
+    'You route astrology user questions to either indexed facts or MCP tools and, when applicable, generate structured search parameters for the fact index.',
+    `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}, but output JSON only.`,
+    'Return one JSON object and nothing else.',
+    'Allowed keys: target, sourceKinds, categories, tags, cacheMonth, limit, reason.',
+    'target must be either indexed_facts or mcp.',
+    'sourceKinds must be an array containing natal and/or monthly_transit.',
+    'categories must be broad retrieval categories such as identity, emotions, relationships, structure, transformation, growth, drive, life_path, chart_pattern, mind, transit_event, transit_theme, timing_window.',
+    'tags must be short exact-ish lookup terms like current, sky, relationship, love, career, work, planet:venus, planet:mars, angle:asc, angle:mc, house:7.',
+    'If the question is about the current sky, now, today, current energies, or what is happening right now, prefer monthly_transit.',
+    'If the question is about personality, natal chart, life pattern, relationship style, or birth chart themes, prefer natal.',
+    'If the question is about synastry, compatibility, comparing two people, relocation, maps, astrocartography, or a capability not present in natal/monthly transit facts, use target mcp.',
+    'If uncertain, use indexed_facts when natal or monthly transit facts could answer it.',
+    'Include both natal and monthly_transit only when the question genuinely mixes both.',
+    'For current month transit lookups, set cacheMonth to the provided active transit month.',
+    'Keep limit between 3 and 6.'
+  ].join('\n');
+
+  const prompt = [
+    `Question: ${String(userText || '').trim()}`,
+    `Detected intent: ${intent.id}`,
+    `Active profile: ${activeProfile.profileName || 'Chart User'}`,
+    `Natal facts indexed: ${factAvailability?.hasNatalFacts ? 'yes' : 'no'}`,
+    `Current indexed transit month: ${factAvailability?.indexedTransitCacheMonth || 'none'}`,
+    '',
+    'Return JSON now.'
+  ].join('\n');
+
+  const planned = extractJsonObject(await generatePlainText({
+    systemInstruction,
+    userText: prompt,
+    history: [],
+    model: getFastPathModelName()
+  }));
+
+  if (!planned || typeof planned !== 'object') {
+    return null;
+  }
+
+  const target = planned.target === 'mcp' ? 'mcp' : 'indexed_facts';
+  const sourceKinds = normalizePlannerArray(planned.sourceKinds)
+    .filter((value) => [factIndex.NATAL_SOURCE_KIND, factIndex.MONTHLY_TRANSIT_SOURCE_KIND].includes(value));
+  const categories = normalizePlannerArray(planned.categories);
+  const tags = normalizePlannerArray(planned.tags);
+  const requestedCacheMonth = planned.cacheMonth ? String(planned.cacheMonth).trim() : null;
+  const limit = Math.max(3, Math.min(Number(planned.limit || 4), 6));
+
+  return {
+    target,
+    primaryProfileId: activeProfile.profileId,
+    secondaryProfileId: null,
+    sourceKinds: sourceKinds.length > 0 ? sourceKinds : [factIndex.NATAL_SOURCE_KIND],
+    categories,
+    tags,
+    cacheMonth: requestedCacheMonth || null,
+    limit,
+    reason: planned.reason ? String(planned.reason) : null
+  };
 }
 
 function sentenceCase(value) {
@@ -377,20 +480,53 @@ function buildFactRewritePrompt(userText, facts, intent, activeProfile, draftAns
 }
 
 async function maybeRewriteFactAnswer(locale, userText, facts, intent, activeProfile, draftAnswer) {
-  if (!draftAnswer || process.env.FAST_PATH_GEMINI_REWRITE === 'false') {
+  if (!draftAnswer) {
     return draftAnswer;
   }
 
-  const systemInstruction = [
+  const isTransitReading = (
+    intent.id === 'transits' ||
+    facts.some((fact) => fact.sourceKind === factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+  );
+
+  const sharedInstructions = [
+    'You are a top-quality professional astrologer.',
     'Write a short astrology answer from grounded facts only.',
     `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}.`,
     'Use plain text only.',
+    'Answer like a real astrologer speaking to a client, not like a database or analyst.',
     'Translate metadata and evidence into natural astrological language.',
     'Do not expose labels such as category, kind, subjects, tags, source, or metadata.',
     'Do not list raw taxonomy terms unless they are naturally readable astrology terms.',
     'Do not add any new facts, timings, placements, or interpretations.',
-    'Answer the user question directly first, then support it with 2 or 3 grounded chart factors.',
+    'Answer the user question directly in the first sentence.',
+    'Base the answer on the strongest 2 or 3 grounded factors, not an exhaustive list.',
+    'Avoid repetitive phrasing and avoid sounding mechanical.',
     'Keep it to 2 or 3 short paragraphs.'
+  ];
+
+  const natalInstructions = [
+    'Interpret this as a natal reading.',
+    'Lead with the core relationship, personality, emotional, or life-pattern theme that best answers the question.',
+    'Show how the strongest chart factors work together instead of listing them separately.',
+    'Translate the chart into lived tendencies, emotional patterns, needs, fears, strengths, or behavior.',
+    'When helpful, mention the tension or balance between two factors and how that plays out in real life.',
+    'Keep the tone insightful, personal, and psychologically accurate.'
+  ];
+
+  const transitInstructions = [
+    'Interpret this as a transit or current-sky reading.',
+    'Lead with the dominant atmosphere of the moment.',
+    'Explain the 2 or 3 most important active influences and what they are emphasizing now.',
+    'Describe what is building, peaking, shifting, or pressuring the period.',
+    'Connect the sky to lived experience in the present tense.',
+    'If both collective sky patterns and personal transits appear in the facts, start with the sky atmosphere and then narrow into the personal impact.',
+    'Keep the tone timely, dynamic, and present-focused.'
+  ];
+
+  const systemInstruction = [
+    ...sharedInstructions,
+    ...(isTransitReading ? transitInstructions : natalInstructions)
   ].join('\n');
 
   const rewritten = await generatePlainText({
@@ -403,13 +539,28 @@ async function maybeRewriteFactAnswer(locale, userText, facts, intent, activePro
   return normalizeAssistantText(rewritten || draftAnswer);
 }
 
-async function tryFactFastPath(identity, userText, intent, activeProfile, factAvailability, locale) {
-  if (!isFactFastPathEligible(intent, factAvailability)) {
+async function tryFactFastPath(identity, userText, intent, activeProfile, factAvailability, locale, plannedRoute = null) {
+  if (!hasIndexedCoverage(factAvailability)) {
     return null;
   }
 
   const startedAt = performance.now();
-  const searchInput = buildFactSearchInput(intent, userText, activeProfile, factAvailability);
+  const transitBiased = isTransitBiasedQuestion(userText);
+  let searchInput = plannedRoute && plannedRoute.target === 'indexed_facts'
+    ? {
+        primaryProfileId: activeProfile.profileId,
+        secondaryProfileId: null,
+        sourceKinds: Array.isArray(plannedRoute.sourceKinds) && plannedRoute.sourceKinds.length > 0
+          ? plannedRoute.sourceKinds
+          : buildFactSearchInput(intent, userText, activeProfile, factAvailability).sourceKinds,
+        categories: Array.isArray(plannedRoute.categories) ? plannedRoute.categories : [],
+        tags: Array.isArray(plannedRoute.tags) ? plannedRoute.tags : [],
+        cacheMonth: plannedRoute.sourceKinds?.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+          ? (plannedRoute.cacheMonth || factAvailability?.indexedTransitCacheMonth || null)
+          : null,
+        limit: plannedRoute.limit || 4
+      }
+    : buildFactSearchInput(intent, userText, activeProfile, factAvailability);
   let facts = await factIndex.searchFacts(identity, searchInput);
 
   if (facts.length < 2 && searchInput.tags.length > 0) {
@@ -418,6 +569,67 @@ async function tryFactFastPath(identity, userText, intent, activeProfile, factAv
       tags: [],
       limit: intent.id === 'transits' ? 5 : 4
     });
+  }
+
+  const needsPlannedSearch = !plannedRoute && (facts.length < 2 || intent.id === 'fallback');
+  if (needsPlannedSearch) {
+    try {
+      const plannedSearchInput = await planFactSearchQuery(locale, userText, intent, activeProfile, factAvailability);
+      if (plannedSearchInput) {
+        const normalizedPlannedInput = {
+          ...plannedSearchInput,
+          cacheMonth: plannedSearchInput.sourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+            ? (plannedSearchInput.cacheMonth || factAvailability?.indexedTransitCacheMonth || null)
+            : null
+        };
+        let selectedPlannedInput = normalizedPlannedInput;
+        let plannedFacts = await factIndex.searchFacts(identity, normalizedPlannedInput);
+
+        if (plannedFacts.length < 2) {
+          const relaxedPlannedInput = {
+            ...normalizedPlannedInput,
+            categories: [],
+            tags: normalizedPlannedInput.sourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+              ? ['current']
+              : [],
+            limit: normalizedPlannedInput.limit
+          };
+          const relaxedFacts = await factIndex.searchFacts(identity, relaxedPlannedInput);
+          if (relaxedFacts.length > plannedFacts.length) {
+            plannedFacts = relaxedFacts;
+            selectedPlannedInput = relaxedPlannedInput;
+          }
+        }
+
+        if (plannedFacts.length >= Math.max(2, facts.length)) {
+          searchInput = selectedPlannedInput;
+          facts = plannedFacts;
+        }
+      }
+    } catch (error) {
+      info('conversation fact search planner failed', {
+        stateKey: `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`,
+        intent: intent.id,
+        error: error.message || 'unknown'
+      });
+    }
+  }
+
+  if (facts.length < 2 && transitBiased && factAvailability?.indexedTransitCacheMonth) {
+    const broadTransitInput = {
+      primaryProfileId: activeProfile.profileId,
+      secondaryProfileId: null,
+      sourceKinds: [factIndex.MONTHLY_TRANSIT_SOURCE_KIND],
+      categories: [],
+      tags: [],
+      cacheMonth: factAvailability.indexedTransitCacheMonth,
+      limit: 5
+    };
+    const broadTransitFacts = await factIndex.searchFacts(identity, broadTransitInput);
+    if (broadTransitFacts.length > facts.length) {
+      searchInput = broadTransitInput;
+      facts = broadTransitFacts;
+    }
   }
 
   if (facts.length < 2) {
@@ -706,10 +918,25 @@ async function answerConversation(identity, userText) {
     };
   }
 
-  const synastryContext = await detectSynastryContext(identity, userText, intent, activeProfile);
+  const localDeclarations = createLocalFunctionDeclarations();
+  await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'runtime' });
+  const monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, activeProfile);
+  if (monthlyTransitCache) {
+    await toolCache.ensureMonthlyTransitInsights(identity, activeProfile, { source: 'runtime' });
+  }
+  const factAvailability = await factIndex.syncActiveProfileFactAvailability(identity, activeProfile, {
+    cacheMonth: monthlyTransitCache?.cacheMonth || null,
+    notify: false
+  });
+  const plannedRoute = await planFactSearchQuery(locale, userText, intent, activeProfile, factAvailability);
+  const shouldPreferIndexedFacts = plannedRoute?.target === 'indexed_facts';
+  const effectiveIntent = shouldPreferIndexedFacts && intent.id === 'synastry'
+    ? { ...intent, id: 'fallback' }
+    : intent;
+  const synastryContext = await detectSynastryContext(identity, userText, effectiveIntent, activeProfile);
   if (synastryContext.needsUserChoice) {
     return {
-      intent: intent.id,
+      intent: effectiveIntent.id,
       requiresSynastryProfileSelection: true,
       candidates: synastryContext.candidates.map((profile) => ({
         profileId: profile.profileId,
@@ -723,17 +950,6 @@ async function answerConversation(identity, userText) {
   if (pendingComparisonText && synastryContext.secondaryProfile) {
     userText = pendingComparisonText;
   }
-
-  const localDeclarations = createLocalFunctionDeclarations();
-  await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'runtime' });
-  const monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, activeProfile);
-  if (monthlyTransitCache) {
-    await toolCache.ensureMonthlyTransitInsights(identity, activeProfile, { source: 'runtime' });
-  }
-  const factAvailability = await factIndex.syncActiveProfileFactAvailability(identity, activeProfile, {
-    cacheMonth: monthlyTransitCache?.cacheMonth || null,
-    notify: false
-  });
   let mcpDeclarations = [];
   let mcpStatus = 'available';
 
@@ -744,7 +960,7 @@ async function answerConversation(identity, userText) {
   }
 
   const allDeclarations = [...localDeclarations, ...mcpDeclarations];
-  const localOnlyPreferred = isLocalOnlyPreferred(intent, factAvailability);
+  const localOnlyPreferred = shouldPreferIndexedFacts || isLocalOnlyPreferred(effectiveIntent, factAvailability);
   const localExecutor = await createLocalToolExecutor(identity, activeProfile, factAvailability);
   const executionContext = {
     activeProfile,
@@ -778,7 +994,7 @@ async function answerConversation(identity, userText) {
     throw new Error(`Unknown tool call: ${name}`);
   };
 
-  const systemInstruction = buildSystemInstruction(chatState, mcpStatus, intent, {
+  const systemInstruction = buildSystemInstruction(chatState, mcpStatus, effectiveIntent, {
     activeProfileName: activeProfile.profileName,
     factAvailability,
     monthlyTransitAvailable: Boolean(monthlyTransitCache),
@@ -789,11 +1005,13 @@ async function answerConversation(identity, userText) {
     }
   });
 
-  const fastPathResult = await tryFactFastPath(identity, userText, intent, activeProfile, factAvailability, locale);
+  const fastPathResult = await tryFactFastPath(identity, userText, effectiveIntent, activeProfile, factAvailability, locale, plannedRoute);
   if (fastPathResult) {
     info('conversation fact fast-path complete', {
       stateKey,
-      intent: intent.id,
+      intent: effectiveIntent.id,
+      routeTarget: plannedRoute?.target || null,
+      routeReason: plannedRoute?.reason || null,
       durationMs: fastPathResult.durationMs,
       rewriteDurationMs: fastPathResult.rewriteDurationMs,
       factCount: fastPathResult.usedTools[0]?.result?.facts?.length || 0
@@ -806,7 +1024,7 @@ async function answerConversation(identity, userText) {
     return {
       text: normalizeAssistantText(fastPathResult.text),
       usedTools: fastPathResult.usedTools,
-      intent: intent.id
+      intent: effectiveIntent.id
     };
   }
 
@@ -829,11 +1047,11 @@ async function answerConversation(identity, userText) {
       functionDeclarations: localDeclarations,
       executeFunction
     });
-    const localOnlySufficient = localResultLooksSufficient(localOnlyResult, intent);
+    const localOnlySufficient = localResultLooksSufficient(localOnlyResult, effectiveIntent);
 
     info('conversation local-only pass complete', {
       stateKey,
-      intent: intent.id,
+      intent: effectiveIntent.id,
       durationMs: Math.round(performance.now() - localOnlyStartedAt),
       toolCalls: Array.isArray(localOnlyResult.toolResults) ? localOnlyResult.toolResults.length : 0,
       sufficient: localOnlySufficient
@@ -853,7 +1071,7 @@ async function answerConversation(identity, userText) {
 
       info('conversation mcp fallback pass complete', {
         stateKey,
-        intent: intent.id,
+        intent: effectiveIntent.id,
         durationMs: Math.round(performance.now() - fallbackStartedAt),
         toolCalls: Array.isArray(result.toolResults) ? result.toolResults.length : 0
       });
@@ -870,7 +1088,7 @@ async function answerConversation(identity, userText) {
 
     info('conversation mcp fallback pass complete', {
       stateKey,
-      intent: intent.id,
+      intent: effectiveIntent.id,
       durationMs: Math.round(performance.now() - fallbackStartedAt),
       toolCalls: Array.isArray(result.toolResults) ? result.toolResults.length : 0
     });
@@ -883,7 +1101,7 @@ async function answerConversation(identity, userText) {
   return {
     text: normalizeAssistantText(result.text),
     usedTools: result.toolResults,
-    intent: intent.id
+    intent: effectiveIntent.id
   };
 }
 
