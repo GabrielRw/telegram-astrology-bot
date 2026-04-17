@@ -60,6 +60,16 @@ function createDefaultState(identity) {
     lastToolResults: [],
     pendingQuestion: null,
     pendingSynastryQuestion: null,
+    conversationContext: {
+      lastReferencedProfileId: null,
+      lastComparedProfileId: null,
+      lastResponseProfileId: null,
+      lastResponseRoute: null,
+      lastIntentId: null,
+      lastAnswerStyle: null,
+      lastResolvedQuestion: null,
+      lastCommonRouteId: null
+    },
     choiceMap: {},
     uiCache: {
       aspects: [],
@@ -83,6 +93,16 @@ function clearNatalProfile(identity) {
   state.lastToolResults = [];
   state.pendingQuestion = null;
   state.pendingSynastryQuestion = null;
+  state.conversationContext = {
+    lastReferencedProfileId: null,
+    lastComparedProfileId: null,
+    lastResponseProfileId: null,
+    lastResponseRoute: null,
+    lastIntentId: null,
+    lastAnswerStyle: null,
+    lastResolvedQuestion: null,
+    lastCommonRouteId: null
+  };
   state.choiceMap = {};
   state.uiCache = {
     aspects: [],
@@ -190,6 +210,56 @@ function setChoiceMap(chatId, choiceMap) {
   const state = getChatState(chatId);
   state.choiceMap = choiceMap && typeof choiceMap === 'object' ? { ...choiceMap } : {};
   notifyPersistence(chatId);
+}
+
+function setConversationContext(chatId, context = {}, options = {}) {
+  const state = getChatState(chatId);
+  state.conversationContext = {
+    ...(state.conversationContext || {}),
+    lastReferencedProfileId: context.lastReferencedProfileId !== undefined
+      ? (context.lastReferencedProfileId ? String(context.lastReferencedProfileId) : null)
+      : (state.conversationContext?.lastReferencedProfileId || null),
+    lastComparedProfileId: context.lastComparedProfileId !== undefined
+      ? (context.lastComparedProfileId ? String(context.lastComparedProfileId) : null)
+      : (state.conversationContext?.lastComparedProfileId || null),
+    lastResponseProfileId: context.lastResponseProfileId !== undefined
+      ? (context.lastResponseProfileId ? String(context.lastResponseProfileId) : null)
+      : (state.conversationContext?.lastResponseProfileId || null),
+    lastResponseRoute: context.lastResponseRoute !== undefined
+      ? (context.lastResponseRoute ? String(context.lastResponseRoute) : null)
+      : (state.conversationContext?.lastResponseRoute || null),
+    lastIntentId: context.lastIntentId !== undefined
+      ? (context.lastIntentId ? String(context.lastIntentId) : null)
+      : (state.conversationContext?.lastIntentId || null),
+    lastAnswerStyle: context.lastAnswerStyle !== undefined
+      ? (context.lastAnswerStyle ? String(context.lastAnswerStyle) : null)
+      : (state.conversationContext?.lastAnswerStyle || null),
+    lastResolvedQuestion: context.lastResolvedQuestion !== undefined
+      ? (context.lastResolvedQuestion ? String(context.lastResolvedQuestion) : null)
+      : (state.conversationContext?.lastResolvedQuestion || null),
+    lastCommonRouteId: context.lastCommonRouteId !== undefined
+      ? (context.lastCommonRouteId ? String(context.lastCommonRouteId) : null)
+      : (state.conversationContext?.lastCommonRouteId || null)
+  };
+
+  if (options.notify !== false) {
+    notifyPersistence(chatId);
+  }
+
+  return state.conversationContext;
+}
+
+function getConversationContext(chatId) {
+  return getChatState(chatId).conversationContext || {
+    lastReferencedProfileId: null,
+    lastComparedProfileId: null,
+    lastResponseProfileId: null,
+    lastResponseRoute: null,
+    lastIntentId: null,
+    lastAnswerStyle: null,
+    lastResolvedQuestion: null,
+    lastCommonRouteId: null
+  };
 }
 
 function getChoiceMap(chatId) {
@@ -412,6 +482,7 @@ function getChatStateSnapshot(identity) {
     lastToolResults: state.lastToolResults,
     pendingQuestion: state.pendingQuestion,
     pendingSynastryQuestion: state.pendingSynastryQuestion,
+    conversationContext: state.conversationContext,
     choiceMap: state.choiceMap,
     uiCache: state.uiCache
   }));
@@ -450,6 +521,7 @@ module.exports = {
   consumePendingQuestion,
   getChoiceMap,
   getChatState,
+  getConversationContext,
   getChatStateSnapshot,
   getProfileDirectory,
   getUiCache,
@@ -461,6 +533,7 @@ module.exports = {
   resolveStateKey,
   setActiveFlow,
   setChoiceMap,
+  setConversationContext,
   setFactAvailability,
   setLastToolResults,
   setNatalProfile,

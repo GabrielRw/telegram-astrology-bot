@@ -67,7 +67,7 @@ const INTENTS = [
   },
   {
     id: 'synastry',
-    matchers: [/\bsynastry\b/i, /\bcompatible\b/i, /\bcompatibility\b/i, /\bcompare\b/i, /\bwith\b.*\b(me|my chart)\b/i, /\brelationship\b/i],
+    matchers: [/\bsynastry\b/i, /\bcompatible\b/i, /\bcompatibility\b/i, /\bcompare\b/i, /\bwith\b.*\b(me|my chart)\b/i, /\bbetween\b.+\band\b/i],
     prefersCachedTools: ['get_profile_completeness'],
     prefersMcpTools: ['mcp_v1_western_synastry_summary', 'mcp_v1_western_synastry'],
     guidance: 'For relationship comparison questions, default to the synastry summary tool first and only escalate to the full synastry endpoint when the summary lacks the needed detail.'

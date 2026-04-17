@@ -1202,6 +1202,38 @@ async function syncActiveProfileFactAvailability(identity, profile, options = {}
   }, { notify: options.notify });
 }
 
+async function getProfileFactAvailability(identity, profile, options = {}) {
+  if (!profile) {
+    return {
+      hasNatalFacts: false,
+      indexedTransitCacheMonth: null
+    };
+  }
+
+  const currentMonth = options.cacheMonth || normalizeMonthWindow(profile.timezone || 'UTC');
+  const [hasNatalFacts, hasMonthlyTransitFacts] = await Promise.all([
+    hasFacts(identity, {
+      primaryProfileId: profile.profileId,
+      secondaryProfileId: null,
+      sourceKind: NATAL_SOURCE_KIND,
+      cacheMonth: ''
+    }),
+    currentMonth
+      ? hasFacts(identity, {
+          primaryProfileId: profile.profileId,
+          secondaryProfileId: null,
+          sourceKind: MONTHLY_TRANSIT_SOURCE_KIND,
+          cacheMonth: currentMonth
+        })
+      : Promise.resolve(false)
+  ]);
+
+  return {
+    hasNatalFacts,
+    indexedTransitCacheMonth: hasMonthlyTransitFacts ? currentMonth : null
+  };
+}
+
 async function ensureNatalFacts(identity, profile, options = {}) {
   if (!profile?.profileId || !profile?.rawNatalPayload) {
     return [];
@@ -1494,5 +1526,6 @@ module.exports = {
   searchFacts,
   storeNatalInsightFacts,
   storeTransitInsightFacts,
+  getProfileFactAvailability,
   syncActiveProfileFactAvailability
 };
