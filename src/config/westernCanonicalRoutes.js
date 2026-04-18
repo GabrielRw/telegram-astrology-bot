@@ -18,6 +18,8 @@ function buildCanonicalRoute(input) {
     optionalArgs: input.optionalArgs || [],
     cacheStrategy: input.cacheStrategy || 'none',
     supportsRaw: input.supportsRaw !== false,
+    responseShape: input.responseShape || 'synthesis',
+    scope: input.scope || null,
     intentSample: input.intentSample,
     aliases: buildAliases(input.localized)
   };
@@ -32,10 +34,12 @@ const WESTERN_CANONICAL_ROUTES = [
     commonRouteId: 'natal_overview',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
+    responseShape: 'factual_cards',
+    scope: 'natal_overview',
     intentSample: 'tell me about my natal chart and its specificities',
     localized: {
       en: ['tell me about my natal chart', 'what are the main themes of my chart', 'my birth chart overview'],
-      fr: ['parle moi de mon theme natal', 'parle de mon theme astro', 'quelles sont les grandes lignes de mon theme'],
+      fr: ['parle moi de mon theme natal', 'parle moi de mon thème natal', 'parle moi de mon theme astro', 'parle moi de mon thème astro', 'parle de mon theme astro', 'parle de mon thème astro', 'quelles sont les grandes lignes de mon theme'],
       de: ['erzahl mir von meinem geburtshoroskop', 'was sind die hauptthemen meines horoskops'],
       es: ['hablame de mi carta natal', 'cuales son los temas principales de mi carta']
     }
@@ -48,6 +52,8 @@ const WESTERN_CANONICAL_ROUTES = [
     commonRouteId: 'relationship_patterns',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
+    responseShape: 'factual_cards',
+    scope: 'relationship_patterns',
     intentSample: 'what are my relationship patterns',
     localized: {
       en: ['what are my relationship patterns', 'how am i in relationships'],
@@ -64,6 +70,8 @@ const WESTERN_CANONICAL_ROUTES = [
     commonRouteId: 'career_signature',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
+    responseShape: 'factual_cards',
+    scope: 'career_signature',
     intentSample: 'what is my career signature',
     localized: {
       en: ['what is my career signature', 'tell me about my work path'],
@@ -80,12 +88,31 @@ const WESTERN_CANONICAL_ROUTES = [
     commonRouteId: 'money_pattern',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
+    responseShape: 'factual_cards',
+    scope: 'money_pattern',
     intentSample: 'what is my money pattern',
     localized: {
       en: ['what is my money pattern', 'tell me about money in my chart'],
       fr: ['quel est mon schema financier', 'parle moi de l argent dans mon theme'],
       de: ['was ist mein geldmuster'],
       es: ['cual es mi patron de dinero']
+    }
+  }),
+  buildCanonicalRoute({
+    id: 'all_natal_aspects',
+    family: 'natal',
+    routeKind: 'astrology_natal',
+    answerStyle: 'aspect_focus',
+    requiredArgs: ['profile'],
+    cacheStrategy: 'indexed_natal_then_tool',
+    responseShape: 'full_listing',
+    scope: 'natal_aspects',
+    intentSample: 'list all my aspects',
+    localized: {
+      en: ['list all my aspects', 'show me all my aspects', 'give me all my natal aspects', 'all aspects in my chart'],
+      fr: ['liste mes aspects', 'liste tous mes aspects', 'donne moi tous mes aspects astrologiques', 'donne moi tous mes aspects astrologiques de mon theme', 'aspects de mon theme', 'aspects de mon thème', 'tous mes aspects'],
+      de: ['liste alle meine aspekte', 'zeige mir alle meine aspekte', 'alle aspekte in meinem horoskop'],
+      es: ['lista todos mis aspectos', 'muestrame todos mis aspectos', 'todos mis aspectos astrologicos']
     }
   }),
   buildCanonicalRoute({
@@ -96,6 +123,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_signs_rising',
     requiredArgs: ['profile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'rising_sign',
     intentSample: 'what is my rising sign',
     localized: {
       en: ['what is my rising sign', 'what is my ascendant'],
@@ -112,6 +141,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_signs_sun',
     requiredArgs: ['profile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'sun_sign',
     intentSample: 'what is my sun sign',
     localized: {
       en: ['what is my sun sign'],
@@ -128,6 +159,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_signs_moon',
     requiredArgs: ['profile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'moon_sign',
     intentSample: 'what is my moon sign',
     localized: {
       en: ['what is my moon sign'],
@@ -144,6 +177,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_signs_midheaven',
     requiredArgs: ['profile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'midheaven_sign',
     intentSample: 'what is my midheaven sign',
     localized: {
       en: ['what is my midheaven sign', 'what is my mc sign'],
@@ -161,6 +196,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_transits_timeline',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_transits_then_tool',
+    responseShape: 'factual_cards',
+    scope: 'current_sky',
     intentSample: 'tell me about the current sky',
     localized: {
       en: ['tell me about the current sky', 'what is happening in the sky today'],
@@ -178,6 +215,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_transits_timeline',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_transits_then_tool',
+    responseShape: 'factual_cards',
+    scope: 'today_transits',
     intentSample: 'what are my transits today',
     localized: {
       en: ['what are my transits today', 'what is active for me today'],
@@ -195,12 +234,31 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_transits_timeline',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_transits_then_tool',
+    responseShape: 'factual_cards',
+    scope: 'monthly_transits',
     intentSample: 'what are my transits this month',
     localized: {
       en: ['what are my transits this month', 'what are this months transits', 'transits this month'],
       fr: ['quels sont mes transits de ce mois', 'quels sont les transits pour ce mois'],
       de: ['welche transite habe ich diesen monat'],
       es: ['cuales son mis transitos de este mes']
+    }
+  }),
+  buildCanonicalRoute({
+    id: 'all_monthly_transits',
+    family: 'transits',
+    routeKind: 'astrology_transits',
+    answerStyle: 'personal_transits',
+    requiredArgs: ['profile'],
+    cacheStrategy: 'indexed_transits_then_tool',
+    responseShape: 'full_listing',
+    scope: 'monthly_transits',
+    intentSample: 'list all monthly transits',
+    localized: {
+      en: ['list all monthly transits', 'show me all transits this month', 'all my transits this month', 'list all transits this month'],
+      fr: ['tous les transits du mois', 'liste tous les transits', 'liste tous les transits du mois', 'donne moi tous les transits du mois'],
+      de: ['liste alle transite dieses monats', 'zeige mir alle transite diesen monat'],
+      es: ['lista todos los transitos del mes', 'muestrame todos los transitos de este mes']
     }
   }),
   buildCanonicalRoute({
@@ -314,6 +372,8 @@ const WESTERN_CANONICAL_ROUTES = [
     requiredArgs: ['profile', 'transitPlanet', 'natalPoint'],
     optionalArgs: ['range'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'transit_search',
     intentSample: 'show me exact saturn transits to my moon',
     localized: {
       en: ['show me exact saturn transits to my moon', 'find exact transits to my moon', 'search transits of saturn to my moon'],
@@ -330,6 +390,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_synastry_summary',
     requiredArgs: ['profile', 'secondaryProfile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'synastry_summary',
     intentSample: 'compare me with Elie',
     localized: {
       en: ['compare me with', 'compatibility with', 'synastry summary with'],
@@ -346,6 +408,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_synastry',
     requiredArgs: ['profile', 'secondaryProfile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'synastry_detailed',
     intentSample: 'give me detailed synastry with Elie',
     localized: {
       en: ['detailed synastry with', 'full synastry with'],
@@ -362,6 +426,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_synastry_horoscope',
     requiredArgs: ['profile', 'secondaryProfile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'couples_horoscope',
     intentSample: 'give me a couples horoscope with Elie',
     localized: {
       en: ['couples horoscope with', 'relationship horoscope with'],
@@ -379,6 +445,8 @@ const WESTERN_CANONICAL_ROUTES = [
     requiredArgs: ['profile', 'focus'],
     optionalArgs: ['countryScope'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'relocation_recommendations',
     intentSample: 'where should I relocate for career',
     localized: {
       en: ['where should i relocate for career', 'best places to live for my career', 'where should i live in the world'],
@@ -395,6 +463,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_astrocartography_city_check',
     requiredArgs: ['profile', 'city'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'relocation_city_check',
     intentSample: 'check Tokyo for me',
     localized: {
       en: ['check tokyo for me', 'check this city for me', 'what about living in tokyo'],
@@ -411,6 +481,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_astrocartography_lines',
     requiredArgs: ['profile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'astrocartography_lines',
     intentSample: 'show me my astrocartography lines',
     localized: {
       en: ['show me my astrocartography lines', 'what are my lines on the map'],
@@ -427,6 +499,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_astrocartography_parans',
     requiredArgs: ['profile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'astrocartography_parans',
     intentSample: 'show me my astrocartography parans',
     localized: {
       en: ['show me my astrocartography parans', 'what are my parans'],
@@ -443,6 +517,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_progressions_secondary',
     requiredArgs: ['profile', 'targetDate'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'secondary_progressions',
     intentSample: 'my secondary progressions this year',
     localized: {
       en: ['my secondary progressions this year', 'show me my secondary progressions'],
@@ -459,6 +535,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_progressions_secondary_exact_aspects',
     requiredArgs: ['profile', 'range'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'secondary_progression_aspects',
     intentSample: 'show me my exact secondary progression aspects this year',
     localized: {
       en: ['show me exact secondary progression aspects', 'secondary progression exact aspects this year'],
@@ -475,6 +553,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_profections_annual',
     requiredArgs: ['profile', 'year'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'annual_profections',
     intentSample: 'my annual profection',
     localized: {
       en: ['my annual profection', 'annual profections'],
@@ -491,6 +571,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_western_solar_calculate',
     requiredArgs: ['profile', 'year'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'solar_return',
     intentSample: 'my solar return 2026',
     localized: {
       en: ['my solar return', 'solar return 2026'],
@@ -508,6 +590,8 @@ const WESTERN_CANONICAL_ROUTES = [
     requiredArgs: ['profile', 'body'],
     optionalArgs: ['startDate'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'planet_return',
     intentSample: 'my Saturn return',
     localized: {
       en: ['my saturn return', 'my jupiter return', 'planet return'],
@@ -524,6 +608,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_ephemeris',
     requiredArgs: ['range'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'ephemeris',
     intentSample: 'give me the ephemeris for May',
     localized: {
       en: ['give me the ephemeris for may', 'show me the ephemeris'],
@@ -540,6 +626,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_horoscope_daily_personal',
     requiredArgs: ['profile'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'personal_horoscope',
     intentSample: 'my personal horoscope today',
     localized: {
       en: ['my personal horoscope today', 'give me my horoscope today'],
@@ -556,6 +644,8 @@ const WESTERN_CANONICAL_ROUTES = [
     toolTarget: 'v1_horoscope_daily_sign',
     requiredArgs: ['sign'],
     cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'sign_horoscope',
     intentSample: 'aries horoscope today',
     localized: {
       en: ['aries horoscope today', 'taurus horoscope today', 'sign horoscope today'],

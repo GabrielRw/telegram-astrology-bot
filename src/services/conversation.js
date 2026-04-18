@@ -558,6 +558,41 @@ function buildUnsupportedAstrologyQuestionResponse(locale, route, suggestions = 
   return 'I am not able to answer that question yet.';
 }
 
+function preferCanonicalRoute(aiRoute, deterministicRoute) {
+  if (!aiRoute) {
+    return deterministicRoute || null;
+  }
+
+  if (!deterministicRoute) {
+    return aiRoute;
+  }
+
+  if (deterministicRoute.responseShape === 'full_listing' && deterministicRoute.score >= 0.78) {
+    return deterministicRoute;
+  }
+
+  if ((deterministicRoute.score || 0) >= Math.max(aiRoute.score || 0, 0.9)) {
+    return deterministicRoute;
+  }
+
+  return aiRoute;
+}
+
+function applyCanonicalRoute(route, canonicalRoute, plannerQuestionText) {
+  if (!canonicalRoute) {
+    return route;
+  }
+
+  return {
+    ...route,
+    kind: canonicalRoute.routeKind,
+    intent: detectConversationIntent(canonicalRoute.intentSample || plannerQuestionText),
+    answerStyle: canonicalRoute.answerStyle,
+    commonRouteId: canonicalRoute.id,
+    commonRouteScore: canonicalRoute.score
+  };
+}
+
 function suggestCanonicalQuestions(userText, route, limit = 3) {
   const routeKindFilter = route?.kind === 'astrology_transits' || route?.kind === 'astrology_natal' || route?.kind === 'astrology_synastry' || route?.kind === 'astrology_relocation'
     ? route.kind
@@ -2050,24 +2085,24 @@ function chunkRawItems(items, size) {
   return chunks;
 }
 
-function buildRawListingTitle(locale, kind, subjectLabel, extra = null) {
+function buildRawListingTitle(locale, kind, subjectLabel, extra = null, responseMode = 'raw') {
   const subject = getRawSubjectLabel(locale, subjectLabel);
 
   if (kind === 'all_aspects') {
     const base = formatRawLabel(locale, {
-      en: `All major aspects for ${subject}`,
-      fr: `Tous les aspects majeurs pour ${subject}`,
-      de: `Alle Hauptaspekte für ${subject}`,
-      es: `Todos los aspectos mayores para ${subject}`
+      en: responseMode === 'raw' ? `All major aspects for ${subject}` : `Complete major aspects for ${subject}`,
+      fr: responseMode === 'raw' ? `Tous les aspects majeurs pour ${subject}` : `Liste complète des aspects majeurs pour ${subject}`,
+      de: responseMode === 'raw' ? `Alle Hauptaspekte für ${subject}` : `Vollständige Hauptaspekte für ${subject}`,
+      es: responseMode === 'raw' ? `Todos los aspectos mayores para ${subject}` : `Lista completa de los aspectos mayores para ${subject}`
     });
     return extra ? `${base} — ${extra}` : base;
   }
 
   const base = formatRawLabel(locale, {
-    en: `All monthly transits for ${subject}`,
-    fr: `Tous les transits du mois pour ${subject}`,
-    de: `Alle Monatstransite für ${subject}`,
-    es: `Todos los tránsitos del mes para ${subject}`
+    en: responseMode === 'raw' ? `All monthly transits for ${subject}` : `Complete monthly transits for ${subject}`,
+    fr: responseMode === 'raw' ? `Tous les transits du mois pour ${subject}` : `Liste complète des transits du mois pour ${subject}`,
+    de: responseMode === 'raw' ? `Alle Monatstransite für ${subject}` : `Vollständige Monatstransite für ${subject}`,
+    es: responseMode === 'raw' ? `Todos los tránsitos del mes para ${subject}` : `Lista completa de los tránsitos del mes para ${subject}`
   });
   return extra ? `${base} — ${extra}` : base;
 }
@@ -3406,7 +3441,7 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   };
 }
 
-async function tryFullRawListing(identity, userText, subjectProfile, factAvailability, locale, requestKind, monthlyTransitCache = null) {
+async function tryFullRawListing(identity, userText, subjectProfile, factAvailability, locale, requestKind, monthlyTransitCache = null, responseMode = 'raw') {
   if (requestKind === 'all_aspects') {
     const aspectFacts = await factIndex.searchFacts(identity, {
       primaryProfileId: subjectProfile.profileId,
@@ -3469,7 +3504,7 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
     return {
       textParts: buildRawListingParts(
         locale,
-        buildRawListingTitle(locale, 'all_aspects', subjectProfile.profileName, String(lines.length)),
+        buildRawListingTitle(locale, 'all_aspects', subjectProfile.profileName, String(lines.length), responseMode),
         lines,
         { itemType: 'line', chunkSize: 18 }
       ),
@@ -3559,7 +3594,7 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
   return {
     textParts: buildRawListingParts(
       locale,
-      buildRawListingTitle(locale, 'all_monthly_transits', subjectProfile.profileName, cacheMonth || String(selectedBlocks.length)),
+      buildRawListingTitle(locale, 'all_monthly_transits', subjectProfile.profileName, cacheMonth || String(selectedBlocks.length), responseMode),
       selectedBlocks,
       { itemType: 'block', chunkSize: 6 }
     ),
@@ -3600,6 +3635,40 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
         }],
     renderMode: 'plain'
   };
+}
+
+function getCanonicalFullListingKind(canonicalRoute) {
+  if (!canonicalRoute) {
+    return null;
+  }
+
+  if (canonicalRoute.id === 'all_natal_aspects') {
+    return 'all_aspects';
+  }
+
+  if (canonicalRoute.id === 'all_monthly_transits') {
+    return 'all_monthly_transits';
+  }
+
+  return null;
+}
+
+async function tryCanonicalFullListing(identity, canonicalRoute, subjectProfile, factAvailability, locale, responseMode, monthlyTransitCache = null) {
+  const requestKind = getCanonicalFullListingKind(canonicalRoute);
+  if (!requestKind) {
+    return null;
+  }
+
+  return tryFullRawListing(
+    identity,
+    canonicalRoute.intentSample || canonicalRoute.id,
+    subjectProfile,
+    factAvailability,
+    locale,
+    requestKind,
+    monthlyTransitCache,
+    responseMode
+  );
 }
 
 function localToolResultHasData(toolResult) {
@@ -3907,36 +3976,29 @@ async function answerConversation(identity, userText) {
   const activeProfile = await profiles.getActiveProfile(identity);
 
   if (route.kind !== 'system_meta' && route.kind !== 'profile_management' && route.kind !== 'clarification') {
+    const deterministicRouteMatch = matchWesternCanonicalRoute(routeSeedText);
     const aiCanonicalRoute = await resolveCanonicalCommonRouteWithAi(locale, plannerQuestionText, route);
-    if (aiCanonicalRoute) {
-      canonicalRoute = aiCanonicalRoute;
-      route = {
-        ...route,
-        kind: aiCanonicalRoute.routeKind,
-        intent: detectConversationIntent(aiCanonicalRoute.intentSample || plannerQuestionText),
-        answerStyle: aiCanonicalRoute.answerStyle,
-        commonRouteId: aiCanonicalRoute.id,
-        commonRouteScore: aiCanonicalRoute.score
-      };
-      plannerQuestionText = aiCanonicalRoute.intentSample || plannerQuestionText;
-    } else {
-      const deterministicRouteMatch = matchWesternCanonicalRoute(routeSeedText);
-      if (deterministicRouteMatch) {
-        canonicalRoute = deterministicRouteMatch;
-        route = {
-          ...route,
-          kind: deterministicRouteMatch.routeKind,
-          intent: detectConversationIntent(deterministicRouteMatch.intentSample || plannerQuestionText),
-          answerStyle: deterministicRouteMatch.answerStyle,
-          commonRouteId: deterministicRouteMatch.id,
-          commonRouteScore: deterministicRouteMatch.score
-        };
-        plannerQuestionText = deterministicRouteMatch.intentSample || plannerQuestionText;
-      }
+    canonicalRoute = preferCanonicalRoute(aiCanonicalRoute, deterministicRouteMatch);
+
+    if (canonicalRoute) {
+      route = applyCanonicalRoute(route, canonicalRoute, plannerQuestionText);
+      plannerQuestionText = canonicalRoute.intentSample || plannerQuestionText;
     }
 
     if (canonicalRoute?.commonRouteId) {
       commonRoute = getCommonQuestionRouteById(canonicalRoute.commonRouteId);
+    }
+
+    if (!commonRoute) {
+      commonRoute = matchCommonQuestionRoute(routeSeedText) || matchCommonQuestionRoute(plannerQuestionText);
+      if (commonRoute) {
+        route = {
+          ...route,
+          kind: commonRoute.routeKind,
+          answerStyle: commonRoute.answerStyle,
+          commonRouteId: commonRoute.id
+        };
+      }
     }
   }
 
@@ -4004,7 +4066,25 @@ async function answerConversation(identity, userText) {
     };
   }
 
-  if (!canonicalRoute) {
+  if (!canonicalRoute && !commonRoute) {
+    const legacyFullListingKind = detectFullRawListingRequest(routeSeedText);
+    const legacyCanonicalRoute = legacyFullListingKind === 'all_aspects'
+      ? getWesternCanonicalRouteById('all_natal_aspects')
+      : legacyFullListingKind === 'all_monthly_transits'
+        ? getWesternCanonicalRouteById('all_monthly_transits')
+        : null;
+
+    if (legacyCanonicalRoute) {
+      canonicalRoute = legacyCanonicalRoute;
+      route = applyCanonicalRoute(route, canonicalRoute, plannerQuestionText);
+      plannerQuestionText = canonicalRoute.intentSample || plannerQuestionText;
+      commonRoute = canonicalRoute?.commonRouteId
+        ? getCommonQuestionRouteById(canonicalRoute.commonRouteId)
+        : null;
+    }
+  }
+
+  if (!canonicalRoute && !commonRoute) {
     const text = buildUnsupportedAstrologyQuestionResponse(locale, route, suggestCanonicalQuestions(userText, route));
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
@@ -4044,31 +4124,32 @@ async function answerConversation(identity, userText) {
     : await factIndex.getProfileFactAvailability(identity, subjectProfile, {
         cacheMonth: monthlyTransitCache?.cacheMonth || null
       });
-  const fullRawListing = responseMode === 'raw' ? detectFullRawListingRequest(userText) : null;
 
-  if (fullRawListing) {
-    const fullRawResult = await tryFullRawListing(
+  if (canonicalRoute?.responseShape === 'full_listing') {
+    const fullListingResult = await tryCanonicalFullListing(
       identity,
-      userText,
+      canonicalRoute,
       subjectProfile,
       factAvailability,
       locale,
-      fullRawListing,
+      responseMode,
       monthlyTransitCache
     );
 
-    if (fullRawResult) {
-      const textParts = Array.isArray(fullRawResult.textParts) ? fullRawResult.textParts : [fullRawResult.text].filter(Boolean);
+    if (fullListingResult) {
+      const textParts = Array.isArray(fullListingResult.textParts)
+        ? fullListingResult.textParts
+        : [fullListingResult.text].filter(Boolean);
       pushHistory(identity, 'user', userText);
       pushHistory(identity, 'model', textParts.join('\n\n'));
-      setLastToolResults(identity, fullRawResult.usedTools || []);
+      setLastToolResults(identity, fullListingResult.usedTools || []);
       updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
 
       return {
         text: textParts[0] || '',
         textParts,
-        renderMode: fullRawResult.renderMode || 'plain',
-        usedTools: fullRawResult.usedTools || [],
+        renderMode: fullListingResult.renderMode || 'plain',
+        usedTools: fullListingResult.usedTools || [],
         intent: route.kind
       };
     }
