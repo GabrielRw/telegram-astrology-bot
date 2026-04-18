@@ -75,7 +75,7 @@ function formatStellium(stelliums) {
     return null;
   }
 
-  return `Stellium: ${getSignLabel(signStellium.sign_id)} (${signStellium.bodies.map(humanizeIdentifier).join(', ')})`;
+  return `Stellium: ${resolveSignLabel(signStellium.sign, signStellium.sign_id)} (${signStellium.bodies.map(humanizeIdentifier).join(', ')})`;
 }
 
 function formatPlanetPlacement(planet) {

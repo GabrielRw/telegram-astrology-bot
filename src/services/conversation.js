@@ -11,6 +11,7 @@ const factIndex = require('./factIndex');
 const mcpService = require('./freeastroMcp');
 const profiles = require('./profiles');
 const toolCache = require('./toolCache');
+const { appendUnmatchedCanonicalQuestion } = require('./unmatchedCanonicalLog');
 const { createLocalFunctionDeclarations, generatePlainText, getFastPathModelName, runFunctionCallingLoop } = require('./gemini');
 const { info } = require('./logger');
 const {
@@ -2536,6 +2537,19 @@ function buildRawNatalOverview(locale, subjectProfile, facts, options = {}) {
       }
     });
 
+  const formatBulletedLines = (items = []) => items.map((item) => `- ${item}`).join('\n');
+  const formatStructuredBlock = (lines, index) => {
+    const [titleLine, ...detailLines] = asArray(lines).filter(Boolean);
+    if (!titleLine) {
+      return null;
+    }
+
+    const body = detailLines.map((line) => `   ${line}`).join('\n');
+    return body
+      ? [`${index + 1}. ${titleLine}`, body].join('\n')
+      : `${index + 1}. ${titleLine}`;
+  };
+
   const blocks = [
     `${localizeRawSectionTitle(locale, 'natalFacts')} ${formatRawLabel(locale, {
       en: 'for',
@@ -2548,22 +2562,24 @@ function buildRawNatalOverview(locale, subjectProfile, facts, options = {}) {
   if (placements.length > 0) {
     blocks.push([
       localizeRawSectionTitle(locale, 'placements'),
-      ...placements
+      formatBulletedLines(placements)
     ].join('\n'));
   }
 
   if (aspects.length > 0) {
     blocks.push([
       localizeRawSectionTitle(locale, 'aspects'),
-      ...aspects
+      formatBulletedLines(aspects)
     ].join('\n'));
   }
 
   if (structureBlocks.length > 0) {
     blocks.push([
       localizeRawSectionTitle(locale, 'structures'),
-      ...structureBlocks.map((lines, index) => [`${index + 1}. ${lines[0]}`, ...lines.slice(1)].join('\n'))
-    ].join('\n'));
+      ...structureBlocks
+        .map((lines, index) => formatStructuredBlock(lines, index))
+        .filter(Boolean)
+    ].join('\n\n'));
   }
 
   return normalizeRawPresentationText(blocks.join('\n\n'));
@@ -4031,6 +4047,17 @@ async function answerConversation(identity, userText) {
   }
 
   if (!canonicalRoute && !commonRoute) {
+    await appendUnmatchedCanonicalQuestion({
+      stateKey,
+      channel: identity?.channel || null,
+      userId: identity?.userId || null,
+      chatId: identity?.chatId || null,
+      locale,
+      responseMode,
+      detectedRouteKind: route?.kind || null,
+      rewrittenQuestion: plannerQuestionText || null,
+      userText
+    });
     const text = buildUnsupportedAstrologyQuestionResponse(locale, route, suggestCanonicalQuestions(userText, route));
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
