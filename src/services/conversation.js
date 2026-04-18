@@ -221,6 +221,13 @@ function wantsStrongestSubset(text) {
   return /\b(plus forts?|strongest|top)\b/i.test(String(text || ''));
 }
 
+function looksLikeStandaloneAstrologyQuery(text) {
+  const value = String(text || '').toLowerCase();
+  const hasCoreTopic = /(transits?|aspects?|theme|thème|chart|ephemerides|éphémérides|solar return|retour solaire|relocation|synastr)/.test(value);
+  const hasSpecificScope = /(ce mois|ce mois ci|ce mois-ci|this month|since birth|depuis ma naissance|from birth|carr[eé]s?|square|conjunction|opposition|trine|sextile|soleil|sun|lune|moon|mercure|mercury|venus|mars|jupiter|saturne|saturn|uranus|neptune|pluton|pluto|chiron)/.test(value);
+  return hasCoreTopic && hasSpecificScope;
+}
+
 function buildQuantitativeFollowUpQuestion(lastResolvedQuestion, limit, conversationContext) {
   if (!lastResolvedQuestion || !limit) {
     return null;
@@ -315,6 +322,7 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
   if (
     requestedLimit &&
     lastResolvedQuestion &&
+    !looksLikeStandaloneAstrologyQuery(normalized) &&
     /^(?:retourne|montre|affiche|donne|garde|only|just|show|return|keep|uniquement|seulement|juste|les?|the|top|\d+)/i.test(normalized) &&
     (wantsStrongestSubset(normalized) || /^(?:retourne|montre|affiche|donne|only|just|show|return|uniquement|seulement)/i.test(normalized))
   ) {
@@ -533,10 +541,7 @@ function buildCanonicalRouteCatalog(routeKind = null) {
 }
 
 async function resolveCanonicalCommonRouteWithAi(locale, userText, route) {
-  const routeKindFilter = route?.kind === 'astrology_transits' || route?.kind === 'astrology_natal' || route?.kind === 'astrology_synastry' || route?.kind === 'astrology_relocation'
-    ? route.kind
-    : null;
-  const catalog = buildCanonicalRouteCatalog(routeKindFilter);
+  const catalog = buildCanonicalRouteCatalog();
 
   if (catalog.length === 0) {
     return null;
@@ -555,7 +560,8 @@ async function resolveCanonicalCommonRouteWithAi(locale, userText, route) {
 
   const prompt = [
     `User question: ${String(userText || '').trim()}`,
-    `Detected route kind: ${route?.kind || 'unknown'}`,
+    `Detected route kind hint: ${route?.kind || 'unknown'}`,
+    'The detected route kind can be wrong. Infer the best canonical route from the full question semantics.',
     'Canonical routes:',
     JSON.stringify(catalog),
     '',
@@ -609,6 +615,10 @@ async function resolveFollowUpWithAi(locale, userText, conversationContext, rout
 
   const value = String(userText || '').trim();
   if (!value || value.length > 120) {
+    return null;
+  }
+
+  if (looksLikeStandaloneAstrologyQuery(value)) {
     return null;
   }
 
@@ -1292,7 +1302,9 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
         text: buildRawTransitTable(locale, pseudoFacts, subjectProfile, {
           limit: requestedMonthlyPlanet ? Math.max(1, Math.min(200, requestedLimit)) : requestedLimit,
           includeFollowUp: !requestedMonthlyPlanet,
-          responseMode
+          responseMode,
+          requestedPlanet: requestedMonthlyPlanet,
+          strictPlanetMatch: Boolean(requestedMonthlyPlanet)
         }),
         renderMode: 'telegram_pre'
       };
@@ -1303,7 +1315,9 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
       responseMode,
       limit: requestedMonthlyPlanet ? (getRequestedListingLimit(userText, 'monthly_transits_for_planet', visibleTransits.length || 200)) : requestedLimit,
       includeFollowUp: !requestedMonthlyPlanet,
-      title: filteredTitle
+      title: filteredTitle,
+      requestedPlanet: requestedMonthlyPlanet,
+      strictPlanetMatch: Boolean(requestedMonthlyPlanet)
     });
   }
 
@@ -1322,7 +1336,9 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
       responseMode,
       limit: requestedLimit,
       includeFollowUp: false,
-      title
+      title,
+      requestedPlanet: planet,
+      strictPlanetMatch: true
     }) || buildCanonicalMissingArgsResponse(locale, route, ['transitPlanet']);
   }
 
@@ -1837,6 +1853,16 @@ function normalizeAssistantText(text) {
     .trim();
 
   return dedupeRepeatedSentences(cleaned);
+}
+
+function normalizeStructuredAssistantText(text) {
+  return String(text || '')
+    .replace(/\*/g, '')
+    .replace(/__+/g, '')
+    .replace(/`+/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function normalizeRawPresentationText(text) {
@@ -2616,6 +2642,14 @@ function isMonthlyTransitFact(fact) {
   return (fact.sourceKind || fact.source_kind) === factIndex.MONTHLY_TRANSIT_SOURCE_KIND;
 }
 
+function extractFactTagValues(fact, prefix) {
+  return asArray(fact?.tags)
+    .map((tag) => String(tag || ''))
+    .filter((tag) => tag.toLowerCase().startsWith(String(prefix || '').toLowerCase()))
+    .map((tag) => tag.slice(String(prefix || '').length))
+    .filter(Boolean);
+}
+
 function buildTransitFactLines(locale, fact) {
   const { evidence, entities, raw, importance } = getRawFactCore(fact);
   const lines = [];
@@ -2631,7 +2665,8 @@ function buildTransitFactLines(locale, fact) {
     || evidence.passType
     || raw.kind
     || raw.category
-    || ((Array.isArray(fact.tags) ? fact.tags : []).find((tag) => String(tag).startsWith('kind:')) || '').replace(/^kind:/, '');
+    || extractFactTagValues(fact, 'kind:')[0]
+    || extractFactTagValues(fact, 'category:')[0];
   const windowText = formatRawDateWindow(
     evidence.startDatetime || evidence.start_datetime,
     evidence.endDatetime || evidence.end_datetime
@@ -2646,7 +2681,7 @@ function buildTransitFactLines(locale, fact) {
       ? `${evidence.visibleStartDay || evidence.visible_start_day || '?'} → ${evidence.visibleEndDay || evidence.visible_end_day || '?'}`
       : null
   );
-  const transitPlanetSource = evidence.transitPlanet || evidence.transit_planet || asArray(evidence.transit_planets)[0];
+  const transitPlanetSource = evidence.transitPlanet || evidence.transit_planet || asArray(evidence.transit_planets)[0] || extractFactTagValues(fact, 'planet:')[0];
   const transitPlanet = formatScalarValue(transitPlanetSource)
     ? humanizeRawKey(formatScalarValue(transitPlanetSource))
     : null;
@@ -2654,8 +2689,11 @@ function buildTransitFactLines(locale, fact) {
   const natalPoint = formatScalarValue(natalPointSource)
     ? humanizeRawKey(formatScalarValue(natalPointSource))
     : null;
-  const aspectType = formatScalarValue(evidence.aspectType || evidence.aspect_type || normalizeEntityList(entities.aspect_types)[0]);
-  const houses = normalizeRawList(evidence.houses || entities.houses, (value) => humanizeRawKey(formatScalarValue(value)));
+  const aspectType = formatScalarValue(evidence.aspectType || evidence.aspect_type || normalizeEntityList(entities.aspect_types)[0] || extractFactTagValues(fact, 'aspect_type:')[0]);
+  const houses = normalizeRawList(
+    evidence.houses || entities.houses || extractFactTagValues(fact, 'house:'),
+    (value) => humanizeRawKey(formatScalarValue(value))
+  );
 
   lines.push(title);
 
@@ -2964,8 +3002,9 @@ function scoreTransitTimelineEntry(transit) {
 }
 
 function selectTopMonthlyTransitFacts(facts, limit = 10, options = {}) {
+  const requestedPlanet = options.requestedPlanet || null;
   return selectRawDisplayFacts(
-    asArray(facts).filter((fact) => isMonthlyTransitFact(fact)),
+    asArray(facts).filter((fact) => isMonthlyTransitFact(fact) && (!requestedPlanet || matchesTransitPlanetFilter(fact, requestedPlanet, options.strictPlanetMatch))),
     { ...options, limit }
   ).slice(0, limit);
 }
@@ -2978,21 +3017,39 @@ function selectTopMonthlyTimelineEntries(transits, limit = 10) {
     .slice(0, limit);
 }
 
-function matchesTransitPlanetFilter(entry, planet) {
+function matchesTransitPlanetFilter(entry, planet, strict = false) {
   if (!planet) {
     return true;
   }
 
   const normalizedPlanet = String(planet || '').toLowerCase();
-  const haystack = [
+  const { evidence, entities, raw } = getRawFactCore(entry || {});
+  const focusedCandidates = [
     entry?.transit_planet,
     entry?.natal_point,
-    entry?.label
+    entry?.label,
+    entry?.title,
+    raw?.transit_planet,
+    raw?.natal_point,
+    evidence?.transitPlanet,
+    evidence?.transit_planet,
+    evidence?.natalPoint,
+    evidence?.natal_point
+  ];
+  const broadCandidates = [
+    ...focusedCandidates,
+    ...(asArray(entities?.planets)),
+    ...(asArray(entities?.drivers)),
+    ...(asArray(entities?.natal_points)),
+    ...(asArray(entities?.transit_planets)),
+    ...(strict ? [] : extractFactTagValues(entry || {}, 'planet:')),
+    ...(strict ? [] : extractFactTagValues(entry || {}, 'planet_id:'))
   ]
     .map((value) => String(value || '').toLowerCase())
-    .join(' ');
+    .filter(Boolean);
 
-  return haystack.includes(normalizedPlanet);
+  const haystack = strict ? focusedCandidates : broadCandidates;
+  return haystack.some((value) => new RegExp(`\\b${normalizedPlanet}\\b`, 'i').test(String(value || '').toLowerCase()));
 }
 
 function parseRequestedMonthlyTransitPlanet(text) {
@@ -3252,12 +3309,29 @@ function scoreRawDisplayFact(fact, options = {}) {
   let score = Number(fact.importance || 0);
 
   if (isTransit) {
+    const requestedPlanet = options.requestedPlanet || null;
+    const tagPlanets = [
+      ...extractFactTagValues(fact, 'planet:'),
+      ...extractFactTagValues(fact, 'planet_id:')
+    ].map((value) => String(value || '').toLowerCase());
+    const tagPlanetSet = [...new Set(tagPlanets)];
     if (evidence.start_datetime || evidence.startDatetime) score += 20;
     if (evidence.peak_datetime || evidence.peakDatetime) score += 20;
     if (asArray(evidence.exact_datetimes || evidence.exactDatetimes).length > 0) score += 15;
     if (asArray(evidence.transit_planets || entities.planets).length > 0) score += 8;
     if (asArray(evidence.houses || entities.houses).length > 0) score += 6;
     if (/pressure window|support window|stellium|station|ingress|configuration|t square|grand trine|kite/.test(title)) score += 12;
+    if (requestedPlanet) {
+      if (matchesTransitPlanetFilter(fact, requestedPlanet)) {
+        score += 40;
+        if (title.includes(String(requestedPlanet).toLowerCase())) score += 20;
+        if (tagPlanetSet.includes(String(requestedPlanet).toLowerCase())) score += 20;
+        if (/topic window|background theme|activation cluster/.test(title)) score -= 35;
+        if (tagPlanetSet.length >= 5) score -= 15;
+      } else {
+        score -= 120;
+      }
+    }
     return score;
   }
 
@@ -3405,14 +3479,19 @@ function buildMonthlyTransitOverviewFromFacts(locale, facts, subjectProfile, opt
   }
 
   const cacheMonth = rows[0]?.cacheMonth || rows[0]?.cache_month || null;
-  const title = options.title || buildMonthlyTransitOverviewTitle(locale, subjectProfile, rows.length, cacheMonth, options.responseMode || 'raw');
+  const usableRows = rows
+    .map((fact) => buildTransitFactLines(locale, fact))
+    .filter((lines) => lines.length > 0 && String(lines[0] || '').trim());
+
+  if (usableRows.length === 0) {
+    return null;
+  }
+
+  const title = options.title || buildMonthlyTransitOverviewTitle(locale, subjectProfile, usableRows.length, cacheMonth, options.responseMode || 'raw');
   const blocks = [title];
 
-  rows.forEach((fact, index) => {
-    const lines = buildTransitFactLines(locale, fact);
-    if (lines.length > 0) {
-      blocks.push([`${index + 1}. ${lines[0]}`, ...lines.slice(1)].join('\n'));
-    }
+  usableRows.forEach((lines, index) => {
+    blocks.push([`${index + 1}. ${lines[0]}`, ...lines.slice(1)].join('\n'));
   });
 
   if (options.includeFollowUp !== false) {
@@ -3423,21 +3502,29 @@ function buildMonthlyTransitOverviewFromFacts(locale, facts, subjectProfile, opt
 
 function buildMonthlyTransitOverviewFromTimeline(locale, transits, subjectProfile, options = {}) {
   const limit = Math.max(1, Math.min(Number(options.limit || 10), 200));
-  const rows = selectTopMonthlyTimelineEntries(transits, limit);
+  const filteredTransits = options.requestedPlanet
+    ? asArray(transits).filter((transit) => matchesTransitPlanetFilter(transit, options.requestedPlanet, options.strictPlanetMatch))
+    : asArray(transits);
+  const rows = selectTopMonthlyTimelineEntries(filteredTransits, limit);
   if (rows.length === 0) {
     return null;
   }
 
   const cacheMonth = formatScalarValue(options.cacheMonth || null);
-  const title = options.title || buildMonthlyTransitOverviewTitle(locale, subjectProfile, rows.length, cacheMonth, options.responseMode || 'raw');
+  const renderedRows = rows
+    .map((transit) => buildTransitTimelineEntryLines(locale, transit))
+    .filter(Boolean);
+
+  if (renderedRows.length === 0) {
+    return null;
+  }
+
+  const title = options.title || buildMonthlyTransitOverviewTitle(locale, subjectProfile, renderedRows.length, cacheMonth, options.responseMode || 'raw');
   const blocks = [title];
 
-  rows.forEach((transit, index) => {
-    const block = buildTransitTimelineEntryLines(locale, transit);
-    if (block) {
-      const lines = block.split('\n');
-      blocks.push([`${index + 1}. ${lines[0]}`, ...lines.slice(1)].join('\n'));
-    }
+  renderedRows.forEach((block, index) => {
+    const lines = block.split('\n');
+    blocks.push([`${index + 1}. ${lines[0]}`, ...lines.slice(1)].join('\n'));
   });
 
   if (options.includeFollowUp !== false) {
@@ -3830,6 +3917,8 @@ function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, a
       responseMode: 'interpreted',
       limit: requestedLimit,
       includeFollowUp: false,
+      requestedPlanet,
+      strictPlanetMatch: Boolean(requestedPlanet),
       title: requestedPlanet
         ? formatRawLabel(options.locale || 'en', {
             en: `${humanizeRawKey(requestedPlanet)} monthly transits for ${getRawSubjectLabel(options.locale || 'en', subjectProfile?.profileName || 'Chart User')}`,
@@ -3846,7 +3935,9 @@ function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, a
     return buildMonthlyTransitOverviewFromFacts(options.locale || 'en', facts, subjectProfile, {
       userText,
       responseMode: 'interpreted',
-      limit: requestedLimit
+      limit: requestedLimit,
+      requestedPlanet: parseRequestedMonthlyTransitPlanet(userText),
+      strictPlanetMatch: Boolean(parseRequestedMonthlyTransitPlanet(userText))
     }) || '';
   }
 
@@ -4198,6 +4289,8 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
               responseMode: 'raw',
               limit: requestedListingLimit,
               includeFollowUp: !requestedMonthlyPlanet,
+              requestedPlanet: requestedMonthlyPlanet,
+              strictPlanetMatch: Boolean(requestedMonthlyPlanet),
               title: requestedMonthlyPlanet
                 ? formatRawLabel(locale, {
                     en: `${humanizeRawKey(requestedMonthlyPlanet)} monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}${factAvailability?.indexedTransitCacheMonth ? ` — ${factAvailability.indexedTransitCacheMonth}` : ''}`,
@@ -4282,7 +4375,9 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
         limit: requestedListingLimit,
         includeFollowUp: !requestedMonthlyPlanet,
         userText,
-        answerStyle
+        answerStyle,
+        requestedPlanet: requestedMonthlyPlanet,
+        strictPlanetMatch: Boolean(requestedMonthlyPlanet)
       })
     : null;
 
@@ -4814,7 +4909,10 @@ function looksLikeSystemReply(text) {
 }
 
 function validateFinalAnswer(text, route, locale) {
-  const normalized = normalizeAssistantText(text);
+  const structuredItemCount = (String(text || '').match(/(?:^|\n\n)\d+\.\s/g) || []).length;
+  const normalized = structuredItemCount >= 2
+    ? normalizeStructuredAssistantText(text)
+    : normalizeAssistantText(text);
 
   if ((route.kind === 'astrology_natal' || route.kind === 'astrology_transits' || route.kind === 'astrology_synastry') && looksLikeSystemReply(normalized)) {
     return locale === 'fr'
@@ -5138,6 +5236,8 @@ async function answerConversation(identity, userText) {
                 (plannedRoute?.commonRouteId || canonicalRoute?.id) === 'monthly_transits_for_planet' ? 200 : 10
               )
             : 5,
+          requestedPlanet: parseRequestedMonthlyTransitPlanet(effectiveUserQuestion),
+          strictPlanetMatch: Boolean(parseRequestedMonthlyTransitPlanet(effectiveUserQuestion)),
           includeFollowUp: isTopMonthlyTransitRoute(plannedRoute?.commonRouteId || canonicalRoute?.id)
         })
       : null;
