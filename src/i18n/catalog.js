@@ -104,6 +104,7 @@ const CATALOG = {
       reset: 'Reset',
       switchProfile: 'Switch profile',
       showChart: 'Show chart',
+      openInteractiveMap: 'Open interactive map',
       enableRawMode: 'Enable raw mode',
       enableInterpretedMode: 'Enable interpreted mode'
     },
@@ -126,7 +127,8 @@ const CATALOG = {
       profileSwitch: 'Choose which saved profile should become active.',
       synastryPartner: 'Choose the saved profile to compare with your active chart.',
       languagePrompt: 'Choose your language.',
-      languageUpdated: 'Language set to {language}.'
+      languageUpdated: 'Language set to {language}.',
+      interactiveMapPrompt: 'Open the interactive map to zoom in on cities and lines.'
     },
     profile: {
       none: 'No birth details are saved yet.\n\nUse /start to set up your chart.',
@@ -238,7 +240,11 @@ const CATALOG = {
       lineLegend: 'Relevant lines',
       crossingsLegend: 'Relevant crossings',
       placesLegend: 'Relevant places',
-      unnamedLocation: 'Relevant location'
+      unnamedLocation: 'Relevant location',
+      resetView: 'Reset view',
+      interactiveNote: 'Use the map controls to zoom, then click a city or line for details.',
+      interactiveUnavailableTitle: 'Interactive map unavailable',
+      interactiveUnavailableBody: 'This link is missing or expired. Generate a fresh map from the bot to open a new interactive view.'
     }
   },
   fr: {
@@ -252,6 +258,7 @@ const CATALOG = {
       reset: 'Réinitialiser',
       switchProfile: 'Changer de profil',
       showChart: 'Voir le thème',
+      openInteractiveMap: 'Ouvrir la carte interactive',
       enableRawMode: 'Activer le mode brut',
       enableInterpretedMode: 'Activer le mode interprété'
     },
@@ -273,7 +280,8 @@ const CATALOG = {
       profileSwitch: 'Choisissez quel profil enregistré doit devenir actif.',
       synastryPartner: 'Choisissez le profil enregistré à comparer avec votre thème actif.',
       languagePrompt: 'Choisissez votre langue.',
-      languageUpdated: 'Langue définie sur {language}.'
+      languageUpdated: 'Langue définie sur {language}.',
+      interactiveMapPrompt: 'Ouvrez la carte interactive pour zoomer sur les villes et les lignes.'
     },
     profile: {
       none: 'Aucune donnée de naissance n’est enregistrée.\n\nUtilisez /start pour configurer votre thème.',
@@ -382,7 +390,11 @@ const CATALOG = {
       lineLegend: 'Lignes pertinentes',
       crossingsLegend: 'Croisements pertinents',
       placesLegend: 'Lieux pertinents',
-      unnamedLocation: 'Lieu pertinent'
+      unnamedLocation: 'Lieu pertinent',
+      resetView: 'Réinitialiser la vue',
+      interactiveNote: 'Utilisez les contrôles de la carte pour zoomer, puis cliquez sur une ville ou une ligne pour les détails.',
+      interactiveUnavailableTitle: 'Carte interactive indisponible',
+      interactiveUnavailableBody: 'Ce lien est manquant ou expiré. Générez une nouvelle carte depuis le bot pour ouvrir une nouvelle vue interactive.'
     }
   },
   de: {
@@ -396,6 +408,7 @@ const CATALOG = {
       reset: 'Zurücksetzen',
       switchProfile: 'Profil wechseln',
       showChart: 'Horoskop zeigen',
+      openInteractiveMap: 'Interaktive Karte öffnen',
       enableRawMode: 'Rohmodus aktivieren',
       enableInterpretedMode: 'Interpretierten Modus aktivieren'
     },
@@ -417,7 +430,8 @@ const CATALOG = {
       profileSwitch: 'Wähle, welches gespeicherte Profil aktiv werden soll.',
       synastryPartner: 'Wähle das gespeicherte Profil zum Vergleich mit deinem aktiven Horoskop.',
       languagePrompt: 'Wähle deine Sprache.',
-      languageUpdated: 'Sprache auf {language} gesetzt.'
+      languageUpdated: 'Sprache auf {language} gesetzt.',
+      interactiveMapPrompt: 'Öffne die interaktive Karte, um auf Städte und Linien zu zoomen.'
     },
     profile: {
       none: 'Es sind noch keine Geburtsdaten gespeichert.\n\nNutze /start, um dein Horoskop einzurichten.',
@@ -526,7 +540,11 @@ const CATALOG = {
       lineLegend: 'Relevante Linien',
       crossingsLegend: 'Relevante Kreuzungen',
       placesLegend: 'Relevante Orte',
-      unnamedLocation: 'Relevanter Ort'
+      unnamedLocation: 'Relevanter Ort',
+      resetView: 'Ansicht zurücksetzen',
+      interactiveNote: 'Nutze die Kartensteuerung zum Zoomen und klicke dann auf eine Stadt oder Linie für Details.',
+      interactiveUnavailableTitle: 'Interaktive Karte nicht verfügbar',
+      interactiveUnavailableBody: 'Dieser Link fehlt oder ist abgelaufen. Erzeuge im Bot eine neue Karte, um eine neue interaktive Ansicht zu öffnen.'
     }
   },
   es: {
@@ -540,6 +558,7 @@ const CATALOG = {
       reset: 'Restablecer',
       switchProfile: 'Cambiar perfil',
       showChart: 'Ver carta',
+      openInteractiveMap: 'Abrir mapa interactivo',
       enableRawMode: 'Activar modo bruto',
       enableInterpretedMode: 'Activar modo interpretado'
     },
@@ -561,7 +580,8 @@ const CATALOG = {
       profileSwitch: 'Elige qué perfil guardado debe quedar activo.',
       synastryPartner: 'Elige el perfil guardado para comparar con tu carta activa.',
       languagePrompt: 'Elige tu idioma.',
-      languageUpdated: 'Idioma configurado en {language}.'
+      languageUpdated: 'Idioma configurado en {language}.',
+      interactiveMapPrompt: 'Abre el mapa interactivo para acercarte a ciudades y líneas.'
     },
     profile: {
       none: 'Todavía no hay datos de nacimiento guardados.\n\nUsa /start para configurar tu carta.',
@@ -670,7 +690,11 @@ const CATALOG = {
       lineLegend: 'Líneas relevantes',
       crossingsLegend: 'Cruces relevantes',
       placesLegend: 'Lugares relevantes',
-      unnamedLocation: 'Lugar relevante'
+      unnamedLocation: 'Lugar relevante',
+      resetView: 'Restablecer vista',
+      interactiveNote: 'Usa los controles del mapa para acercarte y luego pulsa una ciudad o una línea para ver detalles.',
+      interactiveUnavailableTitle: 'Mapa interactivo no disponible',
+      interactiveUnavailableBody: 'Este enlace falta o ha caducado. Genera un mapa nuevo desde el bot para abrir una nueva vista interactiva.'
     }
   }
 };

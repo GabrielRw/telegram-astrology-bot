@@ -13,6 +13,12 @@ const { getWhatsappPaths } = require('./channels/whatsapp/api');
 const { handleWhatsAppVerification, handleWhatsAppWebhook, processWhatsAppEvent } = require('./channels/whatsapp/webhook');
 const billing = require('./services/billing');
 const eventQueue = require('./services/eventQueue');
+const {
+  getInteractiveAstroMapPayload,
+  getInteractiveMapPath,
+  renderInteractiveAstroMapNotFoundPage,
+  renderInteractiveAstroMapPage
+} = require('./services/interactiveAstroMap');
 const { info, reportError, warn } = require('./services/logger');
 const persistence = require('./services/persistence');
 const { setTelegramNotifier } = require('./services/telegramAlerts');
@@ -174,6 +180,14 @@ function createAppServer(bot, webhookPath) {
         'Billing updated',
         '<p>Your Stripe billing session is complete.</p><p>Return to the bot and send <code>/billing</code> to see your current plan status.</p>'
       ));
+      return;
+    }
+
+    if (req.method === 'GET' && pathname.startsWith('/maps/astro/')) {
+      const token = pathname.slice(getInteractiveMapPath('').length);
+      const payload = getInteractiveAstroMapPayload(token);
+      res.writeHead(payload ? 200 : 404, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(payload ? renderInteractiveAstroMapPage(payload) : renderInteractiveAstroMapNotFoundPage());
       return;
     }
 

@@ -1,5 +1,6 @@
 const { answerConversation } = require('../services/conversation');
 const { renderAstrocartographyMap } = require('../services/astroMap');
+const { registerInteractiveAstroMap } = require('../services/interactiveAstroMap');
 const billing = require('../services/billing');
 const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
 const { getGeminiErrorMessage } = require('../services/gemini');
@@ -304,6 +305,22 @@ async function maybeSendAstroMap(event, channelApi, userText, conversationResult
     await channelApi.sendImage(event, rendered.buffer, {
       filename: rendered.filename
     });
+
+    const interactiveUrl = registerInteractiveAstroMap({
+      locale: getLocale(event),
+      toolResults: conversationResult.usedTools,
+      userText
+    });
+
+    if (interactiveUrl) {
+      await sendExternalLink(
+        event,
+        channelApi,
+        t(event, 'prompts.interactiveMapPrompt'),
+        'buttons.openInteractiveMap',
+        interactiveUrl
+      );
+    }
   } catch (error) {
     return;
   }
@@ -715,9 +732,12 @@ async function handleIncomingAction(event, channelApi) {
     const nextMode = getResponseMode(event) === 'raw' ? 'interpreted' : 'raw';
     setResponseMode(event, nextMode);
     await channelApi.ackAction(event);
-    await channelApi.sendText(event, t(event, 'profile.responseMode', {
-      value: t(event, `responseModes.${nextMode}`)
-    }));
+    const refreshedState = getChatState(event);
+    const access = await billing.getAccessSummary(event);
+    await channelApi.sendText(event, buildProfileMessage(refreshedState, access));
+    if (refreshedState.natalProfile) {
+      await sendProfileActions(event, channelApi, refreshedState);
+    }
     return true;
   }
 
