@@ -2487,7 +2487,7 @@ function buildTransitTimelineEntryLines(locale, transit) {
   return lines.filter(Boolean).join('\n');
 }
 
-function buildRawNatalOverview(locale, subjectProfile, facts, options = {}) {
+function collectRawNatalOverviewData(locale, subjectProfile, facts, options = {}) {
   const normalizedProfile = normalizeNatalProfile(
     subjectProfile?.rawNatalPayload,
     subjectProfile?.cityLabel,
@@ -2537,6 +2537,27 @@ function buildRawNatalOverview(locale, subjectProfile, facts, options = {}) {
       }
     });
 
+  return {
+    title: `${localizeRawSectionTitle(locale, 'natalFacts')} ${formatRawLabel(locale, {
+      en: 'for',
+      fr: 'pour',
+      de: 'für',
+      es: 'para'
+    })} ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+    placements,
+    aspects,
+    structureBlocks
+  };
+}
+
+function buildRawNatalOverview(locale, subjectProfile, facts, options = {}) {
+  const {
+    title,
+    placements,
+    aspects,
+    structureBlocks
+  } = collectRawNatalOverviewData(locale, subjectProfile, facts, options);
+
   const formatBulletedLines = (items = []) => items.map((item) => `- ${item}`).join('\n');
   const formatStructuredBlock = (lines, index) => {
     const [titleLine, ...detailLines] = asArray(lines).filter(Boolean);
@@ -2550,14 +2571,7 @@ function buildRawNatalOverview(locale, subjectProfile, facts, options = {}) {
       : `${index + 1}. ${titleLine}`;
   };
 
-  const blocks = [
-    `${localizeRawSectionTitle(locale, 'natalFacts')} ${formatRawLabel(locale, {
-      en: 'for',
-      fr: 'pour',
-      de: 'für',
-      es: 'para'
-    })} ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`
-  ];
+  const blocks = [title];
 
   if (placements.length > 0) {
     blocks.push([
@@ -2583,6 +2597,75 @@ function buildRawNatalOverview(locale, subjectProfile, facts, options = {}) {
   }
 
   return normalizeRawPresentationText(blocks.join('\n\n'));
+}
+
+function buildTelegramRawNatalOverviewHtml(locale, subjectProfile, facts, options = {}) {
+  const {
+    title,
+    placements,
+    aspects,
+    structureBlocks
+  } = collectRawNatalOverviewData(locale, subjectProfile, facts, options);
+
+  const sections = [`<b>${escapeTelegramHtml(title)}</b>`];
+
+  if (placements.length > 0) {
+    sections.push([
+      `<b>${escapeTelegramHtml(localizeRawSectionTitle(locale, 'placements'))}</b>`,
+      ...placements.map((item) => `• ${escapeTelegramHtml(item)}`)
+    ].join('\n'));
+  }
+
+  if (aspects.length > 0) {
+    sections.push([
+      `<b>${escapeTelegramHtml(localizeRawSectionTitle(locale, 'aspects'))}</b>`,
+      ...aspects.map((item) => `• ${escapeTelegramHtml(item)}`)
+    ].join('\n'));
+  }
+
+  if (structureBlocks.length > 0) {
+    const renderedBlocks = structureBlocks.map((lines, index) => {
+      const [heading, ...detailLines] = asArray(lines).filter(Boolean);
+      const pieces = [`<b>${index + 1}. ${escapeTelegramHtml(heading || '')}</b>`];
+      pieces.push(...detailLines.map((line) => escapeTelegramHtml(line)));
+      return pieces.join('\n');
+    });
+
+    sections.push([
+      `<b>${escapeTelegramHtml(localizeRawSectionTitle(locale, 'structures'))}</b>`,
+      ...renderedBlocks
+    ].join('\n\n'));
+  }
+
+  return sections;
+}
+
+function splitTelegramHtmlSections(sections, maxLength = 3500) {
+  const chunks = [];
+  let current = '';
+
+  for (const section of asArray(sections).filter(Boolean)) {
+    const candidate = current ? `${current}\n\n${section}` : section;
+    if (candidate.length <= maxLength) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      chunks.push(current);
+      current = section;
+      continue;
+    }
+
+    chunks.push(section);
+    current = '';
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks;
 }
 
 function scoreRawDisplayFact(fact, options = {}) {
@@ -3370,6 +3453,25 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     return null;
   }
 
+  const telegramRawNatalHtmlSections = (
+    rawMode &&
+    identity?.channel === 'telegram' &&
+    subjectProfile?.rawNatalPayload &&
+    searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
+    isBroadRawNatalQuestion(userText, answerStyle)
+  )
+    ? buildTelegramRawNatalOverviewHtml(locale, subjectProfile, facts, {
+        subjectLabel: subjectProfile?.profileName || 'Chart User',
+        userText,
+        aspectFacts,
+        answerStyle,
+        limit: 5
+      })
+    : null;
+  const telegramRawNatalHtmlParts = telegramRawNatalHtmlSections
+    ? splitTelegramHtmlSections(telegramRawNatalHtmlSections)
+    : null;
+
   let rewrittenAnswer = draftAnswer;
   let rewriteDurationMs = 0;
 
@@ -3397,8 +3499,11 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   }
 
   return {
-    text: rewrittenAnswer,
-    renderMode: rawMode && intent.id === 'transits' ? 'telegram_pre' : 'plain',
+    text: telegramRawNatalHtmlParts?.[0] || rewrittenAnswer,
+    textParts: telegramRawNatalHtmlParts || undefined,
+    renderMode: telegramRawNatalHtmlParts
+      ? 'telegram_html'
+      : (rawMode && intent.id === 'transits' ? 'telegram_pre' : 'plain'),
     usedTools: [{
       name: 'search_cached_profile_facts',
       args: searchInput,

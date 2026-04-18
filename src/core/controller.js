@@ -215,6 +215,21 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
       return true;
     }
 
+    if (result?.renderMode === 'telegram_html' && event.channel === 'telegram') {
+      if (Array.isArray(result?.textParts) && result.textParts.length > 0) {
+        await channelApi.editText(event, loadingRef, result.textParts[0], { html: true });
+
+        for (const part of result.textParts.slice(1)) {
+          await channelApi.sendText(event, part, { html: true });
+        }
+      } else {
+        await channelApi.editText(event, loadingRef, result.text, { html: true });
+      }
+      await billing.recordAnsweredQuestion(event);
+      await maybeSendAstroMap(event, channelApi, userText, result);
+      return true;
+    }
+
     if (Array.isArray(result?.textParts) && result.textParts.length > 0) {
       await channelApi.editText(event, loadingRef, result.textParts[0]);
 
