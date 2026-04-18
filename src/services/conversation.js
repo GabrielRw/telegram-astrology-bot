@@ -1,6 +1,14 @@
 const { performance } = require('node:perf_hooks');
 const { detectConversationIntent } = require('../config/conversationIntents');
-const { matchCommonQuestionRoute } = require('../config/commonQuestionRoutes');
+const {
+  getCommonQuestionRouteById,
+  matchCommonQuestionRoute
+} = require('../config/commonQuestionRoutes');
+const {
+  getWesternCanonicalRouteById,
+  listWesternCanonicalRoutes,
+  matchWesternCanonicalRoute
+} = require('../config/westernCanonicalRoutes');
 const factIndex = require('./factIndex');
 const mcpService = require('./freeastroMcp');
 const profiles = require('./profiles');
@@ -89,14 +97,8 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
   const locale = getLocale(chatState);
   const relocationRules = intent.id === 'relocation'
     ? [
-        'For relocation and astrocartography questions, prefer MCP astrocartography tools over generic natal interpretation.',
-        'If you need one missing parameter such as the relocation goal or target city, ask only that one question.',
-        'When you answer, state the raw returned evidence first, such as distances, scores, city names, or line types.',
-        'Then interpret those values in plain language.',
-        'If score meaning is not explicitly documented in the tool result, present your reading as an inference, not as endpoint fact.',
-        'Do not invent generic distance-orb rules such as "300 to 500 km" unless the tool result explicitly provides that rule.',
-        'Do not say that you cannot show images, maps, or visuals in chat.',
-        'If the user asks for lines on the map, answer the question normally and assume the system may attach a relevant astrocartography map image after your text reply.'
+        'Relocation and astrocartography must use only the supported canonical endpoints or cached indexed data.',
+        'If the user asks a relocation question outside the supported canonical registry, say that the question is not supported yet.'
       ]
     : [];
 
@@ -113,7 +115,7 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
     'Do not give medical, legal, or financial advice.',
     'Never answer personal astrology questions without natal data.',
     'For natal and monthly transit questions, call search_cached_profile_facts first whenever possible, then use the older cached natal/monthly transit tools only if the fact index is insufficient.',
-    'Use FreeAstro MCP only when indexed facts and cached data are insufficient.',
+    'Do not use open tool discovery. Use only indexed facts, cached local tools, or explicitly mapped canonical FreeAstro endpoints.',
     'When using tool data, interpret it like an astrologer, but stay specific to the chart and concise.',
     'Never answer a system or clarification question with an astrology reading.',
     `Response mode: ${options.responseMode || 'interpreted'}.`,
@@ -126,7 +128,7 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
     `Detected user intent: ${intent.id}.`,
     `Routing guidance: ${intent.guidance}`,
     `Preferred cached tools: ${intent.prefersCachedTools.join(', ') || 'none'}.`,
-    `Preferred MCP tools: ${intent.prefersMcpTools.join(', ') || 'none'}.`,
+    'Preferred MCP tools: mapped canonical endpoints only.',
     `MCP status: ${mcpStatus}.`,
     `Active profile name: ${options.activeProfileName || 'Unknown'}.`,
     `Indexed natal facts: ${options.factAvailability?.hasNatalFacts ? 'available' : 'not indexed yet'}.`,
@@ -472,6 +474,124 @@ function applyCommonQuestionRoute(route, userText) {
   };
 }
 
+function buildCanonicalRouteCatalog(routeKind = null) {
+  return listWesternCanonicalRoutes(routeKind ? { routeKind } : {})
+    .map((route) => ({
+      id: route.id,
+      routeKind: route.routeKind,
+      answerStyle: route.answerStyle,
+      intentSample: route.intentSample
+    }));
+}
+
+async function resolveCanonicalCommonRouteWithAi(locale, userText, route) {
+  const routeKindFilter = route?.kind === 'astrology_transits' || route?.kind === 'astrology_natal' || route?.kind === 'astrology_synastry' || route?.kind === 'astrology_relocation'
+    ? route.kind
+    : null;
+  const catalog = buildCanonicalRouteCatalog(routeKindFilter);
+
+  if (catalog.length === 0) {
+    return null;
+  }
+
+  const systemInstruction = [
+    'You map a user astrology question to the closest existing canonical question route.',
+    `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}, but output JSON only.`,
+    'Return one JSON object and nothing else.',
+    'Allowed keys: canonicalQuestionId, confidence, reason.',
+    'canonicalQuestionId must be one of the provided route ids, or null if none fits well.',
+    'confidence must be a number between 0 and 1.',
+    'Prefer the closest semantic match even when the wording is different.',
+    'Only return null when the question is truly outside the supported western registry.'
+  ].join('\n');
+
+  const prompt = [
+    `User question: ${String(userText || '').trim()}`,
+    `Detected route kind: ${route?.kind || 'unknown'}`,
+    'Canonical routes:',
+    JSON.stringify(catalog),
+    '',
+    'Return JSON now.'
+  ].join('\n');
+
+  let parsed = null;
+
+  try {
+    parsed = extractJsonObject(await generatePlainText({
+      systemInstruction,
+      userText: prompt,
+      history: [],
+      model: getFastPathModelName()
+    }));
+  } catch (error) {
+    info('canonical route ai match failed', {
+      routeKind: route?.kind || null,
+      error: error?.message || String(error)
+    });
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+
+  const confidence = Number(parsed.confidence || 0);
+  const selected = getWesternCanonicalRouteById(parsed.canonicalQuestionId);
+
+  if (!selected || !Number.isFinite(confidence) || confidence < 0.62) {
+    return null;
+  }
+
+  return {
+    ...selected,
+    score: confidence,
+    aiMatched: true,
+    aiReason: parsed.reason ? String(parsed.reason) : null
+  };
+}
+
+function buildUnsupportedAstrologyQuestionResponse(locale, route, suggestions = []) {
+  if (locale === 'fr') {
+    return 'Je ne suis pas encore capable de répondre à cette question pour le moment.';
+  }
+
+  return 'I am not able to answer that question yet.';
+}
+
+function suggestCanonicalQuestions(userText, route, limit = 3) {
+  const routeKindFilter = route?.kind === 'astrology_transits' || route?.kind === 'astrology_natal' || route?.kind === 'astrology_synastry' || route?.kind === 'astrology_relocation'
+    ? route.kind
+    : null;
+  const candidates = listWesternCanonicalRoutes(routeKindFilter ? { routeKind: routeKindFilter } : {});
+  const normalizedQuestion = String(userText || '').toLowerCase();
+
+  return candidates
+    .map((candidate) => {
+      const score = candidate.aliases.reduce((best, alias) => {
+        const aliasValue = String(alias || '').toLowerCase();
+        if (!aliasValue) {
+          return best;
+        }
+
+        if (normalizedQuestion === aliasValue) {
+          return Math.max(best, 1);
+        }
+
+        if (normalizedQuestion.includes(aliasValue) || aliasValue.includes(normalizedQuestion)) {
+          return Math.max(best, 0.85);
+        }
+
+        const aliasTokens = aliasValue.split(/\s+/).filter(Boolean);
+        const overlap = aliasTokens.filter((token) => normalizedQuestion.includes(token)).length;
+        return Math.max(best, overlap / Math.max(aliasTokens.length, 1));
+      }, 0);
+
+      return { ...candidate, score };
+    })
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
+}
+
 function buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAvailability) {
   if (!commonRoute || !subjectProfile?.profileId) {
     return null;
@@ -490,6 +610,727 @@ function buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAv
     limit: includesTransit ? 5 : 4,
     reason: `Matched common question route ${commonRoute.id}`,
     answerStyle: commonRoute.answerStyle
+  };
+}
+
+function cloneValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function getCurrentLocalDateParts(timezone = 'UTC') {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(new Date());
+  const year = Number(parts.find((part) => part.type === 'year')?.value);
+  const month = Number(parts.find((part) => part.type === 'month')?.value);
+  const day = Number(parts.find((part) => part.type === 'day')?.value);
+
+  return { year, month, day };
+}
+
+function getDateStringInTimezone(timezone = 'UTC') {
+  const { year, month, day } = getCurrentLocalDateParts(timezone);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function buildFlatNatalRequestFromProfile(profile) {
+  if (!profile?.natalRequestPayload) {
+    return null;
+  }
+
+  return cloneValue(profile.natalRequestPayload);
+}
+
+function buildNestedNatalRequestFromProfile(profile) {
+  const natal = profile?.natalRequestPayload;
+  if (!natal) {
+    return null;
+  }
+
+  const datetime = profile?.rawNatalPayload?.subject?.datetime
+    || [
+      natal.year,
+      String(natal.month || '').padStart(2, '0'),
+      String(natal.day || '').padStart(2, '0')
+    ].filter(Boolean).join('-');
+
+  return {
+    name: profile.profileName || 'User',
+    datetime,
+    time_known: natal.time_known !== false,
+    location: {
+      city: natal.city,
+      lat: natal.lat ?? null,
+      lng: natal.lng ?? null,
+      tz_str: natal.tz_str || profile.timezone || 'AUTO'
+    }
+  };
+}
+
+const WESTERN_PLANETS = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'chiron'];
+const PLANET_SYNONYMS = {
+  sun: 'sun',
+  soleil: 'sun',
+  sonne: 'sun',
+  sol: 'sun',
+  moon: 'moon',
+  lune: 'moon',
+  mond: 'moon',
+  luna: 'moon',
+  mercury: 'mercury',
+  mercure: 'mercury',
+  merkur: 'mercury',
+  mercurio: 'mercury',
+  venus: 'venus',
+  mars: 'mars',
+  jupiter: 'jupiter',
+  saturn: 'saturn',
+  saturne: 'saturn',
+  saturno: 'saturn',
+  uranus: 'uranus',
+  urano: 'uranus',
+  neptune: 'neptune',
+  neptuno: 'neptune',
+  pluto: 'pluto',
+  pluton: 'pluto',
+  chiron: 'chiron',
+  quiron: 'chiron'
+};
+const NATAL_POINT_SYNONYMS = {
+  ascendant: 'ascendant',
+  ascendance: 'ascendant',
+  rising: 'ascendant',
+  asc: 'ascendant',
+  ascendante: 'ascendant',
+  descendant: 'descendant',
+  desc: 'descendant',
+  midheaven: 'midheaven',
+  ciel: 'midheaven',
+  mc: 'midheaven',
+  ic: 'ic',
+  sun: 'sun',
+  soleil: 'sun',
+  moon: 'moon',
+  lune: 'moon',
+  mercury: 'mercury',
+  mercure: 'mercury',
+  venus: 'venus',
+  mars: 'mars',
+  jupiter: 'jupiter',
+  saturn: 'saturn',
+  saturne: 'saturn',
+  uranus: 'uranus',
+  neptune: 'neptune',
+  pluto: 'pluto',
+  pluton: 'pluto',
+  chiron: 'chiron'
+};
+const ZODIAC_SIGNS = ['aries', 'taurus', 'gemini', 'cancer', 'leo', 'virgo', 'libra', 'scorpio', 'sagittarius', 'capricorn', 'aquarius', 'pisces'];
+const MONTH_NAME_MAP = {
+  january: 1, janvier: 1, januar: 1, enero: 1,
+  february: 2, fevrier: 2, février: 2, februar: 2, febrero: 2,
+  march: 3, mars: 3, marz: 3, märz: 3, marzo: 3,
+  april: 4, avril: 4, abril: 4,
+  may: 5, mai: 5, mayo: 5,
+  june: 6, juin: 6, junio: 6, juni: 6,
+  july: 7, juillet: 7, julio: 7, juli: 7,
+  august: 8, aout: 8, août: 8, agosto: 8,
+  september: 9, septembre: 9, septiembre: 9,
+  october: 10, octobre: 10, octubre: 10, oktober: 10,
+  november: 11, novembre: 11, noviembre: 11,
+  december: 12, decembre: 12, décembre: 12, diciembre: 12, dezember: 12
+};
+
+function parsePlanetFromQuestion(text) {
+  const value = String(text || '').toLowerCase();
+  for (const [needle, planet] of Object.entries(PLANET_SYNONYMS)) {
+    if (new RegExp(`\\b${needle}\\b`, 'i').test(value)) {
+      return planet;
+    }
+  }
+
+  return WESTERN_PLANETS.find((planet) => new RegExp(`\\b${planet}\\b`, 'i').test(value)) || null;
+}
+
+function parseTransitPlanetFromQuestion(text) {
+  const value = String(text || '').toLowerCase();
+  const targetedPatterns = [
+    /\b(?:transit|transiting|transits|transit de|transits de|transits exacts de)\s+([a-zà-ÿ]+)\b/i,
+    /\b([a-zà-ÿ]+)\s+transits?\b/i
+  ];
+
+  for (const pattern of targetedPatterns) {
+    const match = value.match(pattern);
+    if (match?.[1]) {
+      const mapped = PLANET_SYNONYMS[String(match[1]).toLowerCase()];
+      if (mapped) {
+        return mapped;
+      }
+    }
+  }
+
+  const matches = Array.from(value.matchAll(/\b([a-zà-ÿ]+)\b/ig))
+    .map((match) => PLANET_SYNONYMS[String(match[1]).toLowerCase()])
+    .filter(Boolean);
+
+  return matches[0] || null;
+}
+
+function parseNatalPointFromQuestion(text) {
+  const value = String(text || '').toLowerCase();
+
+  for (const [needle, point] of Object.entries(NATAL_POINT_SYNONYMS)) {
+    if (new RegExp(`\\b${needle}\\b`, 'i').test(value)) {
+      return point;
+    }
+  }
+
+  return null;
+}
+
+function parseNatalPointFromTransitSearchQuestion(text) {
+  const value = String(text || '').toLowerCase();
+  const targetedPatterns = [
+    /\b(?:to|against|vers|sur|à)\s+my\s+([a-z]+)/i,
+    /\b(?:to|against|vers|sur|à)\s+(ascendant|rising|asc|descendant|desc|midheaven|mc|ic|sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron)\b/i,
+    /\bmy\s+(ascendant|rising|asc|descendant|desc|midheaven|mc|ic|sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron)\b/i
+  ];
+
+  for (const pattern of targetedPatterns) {
+    const match = value.match(pattern);
+    if (match?.[1]) {
+      return NATAL_POINT_SYNONYMS[String(match[1]).toLowerCase()] || null;
+    }
+  }
+
+  return parseNatalPointFromQuestion(value);
+}
+
+function parseFocusFromQuestion(text) {
+  const value = String(text || '').toLowerCase();
+  const pairs = [
+    ['career', /\bcareer\b|\bwork\b|\bprofession\b|\bcarri[èe]re\b/i],
+    ['love', /\blove\b|\bromance\b|\bamour\b/i],
+    ['home', /\bhome\b|\bfamily\b|\bfoyer\b|\bfamille\b/i],
+    ['wellbeing', /\bwellbeing\b|\bwell-being\b|\bsant[ée]\b|\bbien[- ]?[êe]tre\b/i],
+    ['creativity', /\bcreativity\b|\bcreative\b|\bcr[ée]ativit[ée]\b/i],
+    ['spiritual growth', /\bspiritual\b|\bspirituel\b/i]
+  ];
+
+  const match = pairs.find(([, pattern]) => pattern.test(value));
+  return match ? match[0] : null;
+}
+
+function parseYearFromQuestion(text) {
+  const match = String(text || '').match(/\b(20\d{2})\b/);
+  return match ? Number(match[1]) : null;
+}
+
+function parseMonthFromQuestion(text, timezone = 'UTC') {
+  const value = String(text || '').toLowerCase();
+  for (const [monthName, monthNumber] of Object.entries(MONTH_NAME_MAP)) {
+    if (new RegExp(`\\b${monthName}\\b`, 'i').test(value)) {
+      const parsedYear = parseYearFromQuestion(value) || getCurrentLocalDateParts(timezone).year;
+      return { year: parsedYear, month: monthNumber };
+    }
+  }
+
+  return null;
+}
+
+function buildMonthDateRange(monthInfo) {
+  if (!monthInfo?.year || !monthInfo?.month) {
+    return null;
+  }
+
+  const lastDay = new Date(Date.UTC(monthInfo.year, monthInfo.month, 0)).getUTCDate();
+  return {
+    start: `${monthInfo.year}-${String(monthInfo.month).padStart(2, '0')}-01`,
+    end: `${monthInfo.year}-${String(monthInfo.month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  };
+}
+
+function buildCurrentYearRange(timezone = 'UTC', yearOverride = null) {
+  const year = yearOverride || getCurrentLocalDateParts(timezone).year;
+  return {
+    start: `${year}-01-01`,
+    end: `${year}-12-31`
+  };
+}
+
+function parseSignFromQuestion(text) {
+  const value = String(text || '').toLowerCase();
+  return ZODIAC_SIGNS.find((sign) => new RegExp(`\\b${sign}\\b`, 'i').test(value)) || null;
+}
+
+async function parseCityFromQuestion(text) {
+  const value = String(text || '').trim();
+  const patterns = [
+    /\b(?:check|compare|review|analyse|analyze|test)\s+([A-Za-zÀ-ÿ' -]{2,}?)(?:\s+for\s+me)?$/i,
+    /\b(?:check|compare|living in|live in|move to|relocate to)\s+([A-Za-zÀ-ÿ' -]{2,})$/i,
+    /\b(?:à|a|au|aux|en)\s+([A-Za-zÀ-ÿ' -]{2,})$/i,
+    /\b(?:tokyo|paris|london|new york|berlin|madrid|barcelona|rome|lisbon|montreal|singapore)\b/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    const cityQuery = match ? (match[1] || match[0]) : null;
+    if (!cityQuery) {
+      continue;
+    }
+    return {
+      name: cityQuery.trim()
+    };
+  }
+
+  return null;
+}
+
+function buildCanonicalMissingArgsResponse(locale, route, missing) {
+  const first = Array.isArray(missing) ? missing[0] : missing;
+
+  const fr = {
+    focus: 'Je peux répondre à cette question, mais il me faut d’abord votre objectif principal: carrière, amour, foyer, bien-être, créativité ou croissance spirituelle.',
+    city: 'Je peux répondre à cette question, mais il me faut d’abord une ville précise.',
+    transitPlanet: 'Je peux répondre à cette question, mais il me faut d’abord la planète en transit visée.',
+    natalPoint: 'Je peux répondre à cette question, mais il me faut d’abord le point natal visé.',
+    year: 'Je peux répondre à cette question, mais il me faut d’abord une année précise.',
+    body: 'Je peux répondre à cette question, mais il me faut d’abord la planète du retour concerné.',
+    sign: 'Je peux répondre à cette question, mais il me faut d’abord le signe concerné.',
+    targetDate: 'Je peux répondre à cette question, mais il me faut d’abord une date cible.',
+    range: 'Je peux répondre à cette question, mais il me faut d’abord une période de recherche.',
+    secondaryProfile: 'Je peux répondre à cette question, mais il me faut d’abord le second profil sauvegardé à comparer.'
+  };
+
+  const en = {
+    focus: 'I can answer that question, but I first need your main goal: career, love, home, wellbeing, creativity, or spiritual growth.',
+    city: 'I can answer that question, but I first need a specific city.',
+    transitPlanet: 'I can answer that question, but I first need the transit planet.',
+    natalPoint: 'I can answer that question, but I first need the natal point.',
+    year: 'I can answer that question, but I first need a specific year.',
+    body: 'I can answer that question, but I first need the return planet.',
+    sign: 'I can answer that question, but I first need the sign.',
+    targetDate: 'I can answer that question, but I first need a target date.',
+    range: 'I can answer that question, but I first need a search period.',
+    secondaryProfile: 'I can answer that question, but I first need the second saved profile to compare.'
+  };
+
+  return (locale === 'fr' ? fr[first] : en[first]) || (locale === 'fr'
+    ? 'Je peux répondre à cette question, mais il me manque un paramètre nécessaire.'
+    : 'I can answer that question, but I am missing a required parameter.');
+}
+
+function buildCanonicalToolPrompt(route, userText, subjectProfile, result, locale) {
+  const systemInstruction = [
+    'You are a concise professional astrologer.',
+    `Always answer in ${LOCALE_INSTRUCTION[locale] || 'English'}.`,
+    'Answer only from the grounded FreeAstro result provided.',
+    'Do not invent facts, dates, placements, or meanings not present in the result.',
+    'Keep the answer concise and directly tied to the user question.'
+  ].join('\n');
+
+  const toolPayload = JSON.stringify(result?.structuredContent || result || {}, null, 2).slice(0, 12000);
+  const userPrompt = [
+    `Question: ${String(userText || '').trim()}`,
+    `Canonical route: ${route.id}`,
+    `Profile: ${subjectProfile?.profileName || 'Chart User'}`,
+    'Grounded result:',
+    toolPayload,
+    '',
+    'Write the final answer now.'
+  ].join('\n');
+
+  return { systemInstruction, userPrompt };
+}
+
+async function presentCanonicalToolResult(locale, route, userText, subjectProfile, toolCallResult, responseMode) {
+  const toolResults = [{
+    name: route.toolTarget,
+    result: toolCallResult
+  }];
+
+  if (responseMode === 'raw') {
+    return buildRawToolLoopAnswer(locale, subjectProfile, toolResults);
+  }
+
+  const { systemInstruction, userPrompt } = buildCanonicalToolPrompt(route, userText, subjectProfile, toolCallResult, locale);
+
+  try {
+    const text = await generatePlainText({
+      systemInstruction,
+      userText: userPrompt,
+      history: [],
+      model: getFastPathModelName()
+    });
+    return normalizeAssistantText(text);
+  } catch (error) {
+    info('canonical tool interpretation failed', {
+      canonicalRouteId: route.id,
+      toolTarget: route.toolTarget,
+      error: error?.message || String(error)
+    });
+    return buildRawToolLoopAnswer(locale, subjectProfile, toolResults);
+  }
+}
+
+async function buildCanonicalToolExecution(identity, route, userText, subjectProfile, secondaryProfile, locale) {
+  const flatNatal = buildFlatNatalRequestFromProfile(subjectProfile);
+  const nestedNatal = buildNestedNatalRequestFromProfile(subjectProfile);
+  const timezone = subjectProfile?.timezone || flatNatal?.tz_str || 'UTC';
+  const currentMonthWindow = toolCache.getCurrentMonthWindow(timezone);
+  const currentDate = getDateStringInTimezone(timezone);
+
+  switch (route.id) {
+    case 'natal_overview':
+    case 'relationship_patterns':
+    case 'career_signature':
+    case 'money_pattern':
+      return flatNatal ? {
+        toolName: 'v1_western_natal_insights',
+        requestArgs: flatNatal,
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      } : { missing: ['profile'] };
+    case 'rising_sign':
+    case 'sun_sign':
+    case 'moon_sign':
+    case 'midheaven_sign':
+      return flatNatal ? {
+        toolName: route.toolTarget,
+        requestArgs: flatNatal,
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      } : { missing: ['profile'] };
+    case 'current_sky_today':
+    case 'today_transits_me':
+    case 'month_ahead_transits':
+      return flatNatal && currentMonthWindow ? {
+        toolName: 'v1_western_transits_timeline',
+        requestArgs: {
+          natal: flatNatal,
+          range_start: currentMonthWindow.rangeStart,
+          range_end: currentMonthWindow.rangeEnd,
+          mode: 'month',
+          include_houses: subjectProfile.timeKnown !== false
+        },
+        cacheMonth: currentMonthWindow.cacheMonth,
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      } : { missing: ['profile'] };
+    case 'transit_search_exact': {
+      const transitPlanet = parseTransitPlanetFromQuestion(userText);
+      const natalPoint = parseNatalPointFromTransitSearchQuestion(userText);
+      const range = buildCurrentYearRange(timezone);
+      if (!transitPlanet) {
+        return { missing: ['transitPlanet'] };
+      }
+      if (!natalPoint) {
+        return { missing: ['natalPoint'] };
+      }
+      return {
+        toolName: 'v1_western_transits_search',
+        requestArgs: {
+          natal: flatNatal,
+          transit_planet: transitPlanet,
+          natal_point: natalPoint,
+          range_start: range.start,
+          range_end: range.end,
+          include_context: true
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      };
+    }
+    case 'synastry_summary':
+    case 'synastry_detailed':
+      if (!secondaryProfile) {
+        return { missing: ['secondaryProfile'] };
+      }
+      return {
+        toolName: route.toolTarget,
+        requestArgs: {
+          person_a: profiles.buildSynastryPersonPayload(subjectProfile),
+          person_b: profiles.buildSynastryPersonPayload(secondaryProfile)
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: secondaryProfile.profileId
+      };
+    case 'couples_horoscope':
+      if (!secondaryProfile) {
+        return { missing: ['secondaryProfile'] };
+      }
+      return {
+        toolName: route.toolTarget,
+        requestArgs: {
+          person_a: profiles.buildSynastryPersonPayload(subjectProfile),
+          person_b: profiles.buildSynastryPersonPayload(secondaryProfile),
+          date: currentDate,
+          tz_str: timezone
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: secondaryProfile.profileId
+      };
+    case 'relocation_recommendations': {
+      const focus = parseFocusFromQuestion(userText);
+      if (!focus) {
+        return { missing: ['focus'] };
+      }
+      return {
+        toolName: route.toolTarget,
+        requestArgs: {
+          natal: flatNatal,
+          focus,
+          limit: 5,
+          include_map_lines: true,
+          include_crossings: true,
+          include_paran_summary: true,
+          include_relocation_summary: true
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      };
+    }
+    case 'relocation_city_check': {
+      const city = await parseCityFromQuestion(userText);
+      if (!city) {
+        return { missing: ['city'] };
+      }
+      return {
+        toolName: route.toolTarget,
+        requestArgs: {
+          natal: flatNatal,
+          city: city.name,
+          country: city.country || undefined,
+          lat: city.latitude || city.lat || undefined,
+          lng: city.longitude || city.lng || undefined,
+          include_map_lines: true,
+          include_crossings: true,
+          include_paran_summary: true,
+          include_relocation_summary: true
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      };
+    }
+    case 'astrocartography_lines':
+    case 'astrocartography_parans':
+      return {
+        toolName: route.toolTarget,
+        requestArgs: {
+          natal: flatNatal
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      };
+    case 'secondary_progressions': {
+      const year = parseYearFromQuestion(userText) || getCurrentLocalDateParts(timezone).year;
+      return nestedNatal ? {
+        toolName: route.toolTarget,
+        requestArgs: {
+          natal: nestedNatal,
+          response_mode: 'full',
+          secondary_progression: {
+            target_date: `${year}-12-31`
+          }
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      } : { missing: ['targetDate'] };
+    }
+    case 'secondary_progressions_exact_aspects': {
+      const year = parseYearFromQuestion(userText) || getCurrentLocalDateParts(timezone).year;
+      const range = buildCurrentYearRange(timezone, year);
+      return nestedNatal ? {
+        toolName: route.toolTarget,
+        requestArgs: {
+          natal: nestedNatal,
+          search: {
+            from: range.start,
+            to: range.end,
+            limit: 100,
+            order: 'asc'
+          },
+          include_angles: true
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      } : { missing: ['range'] };
+    }
+    case 'annual_profections': {
+      const year = parseYearFromQuestion(userText) || getCurrentLocalDateParts(timezone).year;
+      return flatNatal ? {
+        toolName: route.toolTarget,
+        requestArgs: {
+          ...flatNatal,
+          annual_profection: { year }
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      } : { missing: ['year'] };
+    }
+    case 'solar_return': {
+      const year = parseYearFromQuestion(userText) || getCurrentLocalDateParts(timezone).year;
+      return nestedNatal ? {
+        toolName: route.toolTarget,
+        requestArgs: {
+          natal: nestedNatal,
+          solar_return: {
+            year,
+            location: cloneValue(nestedNatal.location)
+          }
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      } : { missing: ['year'] };
+    }
+    case 'planet_return': {
+      const body = parsePlanetFromQuestion(userText);
+      if (!body) {
+        return { missing: ['body'] };
+      }
+      return nestedNatal ? {
+        toolName: route.toolTarget,
+        requestArgs: {
+          natal: nestedNatal,
+          return_target: {
+            body,
+            search_start: currentDate,
+            location: cloneValue(nestedNatal.location)
+          }
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      } : { missing: ['body'] };
+    }
+    case 'ephemeris': {
+      const parsedMonth = parseMonthFromQuestion(userText, timezone);
+      const range = parsedMonth ? buildMonthDateRange(parsedMonth) : currentMonthWindow ? {
+        start: currentMonthWindow.rangeStart,
+        end: currentMonthWindow.rangeEnd
+      } : null;
+      if (!range) {
+        return { missing: ['range'] };
+      }
+      return {
+        toolName: route.toolTarget,
+        requestArgs: {
+          start: range.start,
+          end: range.end,
+          step: '1d',
+          timezone,
+          include_speed: true,
+          include_retrograde: true,
+          include_aspects: true,
+          include_minor_aspects: false
+        },
+        cacheMonth: currentMonthWindow?.cacheMonth || '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      };
+    }
+    case 'personal_horoscope':
+      return flatNatal ? {
+        toolName: route.toolTarget,
+        requestArgs: {
+          birth: {
+            year: flatNatal.year,
+            month: flatNatal.month,
+            day: flatNatal.day,
+            hour: flatNatal.hour,
+            minute: flatNatal.minute,
+            city: flatNatal.city,
+            lat: flatNatal.lat,
+            lng: flatNatal.lng,
+            tz_str: flatNatal.tz_str || timezone
+          },
+          date: currentDate,
+          timezone,
+          tz_str: timezone,
+          locale
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      } : { missing: ['profile'] };
+    case 'sign_horoscope': {
+      const sign = parseSignFromQuestion(userText);
+      if (!sign) {
+        return { missing: ['sign'] };
+      }
+      return {
+        toolName: route.toolTarget,
+        requestArgs: {
+          sign,
+          date: currentDate,
+          tz_str: timezone,
+          locale
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+async function executeCanonicalToolRoute(identity, route, userText, subjectProfile, secondaryProfile, locale, responseMode) {
+  if (!route?.toolTarget) {
+    return null;
+  }
+
+  const execution = await buildCanonicalToolExecution(identity, route, userText, subjectProfile, secondaryProfile, locale);
+  if (!execution) {
+    return null;
+  }
+
+  if (execution.missing) {
+    return {
+      text: buildCanonicalMissingArgsResponse(locale, route, execution.missing),
+      usedTools: [],
+      renderMode: 'plain'
+    };
+  }
+
+  const resolved = await toolCache.resolveCachedToolCall(identity, {
+    toolName: execution.toolName,
+    requestArgs: execution.requestArgs,
+    profile: subjectProfile,
+    primaryProfileId: execution.primaryProfileId,
+    secondaryProfileId: execution.secondaryProfileId,
+    questionText: userText,
+    cacheMonth: execution.cacheMonth || '',
+    source: 'canonical',
+    executor: (resolvedArgs) => mcpService.callToolByOriginalName(execution.toolName, resolvedArgs)
+  });
+
+  const text = await presentCanonicalToolResult(locale, route, userText, subjectProfile, resolved.result, responseMode);
+  return {
+    text,
+    renderMode: 'plain',
+    usedTools: [{
+      name: execution.toolName,
+      args: execution.requestArgs,
+      result: resolved.result
+    }]
   };
 }
 
@@ -3052,9 +3893,10 @@ async function answerConversation(identity, userText) {
   const routeSeedText = explicitFollowUp?.rewrittenQuestion || userText;
   const detectedRoute = detectConversationRoute(routeSeedText, chatState.history);
   const inheritedRoute = inheritRouteFromConversation(detectedRoute, conversationContext, userText);
-  let { route, commonRoute } = applyCommonQuestionRoute(inheritedRoute, routeSeedText);
-  const intent = route.intent;
-  const plannerQuestionText = explicitFollowUp?.rewrittenQuestion || resolveQuestionForPlanner(route, userText, chatState.history);
+  let route = inheritedRoute;
+  let commonRoute = null;
+  let canonicalRoute = null;
+  let plannerQuestionText = explicitFollowUp?.rewrittenQuestion || resolveQuestionForPlanner(route, userText, chatState.history);
   const stateKey = chatState.stateKey || `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`;
 
   if (!process.env.GEMINI_API_KEY) {
@@ -3063,6 +3905,42 @@ async function answerConversation(identity, userText) {
 
   await profiles.ensureHydrated(identity);
   const activeProfile = await profiles.getActiveProfile(identity);
+
+  if (route.kind !== 'system_meta' && route.kind !== 'profile_management' && route.kind !== 'clarification') {
+    const aiCanonicalRoute = await resolveCanonicalCommonRouteWithAi(locale, plannerQuestionText, route);
+    if (aiCanonicalRoute) {
+      canonicalRoute = aiCanonicalRoute;
+      route = {
+        ...route,
+        kind: aiCanonicalRoute.routeKind,
+        intent: detectConversationIntent(aiCanonicalRoute.intentSample || plannerQuestionText),
+        answerStyle: aiCanonicalRoute.answerStyle,
+        commonRouteId: aiCanonicalRoute.id,
+        commonRouteScore: aiCanonicalRoute.score
+      };
+      plannerQuestionText = aiCanonicalRoute.intentSample || plannerQuestionText;
+    } else {
+      const deterministicRouteMatch = matchWesternCanonicalRoute(routeSeedText);
+      if (deterministicRouteMatch) {
+        canonicalRoute = deterministicRouteMatch;
+        route = {
+          ...route,
+          kind: deterministicRouteMatch.routeKind,
+          intent: detectConversationIntent(deterministicRouteMatch.intentSample || plannerQuestionText),
+          answerStyle: deterministicRouteMatch.answerStyle,
+          commonRouteId: deterministicRouteMatch.id,
+          commonRouteScore: deterministicRouteMatch.score
+        };
+        plannerQuestionText = deterministicRouteMatch.intentSample || plannerQuestionText;
+      }
+    }
+
+    if (canonicalRoute?.commonRouteId) {
+      commonRoute = getCommonQuestionRouteById(canonicalRoute.commonRouteId);
+    }
+  }
+
+  const intent = route.intent;
 
   if (route.kind === 'system_meta') {
     const text = buildSystemMetaResponse(locale, getChatState(identity), activeProfile);
@@ -3126,8 +4004,8 @@ async function answerConversation(identity, userText) {
     };
   }
 
-  if (responseMode === 'raw' && route.kind === 'astrology_relocation' && needsRelocationInputs(userText)) {
-    const text = buildRawRelocationNeedsText(locale, subjectProfile);
+  if (!canonicalRoute) {
+    const text = buildUnsupportedAstrologyQuestionResponse(locale, route, suggestCanonicalQuestions(userText, route));
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
     setLastToolResults(identity, []);
@@ -3196,21 +4074,7 @@ async function answerConversation(identity, userText) {
     }
   }
 
-  const plannedRoute = buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAvailability)
-    || (route.kind === 'astrology_relocation'
-      ? {
-          target: 'mcp',
-          primaryProfileId: subjectProfile.profileId,
-          secondaryProfileId: null,
-          sourceKinds: [],
-          categories: [],
-          tags: [],
-          cacheMonth: null,
-          limit: 4,
-          reason: 'Relocation and astrocartography questions require MCP tools.',
-          answerStyle: 'system_answer'
-        }
-      : await planFactSearchQuery(locale, plannerQuestionText, intent, subjectProfile, factAvailability));
+  const plannedRoute = buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAvailability);
   if (plannedRoute && !plannedRoute.answerStyle) {
     plannedRoute.answerStyle = route.answerStyle;
   }
@@ -3230,47 +4094,12 @@ async function answerConversation(identity, userText) {
   if (pendingComparisonText && secondaryProfile) {
     userText = pendingComparisonText;
   }
-  let mcpDeclarations = [];
-  let mcpStatus = 'available';
-
-  try {
-    mcpDeclarations = await mcpService.getFunctionDeclarations();
-  } catch (error) {
-    mcpStatus = `unavailable (${error.message || 'connection failed'})`;
-  }
-
-  const allDeclarations = route.kind === 'astrology_relocation'
-    ? [...mcpDeclarations]
-    : [...localDeclarations, ...mcpDeclarations];
-  const localOnlyPreferred = shouldPreferIndexedFacts || isLocalOnlyPreferred(effectiveIntent, factAvailability);
+  const mcpStatus = 'disabled';
   const localExecutor = await createLocalToolExecutor(identity, subjectProfile, factAvailability);
-  const executionContext = {
-    activeProfile: subjectProfile,
-    synastryContext
-  };
 
   const executeFunction = async (name, args) => {
     if (name === 'search_cached_profile_facts' || name.startsWith('get_cached_') || name === 'get_profile_completeness') {
       return localExecutor(name, args);
-    }
-
-    if (mcpService.isMcpTool(name)) {
-      const originalToolName = mcpService.resolveOriginalToolName(name);
-      const requestArgs = buildResolvedToolArgs(originalToolName, args, executionContext);
-      const cacheMonth = toolCache.inferCacheMonth(originalToolName, requestArgs, subjectProfile.timezone || 'UTC');
-      const result = await toolCache.resolveCachedToolCall(identity, {
-        toolName: originalToolName,
-        requestArgs,
-        profile: subjectProfile,
-        primaryProfileId: subjectProfile.profileId,
-        secondaryProfileId: secondaryProfile?.profileId || null,
-        questionText: effectiveUserQuestion,
-        cacheMonth: route.kind === 'astrology_transits' ? cacheMonth : null,
-        source: 'runtime',
-        executor: (resolvedArgs) => mcpService.callToolByOriginalName(originalToolName, resolvedArgs)
-      });
-
-      return result.result;
     }
 
     throw new Error(`Unknown tool call: ${name}`);
@@ -3336,71 +4165,57 @@ async function answerConversation(identity, userText) {
     };
   }
 
-  let result;
+  if (canonicalRoute?.toolTarget) {
+    const canonicalToolResult = await executeCanonicalToolRoute(
+      identity,
+      canonicalRoute,
+      effectiveUserQuestion,
+      subjectProfile,
+      secondaryProfile,
+      locale,
+      responseMode
+    );
 
-  if (localOnlyPreferred) {
-    const localOnlyInstruction = [
-      systemInstruction,
-      '',
-      'For this pass, do not call any FreeAstro MCP tools.',
-      'Answer only from Supabase-backed indexed facts and cached local tools.',
-      'Only if those local sources are insufficient will the runtime allow a second pass with MCP.'
-    ].join('\n');
+    if (canonicalToolResult) {
+      pushHistory(identity, 'user', userText);
+      const finalText = responseMode === 'raw'
+        ? validateRawAnswer(canonicalToolResult.text, locale)
+        : validateFinalAnswer(canonicalToolResult.text, route, locale);
+      pushHistory(identity, 'model', finalText);
+      setLastToolResults(identity, canonicalToolResult.usedTools || []);
+      updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
 
-    const localOnlyStartedAt = performance.now();
-    const localOnlyResult = await runFunctionCallingLoop({
-      systemInstruction: localOnlyInstruction,
-      history: chatState.history,
-      userText: effectiveUserQuestion,
-      functionDeclarations: localDeclarations,
-      executeFunction
-    });
-    const localOnlySufficient = localResultLooksSufficient(localOnlyResult, effectiveIntent);
-
-    info('conversation local-only pass complete', {
-      stateKey,
-      intent: route.kind,
-      durationMs: Math.round(performance.now() - localOnlyStartedAt),
-      toolCalls: Array.isArray(localOnlyResult.toolResults) ? localOnlyResult.toolResults.length : 0,
-      sufficient: localOnlySufficient
-    });
-
-    if (localOnlySufficient) {
-      result = localOnlyResult;
-    } else {
-      const fallbackStartedAt = performance.now();
-      result = await runFunctionCallingLoop({
-        systemInstruction,
-        history: chatState.history,
-        userText: effectiveUserQuestion,
-        functionDeclarations: allDeclarations,
-        executeFunction
-      });
-
-      info('conversation mcp fallback pass complete', {
-        stateKey,
-        intent: route.kind,
-        durationMs: Math.round(performance.now() - fallbackStartedAt),
-        toolCalls: Array.isArray(result.toolResults) ? result.toolResults.length : 0
-      });
+      return {
+        text: finalText,
+        renderMode: canonicalToolResult.renderMode || 'plain',
+        usedTools: canonicalToolResult.usedTools || [],
+        intent: route.kind
+      };
     }
-  } else {
-    const fallbackStartedAt = performance.now();
-    result = await runFunctionCallingLoop({
-      systemInstruction,
-      history: chatState.history,
-      userText: effectiveUserQuestion,
-      functionDeclarations: allDeclarations,
-      executeFunction
-    });
-
-    info('conversation mcp fallback pass complete', {
-      stateKey,
-      intent: route.kind,
-      durationMs: Math.round(performance.now() - fallbackStartedAt),
-      toolCalls: Array.isArray(result.toolResults) ? result.toolResults.length : 0
-    });
   }
+
+  const localPassInstruction = [
+    systemInstruction,
+    '',
+    'Use only Supabase-backed indexed facts and cached local tools.',
+    'Do not attempt any MCP or external tool path.'
+  ].join('\n');
+  const localPassStartedAt = performance.now();
+  let result = await runFunctionCallingLoop({
+    systemInstruction: localPassInstruction,
+    history: chatState.history,
+    userText: effectiveUserQuestion,
+    functionDeclarations: localDeclarations,
+    executeFunction
+  });
+
+  info('conversation local tool pass complete', {
+    stateKey,
+    intent: route.kind,
+    durationMs: Math.round(performance.now() - localPassStartedAt),
+    toolCalls: Array.isArray(result.toolResults) ? result.toolResults.length : 0,
+    sufficient: localResultLooksSufficient(result, effectiveIntent)
+  });
 
   if (responseMode === 'raw') {
     result = {

@@ -11,6 +11,7 @@ const TYPO_REPLACEMENTS = new Map([
   ['curent', 'current'],
   ['todai', 'today'],
   ['todays', 'today'],
+  ['months', 'month'],
   ['sky', 'sky'],
   ['relashionship', 'relationship'],
   ['relashonship', 'relationship'],
@@ -118,8 +119,21 @@ const COMMON_QUESTION_ROUTES = [
     categories: ['transit_theme', 'timing_window'],
     tags: ['current', 'month', 'transit'],
     localized: {
-      en: ['tell me about my transits this month', 'what is the theme of my month astrologically'],
-      fr: ['parle moi de mes transits de ce mois', 'quel est le theme astrologique de mon mois'],
+      en: [
+        'tell me about my transits this month',
+        'what is the theme of my month astrologically',
+        'what are this months transits',
+        'what are the transits for this month',
+        'what are my transits for this month',
+        'transits this month'
+      ],
+      fr: [
+        'parle moi de mes transits de ce mois',
+        'quel est le theme astrologique de mon mois',
+        'quels sont les transits pour ce mois',
+        'quels sont mes transits pour ce mois',
+        'transits de ce mois'
+      ],
       de: ['erzahl mir von meinen transit en diesen monat', 'was ist mein astrologisches monatsthema'],
       es: ['hablame de mis transitos de este mes', 'cual es el tema astrologico de mi mes']
     }
@@ -251,10 +265,10 @@ const COMMON_QUESTION_ROUTES = [
     answerStyle: 'natal_theme',
     sourceKinds: [factIndex.NATAL_SOURCE_KIND],
     categories: ['identity', 'life_path', 'chart_pattern'],
-    tags: ['natal', 'overview'],
+    tags: [],
     localized: {
       en: ['tell me about my natal chart and its specificities', 'what are the main themes of my chart'],
-      fr: ['parle moi de mon theme natal et ses specificites', 'quelles sont les grandes lignes de mon theme'],
+      fr: ['parle moi de mon theme natal et ses specificites', 'quelles sont les grandes lignes de mon theme', 'parle de mon theme astro', 'parle moi de mon theme astro'],
       de: ['erzahl mir von meinem geburtshoroskop und seinen besonderheiten', 'was sind die hauptthemen meines horoskops'],
       es: ['hablame de mi carta natal y sus particularidades', 'cuales son los temas principales de mi carta']
     }
@@ -1003,8 +1017,27 @@ function matchCommonQuestionRoute(text) {
   return bestMatch;
 }
 
+function getCommonQuestionRouteById(routeId) {
+  const normalizedId = String(routeId || '').trim();
+  if (!normalizedId) {
+    return null;
+  }
+
+  return COMMON_QUESTION_ROUTES.find((route) => route.id === normalizedId) || null;
+}
+
+function listCommonQuestionRoutes(filter = {}) {
+  const routeKind = filter.routeKind ? String(filter.routeKind) : null;
+
+  return COMMON_QUESTION_ROUTES.filter((route) => (
+    !routeKind || route.routeKind === routeKind
+  ));
+}
+
 module.exports = {
   COMMON_QUESTION_ROUTES,
+  getCommonQuestionRouteById,
+  listCommonQuestionRoutes,
   matchCommonQuestionRoute,
   normalizeQuestion
 };

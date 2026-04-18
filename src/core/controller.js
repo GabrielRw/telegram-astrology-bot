@@ -243,10 +243,13 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
     await billing.recordAnsweredQuestion(event);
     await maybeSendAstroMap(event, channelApi, userText, result);
   } catch (error) {
+    const errorMessage = error?.name === 'FreeAstroError'
+      ? translateUserError(getLocale(event), error)
+      : getGeminiErrorMessage(error, getLocale(event));
     await channelApi.editText(
       event,
       loadingRef,
-      `${t(event, 'errors.conversationUnavailable')}\n${getGeminiErrorMessage(error, getLocale(event))}`
+      `${t(event, 'errors.conversationUnavailable')}\n${errorMessage}`
     );
   }
 
