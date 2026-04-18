@@ -1,13 +1,11 @@
 const { performance } = require('node:perf_hooks');
 const { detectConversationIntent } = require('../config/conversationIntents');
 const {
-  getCommonQuestionRouteById,
-  matchCommonQuestionRoute
+  getCommonQuestionRouteById
 } = require('../config/commonQuestionRoutes');
 const {
   getWesternCanonicalRouteById,
-  listWesternCanonicalRoutes,
-  matchWesternCanonicalRoute
+  listWesternCanonicalRoutes
 } = require('../config/westernCanonicalRoutes');
 const factIndex = require('./factIndex');
 const mcpService = require('./freeastroMcp');
@@ -450,30 +448,6 @@ function buildEffectiveUserQuestion(route, userText, plannerQuestionText, subjec
   return `${plannerQuestionText}\n\nAnswer this for ${profileName}.`;
 }
 
-function applyCommonQuestionRoute(route, userText) {
-  if (!route || ['system_meta', 'clarification', 'profile_management', 'astrology_synastry', 'astrology_relocation'].includes(route.kind)) {
-    return { route, commonRoute: null };
-  }
-
-  const commonRoute = matchCommonQuestionRoute(userText);
-  if (!commonRoute) {
-    return { route, commonRoute: null };
-  }
-
-  const mappedIntent = detectConversationIntent(commonRoute.intentSample || userText);
-  return {
-    route: {
-      ...route,
-      kind: commonRoute.routeKind,
-      intent: mappedIntent,
-      answerStyle: commonRoute.answerStyle,
-      commonRouteId: commonRoute.id,
-      commonRouteScore: commonRoute.score
-    },
-    commonRoute
-  };
-}
-
 function buildCanonicalRouteCatalog(routeKind = null) {
   return listWesternCanonicalRoutes(routeKind ? { routeKind } : {})
     .map((route) => ({
@@ -528,7 +502,10 @@ async function resolveCanonicalCommonRouteWithAi(locale, userText, route) {
       routeKind: route?.kind || null,
       error: error?.message || String(error)
     });
-    return null;
+    const nextError = new Error('Canonical route AI matching is unavailable.');
+    nextError.code = 'CANONICAL_ROUTE_AI_UNAVAILABLE';
+    nextError.cause = error;
+    throw nextError;
   }
 
   if (!parsed || typeof parsed !== 'object') {
@@ -558,26 +535,6 @@ function buildUnsupportedAstrologyQuestionResponse(locale, route, suggestions = 
   return 'I am not able to answer that question yet.';
 }
 
-function preferCanonicalRoute(aiRoute, deterministicRoute) {
-  if (!aiRoute) {
-    return deterministicRoute || null;
-  }
-
-  if (!deterministicRoute) {
-    return aiRoute;
-  }
-
-  if (deterministicRoute.responseShape === 'full_listing' && deterministicRoute.score >= 0.78) {
-    return deterministicRoute;
-  }
-
-  if ((deterministicRoute.score || 0) >= Math.max(aiRoute.score || 0, 0.9)) {
-    return deterministicRoute;
-  }
-
-  return aiRoute;
-}
-
 function applyCanonicalRoute(route, canonicalRoute, plannerQuestionText) {
   if (!canonicalRoute) {
     return route;
@@ -591,6 +548,12 @@ function applyCanonicalRoute(route, canonicalRoute, plannerQuestionText) {
     commonRouteId: canonicalRoute.id,
     commonRouteScore: canonicalRoute.score
   };
+}
+
+function buildCanonicalMatcherUnavailableResponse(locale) {
+  return locale === 'fr'
+    ? 'Le moteur de routage IA est indisponible pour le moment. Réessayez plus tard.'
+    : 'The AI routing engine is unavailable right now. Please try again later.';
 }
 
 function suggestCanonicalQuestions(userText, route, limit = 3) {
@@ -3976,29 +3939,30 @@ async function answerConversation(identity, userText) {
   const activeProfile = await profiles.getActiveProfile(identity);
 
   if (route.kind !== 'system_meta' && route.kind !== 'profile_management' && route.kind !== 'clarification') {
-    const deterministicRouteMatch = matchWesternCanonicalRoute(routeSeedText);
-    const aiCanonicalRoute = await resolveCanonicalCommonRouteWithAi(locale, plannerQuestionText, route);
-    canonicalRoute = preferCanonicalRoute(aiCanonicalRoute, deterministicRouteMatch);
+    try {
+      canonicalRoute = await resolveCanonicalCommonRouteWithAi(locale, plannerQuestionText, route);
+    } catch (error) {
+      if (error?.code === 'CANONICAL_ROUTE_AI_UNAVAILABLE') {
+        const text = buildCanonicalMatcherUnavailableResponse(locale);
+        pushHistory(identity, 'user', userText);
+        pushHistory(identity, 'model', text);
+        setLastToolResults(identity, []);
+        updateConversationState(identity, route, activeProfile, null, plannerQuestionText);
+        return {
+          text,
+          usedTools: [],
+          intent: route.kind
+        };
+      }
+      throw error;
+    }
 
     if (canonicalRoute) {
       route = applyCanonicalRoute(route, canonicalRoute, plannerQuestionText);
       plannerQuestionText = canonicalRoute.intentSample || plannerQuestionText;
-    }
-
-    if (canonicalRoute?.commonRouteId) {
-      commonRoute = getCommonQuestionRouteById(canonicalRoute.commonRouteId);
-    }
-
-    if (!commonRoute) {
-      commonRoute = matchCommonQuestionRoute(routeSeedText) || matchCommonQuestionRoute(plannerQuestionText);
-      if (commonRoute) {
-        route = {
-          ...route,
-          kind: commonRoute.routeKind,
-          answerStyle: commonRoute.answerStyle,
-          commonRouteId: commonRoute.id
-        };
-      }
+      commonRoute = canonicalRoute?.commonRouteId
+        ? getCommonQuestionRouteById(canonicalRoute.commonRouteId)
+        : null;
     }
   }
 
@@ -4064,24 +4028,6 @@ async function answerConversation(identity, userText) {
       usedTools: [],
       intent: route.kind
     };
-  }
-
-  if (!canonicalRoute && !commonRoute) {
-    const legacyFullListingKind = detectFullRawListingRequest(routeSeedText);
-    const legacyCanonicalRoute = legacyFullListingKind === 'all_aspects'
-      ? getWesternCanonicalRouteById('all_natal_aspects')
-      : legacyFullListingKind === 'all_monthly_transits'
-        ? getWesternCanonicalRouteById('all_monthly_transits')
-        : null;
-
-    if (legacyCanonicalRoute) {
-      canonicalRoute = legacyCanonicalRoute;
-      route = applyCanonicalRoute(route, canonicalRoute, plannerQuestionText);
-      plannerQuestionText = canonicalRoute.intentSample || plannerQuestionText;
-      commonRoute = canonicalRoute?.commonRouteId
-        ? getCommonQuestionRouteById(canonicalRoute.commonRouteId)
-        : null;
-    }
   }
 
   if (!canonicalRoute && !commonRoute) {
