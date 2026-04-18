@@ -454,8 +454,12 @@ function buildCanonicalRouteCatalog(routeKind = null) {
     .map((route) => ({
       id: route.id,
       routeKind: route.routeKind,
+      family: route.family,
+      scope: route.scope,
       answerStyle: route.answerStyle,
-      intentSample: route.intentSample
+      intentSample: route.intentSample,
+      matchHint: route.matchHint || null,
+      aliases: Array.isArray(route.aliases) ? route.aliases.slice(0, 8) : []
     }));
 }
 
@@ -597,6 +601,7 @@ function buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAv
   }
 
   const includesTransit = commonRoute.sourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND);
+  const isMonthlyTransitOverview = commonRoute.id === 'month_ahead_transits';
 
   return {
     target: 'indexed_facts',
@@ -606,9 +611,10 @@ function buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAv
     categories: commonRoute.categories || [],
     tags: commonRoute.tags || [],
     cacheMonth: includesTransit ? (factAvailability?.indexedTransitCacheMonth || null) : null,
-    limit: includesTransit ? 5 : 4,
+    limit: isMonthlyTransitOverview ? 20 : (includesTransit ? 8 : 4),
     reason: `Matched common question route ${commonRoute.id}`,
-    answerStyle: commonRoute.answerStyle
+    answerStyle: commonRoute.answerStyle,
+    commonRouteId: commonRoute.id
   };
 }
 
@@ -743,6 +749,23 @@ const MONTH_NAME_MAP = {
   november: 11, novembre: 11, noviembre: 11,
   december: 12, decembre: 12, décembre: 12, diciembre: 12, dezember: 12
 };
+const ASPECT_TYPE_SYNONYMS = {
+  conjunction: 'conjunction',
+  conjonction: 'conjunction',
+  conjunct: 'conjunction',
+  square: 'square',
+  squares: 'square',
+  carre: 'square',
+  carré: 'square',
+  carres: 'square',
+  carrés: 'square',
+  opposition: 'opposition',
+  oppose: 'opposition',
+  oppositions: 'opposition',
+  trine: 'trine',
+  trigone: 'trine',
+  sextile: 'sextile'
+};
 
 function parsePlanetFromQuestion(text) {
   const value = String(text || '').toLowerCase();
@@ -757,6 +780,20 @@ function parsePlanetFromQuestion(text) {
 
 function parseTransitPlanetFromQuestion(text) {
   const value = String(text || '').toLowerCase();
+  const pairPatterns = [
+    /\bbetween\s+my\s+([a-zà-ÿ]+)\s+and\s+([a-zà-ÿ]+)\b/i,
+    /\bentre\s+m[ao]n\s+([a-zà-ÿ]+)\s+et\s+([a-zà-ÿ]+)\b/i
+  ];
+  for (const pattern of pairPatterns) {
+    const match = value.match(pattern);
+    if (match?.[2]) {
+      const mapped = PLANET_SYNONYMS[String(match[2]).toLowerCase()];
+      if (mapped) {
+        return mapped;
+      }
+    }
+  }
+
   const targetedPatterns = [
     /\b(?:transit|transiting|transits|transit de|transits de|transits exacts de)\s+([a-zà-ÿ]+)\b/i,
     /\b([a-zà-ÿ]+)\s+transits?\b/i
@@ -794,6 +831,8 @@ function parseNatalPointFromQuestion(text) {
 function parseNatalPointFromTransitSearchQuestion(text) {
   const value = String(text || '').toLowerCase();
   const targetedPatterns = [
+    /\bbetween\s+my\s+([a-zà-ÿ]+)\s+and\s+([a-zà-ÿ]+)\b/i,
+    /\bentre\s+m[ao]n\s+([a-zà-ÿ]+)\s+et\s+([a-zà-ÿ]+)\b/i,
     /\b(?:to|against|vers|sur|à)\s+my\s+([a-z]+)/i,
     /\b(?:to|against|vers|sur|à)\s+(ascendant|rising|asc|descendant|desc|midheaven|mc|ic|sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron)\b/i,
     /\bmy\s+(ascendant|rising|asc|descendant|desc|midheaven|mc|ic|sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron)\b/i
@@ -841,6 +880,19 @@ function parseMonthFromQuestion(text, timezone = 'UTC') {
   return null;
 }
 
+function parseAspectTypesFromQuestion(text) {
+  const value = String(text || '').toLowerCase();
+  const matches = [];
+
+  for (const [needle, aspectType] of Object.entries(ASPECT_TYPE_SYNONYMS)) {
+    if (new RegExp(`\\b${needle}\\b`, 'i').test(value) && !matches.includes(aspectType)) {
+      matches.push(aspectType);
+    }
+  }
+
+  return matches;
+}
+
 function buildMonthDateRange(monthInfo) {
   if (!monthInfo?.year || !monthInfo?.month) {
     return null;
@@ -859,6 +911,84 @@ function buildCurrentYearRange(timezone = 'UTC', yearOverride = null) {
     start: `${year}-01-01`,
     end: `${year}-12-31`
   };
+}
+
+function buildBirthDateStringFromProfile(profile) {
+  const natal = profile?.natalRequestPayload;
+  if (!natal?.year || !natal?.month || !natal?.day) {
+    return null;
+  }
+
+  return `${natal.year}-${String(natal.month).padStart(2, '0')}-${String(natal.day).padStart(2, '0')}`;
+}
+
+function buildTransitSearchWindow(userText, subjectProfile, timezone = 'UTC') {
+  const value = String(userText || '').toLowerCase();
+  if (/\b(depuis ma naissance|since birth|since i was born|from birth)\b/i.test(value)) {
+    const birthDate = buildBirthDateStringFromProfile(subjectProfile);
+    if (!birthDate) {
+      return null;
+    }
+
+    const currentDate = getDateStringInTimezone(timezone);
+    const birthYear = Number(String(birthDate).slice(0, 4));
+    const currentYear = getCurrentLocalDateParts(timezone).year;
+    const ageYears = Math.max(0, currentYear - birthYear);
+
+    if (ageYears <= 50) {
+      return {
+        range_start: birthDate,
+        range_end: currentDate
+      };
+    }
+
+    return {
+      age_start_years: 0,
+      age_end_years: 50
+    };
+  }
+
+  const parsedMonth = parseMonthFromQuestion(userText, timezone);
+  if (parsedMonth) {
+    const range = buildMonthDateRange(parsedMonth);
+    if (range) {
+      return {
+        range_start: range.start,
+        range_end: range.end
+      };
+    }
+  }
+
+  if (/\b(this month|ce mois|ce mois ci|this year|cette annee|cette année)\b/i.test(value)) {
+    if (/\b(this month|ce mois|ce mois ci)\b/i.test(value)) {
+      const current = toolCache.getCurrentMonthWindow(timezone);
+      if (current) {
+        return {
+          range_start: current.rangeStart,
+          range_end: current.rangeEnd
+        };
+      }
+    }
+
+    if (/\b(this year|cette annee|cette année)\b/i.test(value)) {
+      const range = buildCurrentYearRange(timezone);
+      return {
+        range_start: range.start,
+        range_end: range.end
+      };
+    }
+  }
+
+  const explicitYear = parseYearFromQuestion(userText);
+  if (explicitYear) {
+    const range = buildCurrentYearRange(timezone, explicitYear);
+    return {
+      range_start: range.start,
+      range_end: range.end
+    };
+  }
+
+  return null;
 }
 
 function parseSignFromQuestion(text) {
@@ -951,6 +1081,51 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
     name: route.toolTarget,
     result: toolCallResult
   }];
+  const timelinePayload = extractTransitTimelinePayload(toolCallResult);
+
+  if (route.id === 'month_ahead_transits' && Array.isArray(timelinePayload?.transits)) {
+    if (responseMode === 'raw' && channel === 'telegram') {
+      const pseudoFacts = timelinePayload.transits.map((transit, index) => ({
+        title: transit.label || `Transit ${index + 1}`,
+        source_kind: factIndex.MONTHLY_TRANSIT_SOURCE_KIND,
+        cache_month: toolCallResult?.cacheMonth || '',
+        fact_payload: transit
+      }));
+
+      return {
+        text: buildRawTransitTable(locale, pseudoFacts, subjectProfile, {
+          limit: 10,
+          includeFollowUp: true,
+          responseMode
+        }),
+        renderMode: 'telegram_pre'
+      };
+    }
+
+    return buildMonthlyTransitOverviewFromTimeline(locale, timelinePayload.transits, subjectProfile, {
+      cacheMonth: toolCallResult?.cacheMonth || '',
+      responseMode,
+      limit: 10
+    });
+  }
+
+  if (route.id === 'monthly_transits_for_planet' && Array.isArray(timelinePayload?.transits)) {
+    const planet = parsePlanetFromQuestion(userText);
+    const matchingTransits = timelinePayload.transits.filter((entry) => matchesTransitPlanetFilter(entry, planet));
+    const title = formatRawLabel(locale, {
+      en: `${planet ? humanizeRawKey(planet) : 'Selected'} monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}${toolCallResult?.cacheMonth ? ` — ${toolCallResult.cacheMonth}` : ''}`,
+      fr: `Transits mensuels liés à ${planet ? humanizeRawKey(planet) : 'la planète demandée'} pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}${toolCallResult?.cacheMonth ? ` — ${toolCallResult.cacheMonth}` : ''}`,
+      de: `Monatstransite zu ${planet ? humanizeRawKey(planet) : 'dem gewählten Planeten'} für ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}${toolCallResult?.cacheMonth ? ` — ${toolCallResult.cacheMonth}` : ''}`,
+      es: `Tránsitos mensuales relacionados con ${planet ? humanizeRawKey(planet) : 'el planeta solicitado'} para ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}${toolCallResult?.cacheMonth ? ` — ${toolCallResult.cacheMonth}` : ''}`
+    });
+    return buildMonthlyTransitOverviewFromTimeline(locale, matchingTransits, subjectProfile, {
+      cacheMonth: toolCallResult?.cacheMonth || '',
+      responseMode,
+      limit: matchingTransits.length || 10,
+      includeFollowUp: false,
+      title
+    }) || buildCanonicalMissingArgsResponse(locale, route, ['transitPlanet']);
+  }
 
   if (responseMode === 'raw') {
     return buildRawToolLoopResponse(locale, subjectProfile, toolResults, {
@@ -1015,23 +1190,33 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
     case 'current_sky_today':
     case 'today_transits_me':
     case 'month_ahead_transits':
-      return flatNatal && currentMonthWindow ? {
+    case 'monthly_transits_for_planet': {
+      const parsedMonth = parseMonthFromQuestion(userText, timezone);
+      const requestedMonthRange = parsedMonth ? buildMonthDateRange(parsedMonth) : null;
+      const selectedMonthWindow = requestedMonthRange || (currentMonthWindow ? {
+        rangeStart: currentMonthWindow.rangeStart,
+        rangeEnd: currentMonthWindow.rangeEnd,
+        cacheMonth: currentMonthWindow.cacheMonth
+      } : null);
+      return flatNatal && selectedMonthWindow ? {
         toolName: 'v1_western_transits_timeline',
         requestArgs: {
           natal: flatNatal,
-          range_start: currentMonthWindow.rangeStart,
-          range_end: currentMonthWindow.rangeEnd,
+          range_start: selectedMonthWindow.rangeStart || selectedMonthWindow.start,
+          range_end: selectedMonthWindow.rangeEnd || selectedMonthWindow.end,
           mode: 'month',
           include_houses: subjectProfile.timeKnown !== false
         },
-        cacheMonth: currentMonthWindow.cacheMonth,
+        cacheMonth: selectedMonthWindow.cacheMonth || (parsedMonth ? `${parsedMonth.year}-${String(parsedMonth.month).padStart(2, '0')}` : ''),
         primaryProfileId: subjectProfile.profileId,
         secondaryProfileId: null
       } : { missing: ['profile'] };
+    }
     case 'transit_search_exact': {
       const transitPlanet = parseTransitPlanetFromQuestion(userText);
       const natalPoint = parseNatalPointFromTransitSearchQuestion(userText);
-      const range = buildCurrentYearRange(timezone);
+      const range = buildTransitSearchWindow(userText, subjectProfile, timezone) || buildCurrentYearRange(timezone);
+      const aspectTypes = parseAspectTypesFromQuestion(userText);
       if (!transitPlanet) {
         return { missing: ['transitPlanet'] };
       }
@@ -1044,8 +1229,18 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
           natal: flatNatal,
           transit_planet: transitPlanet,
           natal_point: natalPoint,
-          range_start: range.start,
-          range_end: range.end,
+          ...(range.range_start && range.range_end ? {
+            range_start: range.range_start,
+            range_end: range.range_end
+          } : {
+            range_start: range.start,
+            range_end: range.end
+          }),
+          ...(range.age_start_years !== undefined && range.age_end_years !== undefined ? {
+            age_start_years: range.age_start_years,
+            age_end_years: range.age_end_years
+          } : {}),
+          ...(aspectTypes.length > 0 ? { aspect_types: aspectTypes } : {}),
           include_context: true
         },
         cacheMonth: '',
@@ -1968,6 +2163,27 @@ function formatRawJoinedList(values, limit = 4) {
   return items.length > 0 ? items.join(', ') : null;
 }
 
+function buildMonthlyTransitFollowUpPrompt(locale) {
+  return formatRawLabel(locale, {
+    en: 'If you want, I can also show the minor transits or absolutely all transits for the month.',
+    fr: 'Si vous voulez, je peux aussi montrer les transits mineurs ou absolument tous les transits du mois.',
+    de: 'Wenn du möchtest, kann ich dir auch die kleineren Transite oder absolut alle Monatstransite zeigen.',
+    es: 'Si quieres, también puedo mostrar los tránsitos menores o absolutamente todos los tránsitos del mes.'
+  });
+}
+
+function isTopMonthlyTransitRoute(routeOrId) {
+  if (!routeOrId) {
+    return false;
+  }
+
+  const id = typeof routeOrId === 'string'
+    ? routeOrId
+    : (routeOrId.commonRouteId || routeOrId.id || null);
+
+  return id === 'month_ahead_transits';
+}
+
 function extractTransitTimelinePayload(result) {
   const timeline = result?.timeline;
   if (!timeline) {
@@ -2502,6 +2718,52 @@ function buildTransitTimelineEntryLines(locale, transit) {
   return lines.filter(Boolean).join('\n');
 }
 
+function scoreTransitTimelineEntry(transit) {
+  const title = String(normalizeRawTitle(transit?.label) || '').toLowerCase();
+  let score = 0;
+
+  if (transit?.start_datetime) score += 20;
+  if (transit?.peak_datetime) score += 20;
+  if (asArray(transit?.exact_datetimes).length > 0) score += 15;
+  if (asArray(transit?.houses).length > 0) score += 6;
+  if (formatScalarValue(transit?.transit_planet)) score += 8;
+  if (/(pressure window|support window|stellium|station|ingress|configuration|t square|grand trine|kite)/.test(title)) score += 12;
+
+  return score;
+}
+
+function selectTopMonthlyTransitFacts(facts, limit = 10, options = {}) {
+  return selectRawDisplayFacts(
+    asArray(facts).filter((fact) => isMonthlyTransitFact(fact)),
+    { ...options, limit }
+  ).slice(0, limit);
+}
+
+function selectTopMonthlyTimelineEntries(transits, limit = 10) {
+  return asArray(transits)
+    .filter(Boolean)
+    .slice()
+    .sort((left, right) => scoreTransitTimelineEntry(right) - scoreTransitTimelineEntry(left))
+    .slice(0, limit);
+}
+
+function matchesTransitPlanetFilter(entry, planet) {
+  if (!planet) {
+    return true;
+  }
+
+  const normalizedPlanet = String(planet || '').toLowerCase();
+  const haystack = [
+    entry?.transit_planet,
+    entry?.natal_point,
+    entry?.label
+  ]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+
+  return haystack.includes(normalizedPlanet);
+}
+
 function collectRawNatalOverviewData(locale, subjectProfile, facts, options = {}) {
   const normalizedProfile = normalizeNatalProfile(
     subjectProfile?.rawNatalPayload,
@@ -2828,8 +3090,8 @@ function selectRawDisplayFacts(facts, options = {}) {
     }
   });
 
-  const requestedLimit = Math.max(1, Math.min(Number(options.limit || 5), 8));
-  const candidateLimit = Math.max(requestedLimit, Math.min(requestedLimit * 3, 18));
+  const requestedLimit = Math.max(1, Math.min(Number(options.limit || 5), 12));
+  const candidateLimit = Math.max(requestedLimit, Math.min(requestedLimit * 3, 24));
   return [...unique.values()]
     .sort((left, right) => scoreRawDisplayFact(right, options) - scoreRawDisplayFact(left, options))
     .slice(0, candidateLimit);
@@ -2837,7 +3099,7 @@ function selectRawDisplayFacts(facts, options = {}) {
 
 function buildRawFactCards(locale, facts, options = {}) {
   const subjectLabel = options.subjectLabel || 'Chart User';
-  const limit = Math.max(1, Math.min(Number(options.limit || 5), 8));
+  const limit = Math.max(1, Math.min(Number(options.limit || 5), 12));
   const rankedFacts = selectRawDisplayFacts(facts, options);
   const intro = buildRawFactsIntro(locale, subjectLabel, rankedFacts, options.intro || null);
   const blocks = [intro];
@@ -2875,6 +3137,75 @@ function buildRawFactCards(locale, facts, options = {}) {
   return normalizeRawPresentationText(blocks.join('\n\n'));
 }
 
+function buildMonthlyTransitOverviewTitle(locale, subjectProfile, itemCount, cacheMonth, responseMode = 'raw') {
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const modeAwareLabel = responseMode === 'raw'
+    ? {
+        en: `Top ${itemCount} major monthly transits for ${subject}`,
+        fr: `Top ${itemCount} des transits majeurs du mois pour ${subject}`,
+        de: `Top ${itemCount} der wichtigsten Monatstransite für ${subject}`,
+        es: `Top ${itemCount} de los tránsitos mayores del mes para ${subject}`
+      }
+    : {
+        en: `Top ${itemCount} major monthly transits for ${subject}`,
+        fr: `Top ${itemCount} des transits majeurs du mois pour ${subject}`,
+        de: `Top ${itemCount} der wichtigsten Monatstransite für ${subject}`,
+        es: `Top ${itemCount} de los tránsitos mayores del mes para ${subject}`
+      };
+
+  const base = formatRawLabel(locale, modeAwareLabel);
+  return cacheMonth ? `${base} — ${cacheMonth}` : base;
+}
+
+function buildMonthlyTransitOverviewFromFacts(locale, facts, subjectProfile, options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit || 10), 200));
+  const rows = selectTopMonthlyTransitFacts(facts, limit, options);
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const cacheMonth = rows[0]?.cacheMonth || rows[0]?.cache_month || null;
+  const title = options.title || buildMonthlyTransitOverviewTitle(locale, subjectProfile, rows.length, cacheMonth, options.responseMode || 'raw');
+  const blocks = [title];
+
+  rows.forEach((fact, index) => {
+    const lines = buildTransitFactLines(locale, fact);
+    if (lines.length > 0) {
+      blocks.push([`${index + 1}. ${lines[0]}`, ...lines.slice(1)].join('\n'));
+    }
+  });
+
+  if (options.includeFollowUp !== false) {
+    blocks.push(buildMonthlyTransitFollowUpPrompt(locale));
+  }
+  return normalizeRawPresentationText(blocks.join('\n\n'));
+}
+
+function buildMonthlyTransitOverviewFromTimeline(locale, transits, subjectProfile, options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit || 10), 200));
+  const rows = selectTopMonthlyTimelineEntries(transits, limit);
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const cacheMonth = formatScalarValue(options.cacheMonth || null);
+  const title = options.title || buildMonthlyTransitOverviewTitle(locale, subjectProfile, rows.length, cacheMonth, options.responseMode || 'raw');
+  const blocks = [title];
+
+  rows.forEach((transit, index) => {
+    const block = buildTransitTimelineEntryLines(locale, transit);
+    if (block) {
+      const lines = block.split('\n');
+      blocks.push([`${index + 1}. ${lines[0]}`, ...lines.slice(1)].join('\n'));
+    }
+  });
+
+  if (options.includeFollowUp !== false) {
+    blocks.push(buildMonthlyTransitFollowUpPrompt(locale));
+  }
+  return normalizeRawPresentationText(blocks.join('\n\n'));
+}
+
 function escapeTelegramHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -2888,20 +3219,28 @@ function fitCell(value, width) {
   return shortened.padEnd(width, ' ');
 }
 
-function buildRawTransitTable(locale, facts, subjectProfile) {
-  const rows = selectRawDisplayFacts(facts, { limit: 5 })
-    .filter((fact) => (fact.sourceKind || fact.source_kind) === factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
-    .slice(0, 5);
+function buildRawTransitTable(locale, facts, subjectProfile, options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit || 5), 10));
+  const rows = selectTopMonthlyTransitFacts(facts, limit, { ...options, limit });
 
   if (rows.length === 0) {
     return null;
   }
 
+  const cacheMonth = rows[0]?.cacheMonth || rows[0]?.cache_month || null;
   const title = formatRawLabel(locale, {
-    en: `Monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
-    fr: `Transits du mois pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
-    de: `Monatliche Transite für ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
-    es: `Tránsitos del mes para ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`
+    en: cacheMonth
+      ? `Top ${rows.length} major monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')} — ${cacheMonth}`
+      : `Top ${rows.length} major monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+    fr: cacheMonth
+      ? `Top ${rows.length} des transits majeurs du mois pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')} — ${cacheMonth}`
+      : `Top ${rows.length} des transits majeurs du mois pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+    de: cacheMonth
+      ? `Top ${rows.length} der wichtigsten Monatstransite für ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')} — ${cacheMonth}`
+      : `Top ${rows.length} der wichtigsten Monatstransite für ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+    es: cacheMonth
+      ? `Top ${rows.length} de los tránsitos mayores del mes para ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')} — ${cacheMonth}`
+      : `Top ${rows.length} de los tránsitos mayores del mes para ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`
   });
 
   const header = `${fitCell('#', 2)} ${fitCell('Transit', 24)} ${fitCell('Window', 23)} ${fitCell('Peak', 16)} ${fitCell('Focus', 18)}`;
@@ -2934,7 +3273,8 @@ function buildRawTransitTable(locale, facts, subjectProfile) {
     ].join(' ');
   });
 
-  return `<pre>${escapeTelegramHtml([title, '', header, divider, ...body].join('\n'))}</pre>`;
+  const note = options.includeFollowUp === false ? '' : `\n\n${escapeTelegramHtml(buildMonthlyTransitFollowUpPrompt(locale))}`;
+  return `<pre>${escapeTelegramHtml([title, '', header, divider, ...body].join('\n'))}</pre>${note}`;
 }
 
 function collectRawToolSections(value, prefix = '', depth = 0) {
@@ -3234,7 +3574,15 @@ function summarizeFactTags(tags, limit = 5) {
     .join(', ');
 }
 
-function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle) {
+function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle, options = {}) {
+  if (isTopMonthlyTransitRoute(options.commonRouteId || options.routeId)) {
+    return buildMonthlyTransitOverviewFromFacts(options.locale || 'en', facts, subjectProfile, {
+      userText,
+      responseMode: 'interpreted',
+      limit: 10
+    }) || '';
+  }
+
   const selectedFacts = Array.isArray(facts) ? facts.slice(0, 4) : [];
   if (selectedFacts.length === 0) {
     return '';
@@ -3531,6 +3879,7 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   }
 
   const answerStyle = plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText);
+  const topMonthlyTransitOverview = isTopMonthlyTransitRoute(plannedRoute);
   const structureFocusedRawNatal = (
     rawMode &&
     subjectProfile?.rawNatalPayload &&
@@ -3556,35 +3905,47 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     : [];
   const draftAnswer = rawMode
     ? (
-        rawMode &&
-        subjectProfile?.rawNatalPayload &&
-        searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
-        (
-          structureFocusedRawNatal
-            ? buildRawNatalStructuresOverview(locale, subjectProfile, facts, {
-                subjectLabel: subjectProfile?.profileName || 'Chart User',
-                userText,
-                answerStyle,
-                limit: 5
-              })
-            : isBroadRawNatalQuestion(userText, answerStyle)
-              ? buildRawNatalOverview(locale, subjectProfile, facts, {
-                  subjectLabel: subjectProfile?.profileName || 'Chart User',
-                  userText,
-                  aspectFacts,
-                  answerStyle,
-                  limit: 5
-                })
-              : buildRawFactCards(locale, facts, {
-                  subjectLabel: subjectProfile?.profileName || 'Chart User',
-                  userText,
-                  subjectProfile,
-                  answerStyle,
-                  limit: 5
-                })
-        )
+        topMonthlyTransitOverview
+          ? buildMonthlyTransitOverviewFromFacts(locale, facts, subjectProfile, {
+              userText,
+              answerStyle,
+              responseMode: 'raw',
+              limit: 10
+            })
+          : (
+              rawMode &&
+              subjectProfile?.rawNatalPayload &&
+              searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
+              (
+                structureFocusedRawNatal
+                  ? buildRawNatalStructuresOverview(locale, subjectProfile, facts, {
+                      subjectLabel: subjectProfile?.profileName || 'Chart User',
+                      userText,
+                      answerStyle,
+                      limit: 5
+                    })
+                  : isBroadRawNatalQuestion(userText, answerStyle)
+                    ? buildRawNatalOverview(locale, subjectProfile, facts, {
+                        subjectLabel: subjectProfile?.profileName || 'Chart User',
+                        userText,
+                        aspectFacts,
+                        answerStyle,
+                        limit: 5
+                      })
+                    : buildRawFactCards(locale, facts, {
+                        subjectLabel: subjectProfile?.profileName || 'Chart User',
+                        userText,
+                        subjectProfile,
+                        answerStyle,
+                        limit: 5
+                      })
+              )
+            )
       )
-    : buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle);
+    : buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle, {
+        locale,
+        commonRouteId: plannedRoute?.commonRouteId || null
+      });
   if (!draftAnswer) {
     return null;
   }
@@ -3616,11 +3977,23 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   const telegramRawNatalHtmlParts = telegramRawNatalHtmlSections
     ? splitTelegramHtmlSections(telegramRawNatalHtmlSections)
     : null;
+  const telegramRawTransitTable = (
+    rawMode &&
+    topMonthlyTransitOverview &&
+    identity?.channel === 'telegram'
+  )
+    ? buildRawTransitTable(locale, facts, subjectProfile, {
+        limit: 10,
+        includeFollowUp: true,
+        userText,
+        answerStyle
+      })
+    : null;
 
   let rewrittenAnswer = draftAnswer;
   let rewriteDurationMs = 0;
 
-  if (!rawMode) {
+  if (!rawMode && !topMonthlyTransitOverview) {
     try {
       const rewriteStartedAt = performance.now();
       rewrittenAnswer = await maybeRewriteFactAnswer(
@@ -3644,9 +4017,11 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   }
 
   return {
-    text: telegramRawNatalHtmlParts?.[0] || rewrittenAnswer,
-    textParts: telegramRawNatalHtmlParts || undefined,
-    renderMode: telegramRawNatalHtmlParts
+    text: telegramRawTransitTable || telegramRawNatalHtmlParts?.[0] || rewrittenAnswer,
+    textParts: telegramRawTransitTable ? undefined : (telegramRawNatalHtmlParts || undefined),
+    renderMode: telegramRawTransitTable
+      ? 'telegram_pre'
+      : telegramRawNatalHtmlParts
       ? 'telegram_html'
       : (rawMode && intent.id === 'transits' ? 'telegram_pre' : 'plain'),
     usedTools: [{
@@ -4452,7 +4827,10 @@ async function answerConversation(identity, userText) {
       route.kind === 'astrology_transits' &&
       identity?.channel === 'telegram'
     )
-      ? buildRawTransitTable(locale, fastPathResult.usedTools?.[0]?.result?.facts || [], subjectProfile)
+      ? buildRawTransitTable(locale, fastPathResult.usedTools?.[0]?.result?.facts || [], subjectProfile, {
+          limit: isTopMonthlyTransitRoute(plannedRoute?.commonRouteId || canonicalRoute?.id) ? 10 : 5,
+          includeFollowUp: isTopMonthlyTransitRoute(plannedRoute?.commonRouteId || canonicalRoute?.id)
+        })
       : null;
     const finalText = responseMode === 'raw'
       ? (rawTransitTable || validateRawAnswer(fastPathResult.text, locale))

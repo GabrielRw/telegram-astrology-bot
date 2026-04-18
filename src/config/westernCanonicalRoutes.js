@@ -21,6 +21,7 @@ function buildCanonicalRoute(input) {
     responseShape: input.responseShape || 'synthesis',
     scope: input.scope || null,
     intentSample: input.intentSample,
+    matchHint: input.matchHint || null,
     aliases: buildAliases(input.localized)
   };
 }
@@ -255,11 +256,31 @@ const WESTERN_CANONICAL_ROUTES = [
     responseShape: 'factual_cards',
     scope: 'monthly_transits',
     intentSample: 'what are my transits this month',
+    matchHint: 'Monthly transit overview for the current or requested month. Curated top major transits, not all transits.',
     localized: {
       en: ['what are my transits this month', 'what are this months transits', 'transits this month'],
-      fr: ['quels sont mes transits de ce mois', 'quels sont les transits pour ce mois'],
+      fr: ['quels sont mes transits de ce mois', 'quels sont les transits pour ce mois', 'donne moi les transits du mois', 'transits du mois'],
       de: ['welche transite habe ich diesen monat'],
       es: ['cuales son mis transitos de este mes']
+    }
+  }),
+  buildCanonicalRoute({
+    id: 'monthly_transits_for_planet',
+    family: 'transits',
+    routeKind: 'astrology_transits',
+    answerStyle: 'personal_transits',
+    toolTarget: 'v1_western_transits_timeline',
+    requiredArgs: ['profile'],
+    cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    scope: 'monthly_transits_filtered',
+    intentSample: 'show me monthly transits related to a specific planet',
+    matchHint: 'Monthly transit listing filtered to one named planet, for example Pluto, Saturn, Venus, Mars, Jupiter, Uranus, Neptune, Chiron, Sun, Moon, or Mercury. Supports requested months and asks about when they end.',
+    localized: {
+      en: ['show me all monthly transits related to pluto', 'give me all this month transits related to pluto', 'monthly pluto transits and when they end'],
+      fr: ['donne moi tous les transits du mois en rapport avec pluton', 'donne moi tous les transits du moi en rapport avec pluton', 'montre moi tous les transits du mois liés à pluton', 'montre moi tous les transits du mois lies a pluton et quand ils se terminent'],
+      de: ['zeige mir alle monatstransite in bezug auf pluto'],
+      es: ['muestrame todos los transitos del mes relacionados con pluton']
     }
   }),
   buildCanonicalRoute({
@@ -272,6 +293,7 @@ const WESTERN_CANONICAL_ROUTES = [
     responseShape: 'full_listing',
     scope: 'monthly_transits',
     intentSample: 'list all monthly transits',
+    matchHint: 'Exhaustive monthly transit listing for the current or requested month. Return all transits, not a curated subset.',
     localized: {
       en: ['list all monthly transits', 'show me all transits this month', 'all my transits this month', 'list all transits this month'],
       fr: ['tous les transits du mois', 'liste tous les transits', 'liste tous les transits du mois', 'donne moi tous les transits du mois'],
@@ -392,10 +414,11 @@ const WESTERN_CANONICAL_ROUTES = [
     cacheStrategy: 'tool_only',
     responseShape: 'factual_cards',
     scope: 'transit_search',
-    intentSample: 'show me exact saturn transits to my moon',
+    intentSample: 'show me all exact transits of one planet to one natal point over a requested period',
+    matchHint: 'Search one transit planet against one natal point across a date range, month, year, or since birth. Supports aspect filters like square, conjunction, opposition, trine, sextile.',
     localized: {
-      en: ['show me exact saturn transits to my moon', 'find exact transits to my moon', 'search transits of saturn to my moon'],
-      fr: ['montre moi les transits exacts de saturne a ma lune', 'montre moi les transits exacts de saturne à ma lune', 'cherche les transits exacts sur ma lune'],
+      en: ['show me exact saturn transits to my moon', 'find exact transits to my moon', 'search transits of saturn to my moon', 'return all squares between my sun and saturn since birth'],
+      fr: ['montre moi les transits exacts de saturne a ma lune', 'montre moi les transits exacts de saturne à ma lune', 'cherche les transits exacts sur ma lune', 'retourne tous les carres entre mon soleil et saturne depuis ma naissance', 'retourne tous les carrés entre mon soleil et saturne depuis ma naissance'],
       de: ['zeige mir exakte saturn transite zu meinem mond'],
       es: ['muestrame los transitos exactos de saturno a mi luna']
     }
@@ -628,10 +651,11 @@ const WESTERN_CANONICAL_ROUTES = [
     cacheStrategy: 'tool_only',
     responseShape: 'factual_cards',
     scope: 'ephemeris',
-    intentSample: 'give me the ephemeris for May',
+    intentSample: 'give me the ephemeris for a requested month or date range',
+    matchHint: 'Planetary ephemeris for a requested month, year, or date range.',
     localized: {
-      en: ['give me the ephemeris for may', 'show me the ephemeris'],
-      fr: ['donne moi l ephemeride pour mai', 'montre moi l ephemeride'],
+      en: ['give me the ephemeris for may', 'show me the ephemeris', 'give me the ephemeris for may 2027'],
+      fr: ['donne moi l ephemeride pour mai', 'montre moi l ephemeride', 'donne moi les ephemerides pour mai 2027', 'donne moi les éphémérides pour mai 2027'],
       de: ['gib mir die ephemeride fur mai'],
       es: ['dame la efemeride de mayo']
     }
