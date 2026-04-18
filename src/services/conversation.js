@@ -915,65 +915,310 @@ function formatScalarValue(value) {
   return String(value).replace(/\s+/g, ' ').trim();
 }
 
+function humanizeRawKey(value) {
+  return String(value || '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_:.-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function normalizeRawTitle(value) {
+  const text = formatScalarValue(value);
+  if (!text) {
+    return null;
+  }
+
+  const cleaned = text
+    .replace(/\s+Category:.*$/i, '')
+    .replace(/\s+Kind:.*$/i, '')
+    .replace(/\s+Subjects:.*$/i, '')
+    .trim();
+
+  if (!cleaned) {
+    return null;
+  }
+
+  const machineLike = /[.:]/.test(cleaned) || /\d{4}-\d{2}-\d{2}t/i.test(cleaned);
+  if (machineLike) {
+    return humanizeRawKey(
+      cleaned
+        .replace(/^transit_insight[.:]/i, '')
+        .replace(/\.\d{4}-\d{2}-\d{2}t[\d:z-]+$/i, '')
+    );
+  }
+
+  return cleaned;
+}
+
+function formatRawDate(value) {
+  const text = formatScalarValue(value);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}))?/);
+  if (!match) {
+    return text;
+  }
+
+  return match[2] ? `${match[1]} ${match[2]} UTC` : match[1];
+}
+
+function formatRawDateWindow(startValue, endValue) {
+  const start = formatRawDate(startValue);
+  const end = formatRawDate(endValue);
+
+  if (start && end) {
+    return `${start} → ${end}`;
+  }
+
+  return start || end || null;
+}
+
+function normalizeRawList(values, formatter = formatScalarValue) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => formatter(value))
+    .filter(Boolean);
+}
+
+function getRawSubjectLabel(locale, subjectLabel) {
+  if (subjectLabel && subjectLabel !== 'Chart User') {
+    return subjectLabel;
+  }
+
+  return formatRawLabel(locale, {
+    en: 'you',
+    fr: 'vous',
+    de: 'dich',
+    es: 'ti'
+  });
+}
+
+function buildRawFactsIntro(locale, subjectLabel, facts, fallbackIntro = null) {
+  if (fallbackIntro) {
+    return fallbackIntro;
+  }
+
+  const normalizedSubject = getRawSubjectLabel(locale, subjectLabel);
+  const firstFact = Array.isArray(facts) ? facts.find(Boolean) : null;
+  const cacheMonth = firstFact?.cacheMonth || firstFact?.cache_month || null;
+
+  if (firstFact && isMonthlyTransitFact(firstFact)) {
+    return formatRawLabel(locale, {
+      en: cacheMonth
+        ? `Monthly transits for ${normalizedSubject} — ${cacheMonth}`
+        : `Monthly transits for ${normalizedSubject}`,
+      fr: cacheMonth
+        ? `Transits du mois pour ${normalizedSubject} — ${cacheMonth}`
+        : `Transits du mois pour ${normalizedSubject}`,
+      de: cacheMonth
+        ? `Monatliche Transite für ${normalizedSubject} — ${cacheMonth}`
+        : `Monatliche Transite für ${normalizedSubject}`,
+      es: cacheMonth
+        ? `Tránsitos del mes para ${normalizedSubject} — ${cacheMonth}`
+        : `Tránsitos del mes para ${normalizedSubject}`
+    });
+  }
+
+  return formatRawLabel(locale, {
+    en: `Natal chart facts for ${normalizedSubject}`,
+    fr: `Faits du thème natal pour ${normalizedSubject}`,
+    de: `Radix-Fakten für ${normalizedSubject}`,
+    es: `Hechos de la carta natal para ${normalizedSubject}`
+  });
+}
+
+function sanitizeRawFactText(value, title) {
+  const text = formatScalarValue(value);
+  if (!text) {
+    return null;
+  }
+
+  let cleaned = text
+    .replace(/\bCategory:\s*[^.]+\.?/gi, '')
+    .replace(/\bKind:\s*[^.]+\.?/gi, '')
+    .replace(/\bFocus:\s*[^.]+\.?/gi, '')
+    .replace(/\bSubjects:\s*[^.]+\.?/gi, '')
+    .replace(/\bSource:\s*[^.]+\.?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const normalizedTitle = normalizeSentenceForCompare(title);
+  const normalizedCleaned = normalizeSentenceForCompare(cleaned);
+  if (normalizedTitle && normalizedCleaned && normalizedCleaned === normalizedTitle) {
+    return null;
+  }
+
+  return cleaned || null;
+}
+
+function isMonthlyTransitFact(fact) {
+  return (fact.sourceKind || fact.source_kind) === factIndex.MONTHLY_TRANSIT_SOURCE_KIND;
+}
+
+function buildTransitFactLines(locale, fact) {
+  const payload = fact.factPayload || fact.fact_payload || {};
+  const lines = [];
+  const title = normalizeRawTitle(fact.title) || formatRawLabel(locale, {
+    en: 'Transit',
+    fr: 'Transit',
+    de: 'Transit',
+    es: 'Tránsito'
+  });
+
+  const type = payload.windowType
+    || payload.passType
+    || payload.category
+    || ((Array.isArray(fact.tags) ? fact.tags : []).find((tag) => String(tag).startsWith('kind:')) || '').replace(/^kind:/, '');
+  const windowText = formatRawDateWindow(payload.startDatetime, payload.endDatetime);
+  const peak = formatRawDate(payload.peakDatetime);
+  const exactHits = normalizeRawList(payload.exactHitsInMonth, (value) => formatScalarValue(value));
+  const exactDatetimes = normalizeRawList(payload.exactDatetimes, formatRawDate);
+  const visibleWindow = (
+    payload.visibleStartDay || payload.visibleEndDay
+      ? `${payload.visibleStartDay || '?'} → ${payload.visibleEndDay || '?'}`
+      : null
+  );
+  const transitPlanet = formatScalarValue(payload.transitPlanet)
+    ? humanizeRawKey(formatScalarValue(payload.transitPlanet))
+    : null;
+  const natalPoint = formatScalarValue(payload.natalPoint)
+    ? humanizeRawKey(formatScalarValue(payload.natalPoint))
+    : null;
+  const aspectType = formatScalarValue(payload.aspectType);
+  const houses = normalizeRawList(payload.houses, (value) => humanizeRawKey(formatScalarValue(value)));
+
+  lines.push(title);
+
+  if (type) {
+    lines.push(`${formatRawLabel(locale, { en: 'Type', fr: 'Type', de: 'Typ', es: 'Tipo' })}: ${humanizeRawKey(type)}`);
+  }
+
+  if (windowText) {
+    lines.push(`${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${windowText}`);
+  } else if (visibleWindow && (fact.cacheMonth || fact.cache_month)) {
+    lines.push(`${formatRawLabel(locale, { en: 'Days in month', fr: 'Jours dans le mois', de: 'Tage im Monat', es: 'Días del mes' })}: ${visibleWindow}`);
+  }
+
+  if (peak) {
+    lines.push(`${formatRawLabel(locale, { en: 'Peak', fr: 'Pic', de: 'Höhepunkt', es: 'Pico' })}: ${peak}`);
+  } else if (exactDatetimes.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Exact hits', fr: 'Exactitudes', de: 'Exakte Treffer', es: 'Exactitudes' })}: ${exactDatetimes.join(', ')}`);
+  } else if (exactHits.length > 0 && (fact.cacheMonth || fact.cache_month)) {
+    lines.push(`${formatRawLabel(locale, { en: 'Exact days', fr: 'Jours exacts', de: 'Exakte Tage', es: 'Días exactos' })}: ${exactHits.join(', ')}`);
+  }
+
+  if (transitPlanet || natalPoint || aspectType) {
+    const focus = [transitPlanet, aspectType ? humanizeRawKey(aspectType) : null, natalPoint].filter(Boolean).join(' ');
+    if (focus) {
+      lines.push(`${formatRawLabel(locale, { en: 'Focus', fr: 'Focus', de: 'Fokus', es: 'Foco' })}: ${focus}`);
+    }
+  }
+
+  if (houses.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Houses', fr: 'Maisons', de: 'Häuser', es: 'Casas' })}: ${houses.join(', ')}`);
+  }
+
+  if (payload.continuesFromPreviousMonth) {
+    lines.push(formatRawLabel(locale, {
+      en: 'Carries over from the previous month',
+      fr: 'Se prolonge depuis le mois précédent',
+      de: 'Läuft aus dem Vormonat weiter',
+      es: 'Se arrastra desde el mes anterior'
+    }));
+  }
+
+  if (payload.continuesToNextMonth) {
+    lines.push(formatRawLabel(locale, {
+      en: 'Continues into the next month',
+      fr: 'Se prolonge sur le mois suivant',
+      de: 'Läuft in den nächsten Monat weiter',
+      es: 'Continúa en el mes siguiente'
+    }));
+  }
+
+  const fallbackFactText = sanitizeRawFactText(fact.factText || fact.fact_text, title);
+  if (fallbackFactText && lines.length <= 2) {
+    lines.push(fallbackFactText);
+  }
+
+  const filtered = lines.filter(Boolean);
+  return filtered.length > 1 ? filtered : [];
+}
+
+function buildNatalFactLines(locale, fact) {
+  const payload = fact.factPayload || fact.fact_payload || {};
+  const title = normalizeRawTitle(fact.title);
+  const lines = [];
+
+  if (title) {
+    lines.push(title);
+  }
+
+  const primaryFields = [
+    ['planet', payload.planet || payload.transitPlanet],
+    ['sign', payload.sign],
+    ['house', payload.house],
+    ['aspect', payload.aspectType],
+    ['angle', payload.angle]
+  ]
+    .map(([key, value]) => {
+      const rendered = formatScalarValue(value);
+      return rendered ? `${formatRawLabel(locale, { en: humanizeRawKey(key), fr: humanizeRawKey(key), de: humanizeRawKey(key), es: humanizeRawKey(key) })}: ${humanizeRawKey(rendered)}` : null;
+    })
+    .filter(Boolean);
+
+  lines.push(...primaryFields.slice(0, 3));
+
+  const factText = sanitizeRawFactText(fact.factText || fact.fact_text, title);
+  if (factText) {
+    lines.push(factText);
+  }
+
+  const filtered = lines.filter(Boolean);
+  if (filtered.length > 1) {
+    return filtered;
+  }
+
+  const wordCount = String(title || '').split(/\s+/).filter(Boolean).length;
+  return wordCount >= 3 ? filtered : [];
+}
+
 function buildRawFactCards(locale, facts, options = {}) {
   const subjectLabel = options.subjectLabel || 'Chart User';
-  const intro = options.intro || formatRawLabel(locale, {
-    en: `Raw results for ${subjectLabel}`,
-    fr: `Résultats bruts pour ${subjectLabel}`,
-    de: `Rohresultate für ${subjectLabel}`,
-    es: `Resultados brutos para ${subjectLabel}`
-  });
+  const intro = buildRawFactsIntro(locale, subjectLabel, facts, options.intro || null);
   const blocks = [intro];
 
-  facts.slice(0, options.limit || 5).forEach((fact, index) => {
-    const title = formatScalarValue(fact.title) || `${formatRawLabel(locale, {
-      en: 'Fact',
-      fr: 'Fait',
-      de: 'Fakt',
-      es: 'Dato'
-    })} ${index + 1}`;
-    const lines = [
-      `${index + 1}. ${title}`
-    ];
+  const usableFacts = [];
+  facts.slice(0, options.limit || 5).forEach((fact) => {
+    const lines = isMonthlyTransitFact(fact)
+      ? buildTransitFactLines(locale, fact)
+      : buildNatalFactLines(locale, fact);
 
-    const factText = formatScalarValue(fact.factText || fact.fact_text);
-    const normalizedTitle = normalizeSentenceForCompare(title);
-    const normalizedFactText = normalizeSentenceForCompare(factText);
-    const repeatsTitle = normalizedTitle && normalizedFactText && normalizedFactText.startsWith(normalizedTitle);
-    if (factText && !repeatsTitle) {
-      lines.push(factText);
+    if (lines.length === 0) {
+      return;
     }
 
-    const category = formatScalarValue(fact.category);
-    if (category) {
-      lines.push(`${formatRawLabel(locale, { en: 'Category', fr: 'Catégorie', de: 'Kategorie', es: 'Categoría' })}: ${category}`);
-    }
-
-    const sourceKind = formatScalarValue(fact.sourceKind || fact.source_kind);
-    if (sourceKind) {
-      lines.push(`${formatRawLabel(locale, { en: 'Source', fr: 'Source', de: 'Quelle', es: 'Fuente' })}: ${sourceKind}`);
-    }
-
-    const cacheMonth = formatScalarValue(fact.cacheMonth || fact.cache_month);
-    if (cacheMonth) {
-      lines.push(`${formatRawLabel(locale, { en: 'Month', fr: 'Mois', de: 'Monat', es: 'Mes' })}: ${cacheMonth}`);
-    }
-
-    const payload = fact.factPayload || fact.fact_payload;
-    if (payload && typeof payload === 'object') {
-      Object.entries(payload)
-        .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
-        .slice(0, 4)
-        .forEach(([key, value]) => {
-          const rendered = formatScalarValue(value);
-          if (rendered) {
-            lines.push(`${sentenceCase(String(key).replace(/_/g, ' ')).replace(/[.!?]$/, '')}: ${rendered}`);
-          }
-        });
-    }
-
-    blocks.push(lines.join('\n'));
+    usableFacts.push(lines);
   });
+
+  usableFacts.forEach((lines, index) => {
+    blocks.push([`${index + 1}. ${lines[0]}`, ...lines.slice(1)].join('\n'));
+  });
+
+  if (blocks.length === 1) {
+    blocks.push(formatRawLabel(locale, {
+      en: 'No usable raw facts were found.',
+      fr: 'Aucun fait brut exploitable n’a été trouvé.',
+      de: 'Es wurden keine brauchbaren Rohfakten gefunden.',
+      es: 'No se encontraron hechos brutos utilizables.'
+    }));
+  }
 
   return normalizeAssistantText(blocks.join('\n\n'));
 }
@@ -1001,20 +1246,35 @@ function buildRawTransitTable(locale, facts, subjectProfile) {
   }
 
   const title = formatRawLabel(locale, {
-    en: `Raw transit table for ${subjectProfile?.profileName || 'Chart User'}`,
-    fr: `Table brute des transits pour ${subjectProfile?.profileName || 'Chart User'}`,
-    de: `Rohtabelle der Transite für ${subjectProfile?.profileName || 'Chart User'}`,
-    es: `Tabla bruta de tránsitos para ${subjectProfile?.profileName || 'Chart User'}`
+    en: `Monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+    fr: `Transits du mois pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+    de: `Monatliche Transite für ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+    es: `Tránsitos del mes para ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`
   });
 
-  const header = `${fitCell('#', 2)} ${fitCell('Title', 28)} ${fitCell('Category', 16)} ${fitCell('Month', 7)}`;
-  const divider = `${'-'.repeat(2)} ${'-'.repeat(28)} ${'-'.repeat(16)} ${'-'.repeat(7)}`;
+  const header = `${fitCell('#', 2)} ${fitCell('Transit', 24)} ${fitCell('Window', 23)} ${fitCell('Peak', 16)} ${fitCell('Focus', 18)}`;
+  const divider = `${'-'.repeat(2)} ${'-'.repeat(24)} ${'-'.repeat(23)} ${'-'.repeat(16)} ${'-'.repeat(18)}`;
   const body = rows.map((fact, index) => {
+    const payload = fact.factPayload || fact.fact_payload || {};
+    const focus = [payload.transitPlanet, payload.aspectType ? humanizeRawKey(payload.aspectType) : null, payload.natalPoint]
+      .map((item) => {
+        const rendered = formatScalarValue(item);
+        return rendered ? humanizeRawKey(rendered) : null;
+      })
+      .filter(Boolean)
+      .join(' ');
+
     return [
       fitCell(String(index + 1), 2),
-      fitCell(fact.title || '', 28),
-      fitCell(fact.category || '', 16),
-      fitCell(fact.cacheMonth || fact.cache_month || '', 7)
+      fitCell(normalizeRawTitle(fact.title) || '', 24),
+      fitCell(formatRawDateWindow(payload.startDatetime, payload.endDatetime)
+        || ((payload.visibleStartDay || payload.visibleEndDay)
+          ? `${payload.visibleStartDay || '?'}→${payload.visibleEndDay || '?'}`
+          : (fact.cacheMonth || fact.cache_month || '')), 23),
+      fitCell(formatRawDate(payload.peakDatetime)
+        || normalizeRawList(payload.exactDatetimes, formatRawDate)[0]
+        || normalizeRawList(payload.exactHitsInMonth, formatScalarValue).join(', '), 16),
+      fitCell(focus || normalizeRawList(payload.houses, (value) => humanizeRawKey(formatScalarValue(value))).join(', '), 18)
     ].join(' ');
   });
 
@@ -1058,6 +1318,47 @@ function collectRawToolSections(value, prefix = '', depth = 0) {
 }
 
 function buildRawToolResultText(locale, toolName, result) {
+  if (toolName === 'get_cached_monthly_transits' && result?.available && Array.isArray(result?.timeline?.transits)) {
+    const title = formatRawLabel(locale, {
+      en: 'Monthly transit timeline',
+      fr: 'Timeline des transits du mois',
+      de: 'Monatliche Transit-Timeline',
+      es: 'Cronología mensual de tránsitos'
+    });
+    const month = formatScalarValue(result.cacheMonth);
+    const rows = result.timeline.transits.slice(0, 5).map((transit) => {
+      const lines = [normalizeRawTitle(transit.label) || 'Transit'];
+      const windowText = formatRawDateWindow(transit.start_datetime, transit.end_datetime);
+      const exactHits = normalizeRawList(transit.exact_datetimes, formatRawDate);
+      const focus = [transit.transit_planet, transit.aspect_type ? humanizeRawKey(transit.aspect_type) : null, transit.natal_point]
+        .map((item) => {
+          const rendered = formatScalarValue(item);
+          return rendered ? humanizeRawKey(rendered) : null;
+        })
+        .filter(Boolean)
+        .join(' ');
+
+      if (windowText) {
+        lines.push(`${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${windowText}`);
+      }
+
+      if (exactHits.length > 0) {
+        lines.push(`${formatRawLabel(locale, { en: 'Exact', fr: 'Exact', de: 'Exakt', es: 'Exacto' })}: ${exactHits.slice(0, 2).join(', ')}`);
+      }
+
+      if (focus) {
+        lines.push(`${formatRawLabel(locale, { en: 'Focus', fr: 'Focus', de: 'Fokus', es: 'Foco' })}: ${focus}`);
+      }
+
+      return lines.join('\n');
+    });
+
+    return normalizeAssistantText([
+      month ? `${title} — ${month}` : title,
+      ...rows
+    ].join('\n\n'));
+  }
+
   const title = sentenceCase(toolName.replace(/^mcp_/, '').replace(/^v1_/, '').replace(/_/g, ' ')).replace(/[.!?]$/, '');
   const sections = collectRawToolSections(result).slice(0, 12);
   const lines = [title];
@@ -1081,24 +1382,19 @@ function buildRawToolResultText(locale, toolName, result) {
 function buildRawToolLoopAnswer(locale, subjectProfile, toolResults = []) {
   const subjectLabel = subjectProfile?.profileName || 'Chart User';
   const intro = formatRawLabel(locale, {
-    en: `Raw results for ${subjectLabel}`,
-    fr: `Résultats bruts pour ${subjectLabel}`,
-    de: `Rohresultate für ${subjectLabel}`,
-    es: `Resultados brutos para ${subjectLabel}`
+    en: `Grounded results for ${getRawSubjectLabel(locale, subjectLabel)}`,
+    fr: `Résultats factuels pour ${getRawSubjectLabel(locale, subjectLabel)}`,
+    de: `Faktische Resultate für ${getRawSubjectLabel(locale, subjectLabel)}`,
+    es: `Resultados factuales para ${getRawSubjectLabel(locale, subjectLabel)}`
   });
 
   const sections = toolResults
     .filter((tool) => tool?.result && !tool.result?.error)
+    .filter((tool) => !(tool.name === 'get_cached_monthly_transits' && tool.result?.available === false))
     .map((tool) => {
       if (tool.name === 'search_cached_profile_facts' && Array.isArray(tool.result?.facts)) {
         return buildRawFactCards(locale, tool.result.facts, {
           subjectLabel,
-          intro: formatRawLabel(locale, {
-            en: 'Indexed facts',
-            fr: 'Faits indexés',
-            de: 'Indexierte Fakten',
-            es: 'Hechos indexados'
-          }),
           limit: 5
         });
       }
@@ -1436,7 +1732,10 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
           category: fact.category,
           title: fact.title,
           tags: fact.tags,
-          fact_text: fact.factText
+          fact_text: fact.factText,
+          fact_payload: fact.factPayload,
+          source_kind: fact.sourceKind,
+          cache_month: fact.cacheMonth
         }))
       }
     }],
