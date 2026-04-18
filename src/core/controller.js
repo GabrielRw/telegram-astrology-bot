@@ -215,6 +215,18 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
       return true;
     }
 
+    if (Array.isArray(result?.textParts) && result.textParts.length > 0) {
+      await channelApi.editText(event, loadingRef, result.textParts[0]);
+
+      for (const part of result.textParts.slice(1)) {
+        await channelApi.sendText(event, part);
+      }
+
+      await billing.recordAnsweredQuestion(event);
+      await maybeSendAstroMap(event, channelApi, userText, result);
+      return true;
+    }
+
     const chunks = splitConversationReply(result.text);
 
     if (chunks.length === 0) {

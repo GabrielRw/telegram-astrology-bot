@@ -22,6 +22,20 @@ function getModelName() {
   return process.env.GEMINI_MODEL || 'gemma-4-31b-it';
 }
 
+function getConversationFallbackModelNames() {
+  const configured = splitModelList(process.env.GEMINI_CONVERSATION_FALLBACK_MODELS);
+  if (configured.length > 0) {
+    return configured;
+  }
+
+  return [getFastPathModelName(), ...getFastPathFallbackModelNames()];
+}
+
+function getConversationModelCandidates(model) {
+  const primary = model || getModelName();
+  return uniqueModels([primary, ...getConversationFallbackModelNames()]);
+}
+
 function getFastPathModelName() {
   return process.env.GEMINI_FAST_PATH_MODEL || 'gemini-2.5-flash-lite';
 }
@@ -171,7 +185,8 @@ async function runFunctionCallingLoop({
   history,
   userText,
   functionDeclarations,
-  executeFunction
+  executeFunction,
+  model
 }) {
   const ai = getGeminiClient();
   const contents = [
@@ -184,25 +199,48 @@ async function runFunctionCallingLoop({
   ];
 
   const allToolResults = [];
+  const modelCandidates = getConversationModelCandidates(model);
+  let currentModelIndex = 0;
 
   for (let step = 0; step < 4; step += 1) {
-    const response = await generateContentWithRetry(ai, {
-      model: getModelName(),
-      contents,
-      config: {
-        systemInstruction,
-        tools: functionDeclarations.length > 0
-          ? [{ functionDeclarations }]
-          : undefined,
-        toolConfig: functionDeclarations.length > 0
-          ? {
-              functionCallingConfig: {
-                mode: FunctionCallingConfigMode.AUTO
-              }
-            }
-          : undefined
+    let response;
+    let lastError = null;
+
+    for (let index = currentModelIndex; index < modelCandidates.length; index += 1) {
+      const modelName = modelCandidates[index];
+
+      try {
+        response = await generateContentWithRetry(ai, {
+          model: modelName,
+          contents,
+          config: {
+            systemInstruction,
+            tools: functionDeclarations.length > 0
+              ? [{ functionDeclarations }]
+              : undefined,
+            toolConfig: functionDeclarations.length > 0
+              ? {
+                  functionCallingConfig: {
+                    mode: FunctionCallingConfigMode.AUTO
+                  }
+                }
+              : undefined
+          }
+        });
+        currentModelIndex = index;
+        break;
+      } catch (error) {
+        lastError = error;
+
+        if (!isFallbackableGeminiError(error) || index === modelCandidates.length - 1) {
+          throw error;
+        }
       }
-    });
+    }
+
+    if (!response) {
+      throw lastError || new Error('Gemini request failed.');
+    }
 
     const functionCalls = response.functionCalls || [];
 
@@ -427,6 +465,7 @@ function createLocalFunctionDeclarations() {
 module.exports = {
   createLocalFunctionDeclarations,
   generatePlainText,
+  getConversationModelCandidates,
   getFastPathModelName,
   getGeminiErrorMessage,
   runFunctionCallingLoop

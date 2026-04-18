@@ -590,6 +590,16 @@ function normalizeAssistantText(text) {
   return dedupeRepeatedSentences(cleaned);
 }
 
+function normalizeRawPresentationText(text) {
+  return String(text || '')
+    .replace(/\*/g, '')
+    .replace(/__+/g, '')
+    .replace(/`+/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function normalizeSentenceForCompare(sentence) {
   return String(sentence || '')
     .toLowerCase()
@@ -787,7 +797,7 @@ function buildFactSearchInput(intent, userText, activeProfile, factAvailability)
 }
 
 function isTransitBiasedQuestion(text) {
-  return /\bcurrent sky\b|\bsky right now\b|\bright now\b|\bcurrent energies\b|\bwhat'?s happening now\b|\bwhat is happening now\b|\bsky\b|\btoday\b|\bthis month\b/.test(String(text || '').toLowerCase());
+  return /\bcurrent sky\b|\bsky right now\b|\bright now\b|\bcurrent energies\b|\bwhat'?s happening now\b|\bwhat is happening now\b|\bsky\b|\btoday\b|\bthis month\b|\bthis months\b|\bce mois\b/.test(String(text || '').toLowerCase());
 }
 
 function normalizePlannerArray(value) {
@@ -899,6 +909,39 @@ function formatRawLabel(locale, labels) {
   return labels[locale] || labels.en;
 }
 
+function localizeRawType(locale, typeLabel) {
+  const normalized = String(typeLabel || '').toLowerCase();
+
+  if (normalized === 'pressure window') {
+    return formatRawLabel(locale, {
+      en: 'Pressure Window',
+      fr: 'Fenêtre de pression',
+      de: 'Druckfenster',
+      es: 'Ventana de presión'
+    });
+  }
+
+  if (normalized === 'support window') {
+    return formatRawLabel(locale, {
+      en: 'Support Window',
+      fr: 'Fenêtre de soutien',
+      de: 'Unterstützungsfenster',
+      es: 'Ventana de apoyo'
+    });
+  }
+
+  if (normalized === 'stellium') {
+    return formatRawLabel(locale, {
+      en: 'Stellium',
+      fr: 'Stellium',
+      de: 'Stellium',
+      es: 'Stellium'
+    });
+  }
+
+  return typeLabel;
+}
+
 function formatScalarValue(value) {
   if (value === null || value === undefined || value === '') {
     return null;
@@ -980,10 +1023,131 @@ function formatRawDateWindow(startValue, endValue) {
   return start || end || null;
 }
 
+function localizeRawSectionTitle(locale, key) {
+  const labels = {
+    placements: {
+      en: 'Planet placements',
+      fr: 'Placements des planètes',
+      de: 'Planetenstellungen',
+      es: 'Posiciones planetarias'
+    },
+    aspects: {
+      en: 'Major aspects',
+      fr: 'Aspects majeurs',
+      de: 'Wichtige Aspekte',
+      es: 'Aspectos mayores'
+    },
+    structures: {
+      en: 'Main structures',
+      fr: 'Structures principales',
+      de: 'Hauptstrukturen',
+      es: 'Estructuras principales'
+    },
+    natalFacts: {
+      en: 'Natal chart facts',
+      fr: 'Faits du thème natal',
+      de: 'Fakten des Geburtshoroskops',
+      es: 'Hechos de la carta natal'
+    }
+  };
+
+  return labels[key]?.[locale] || labels[key]?.en || key;
+}
+
 function normalizeRawList(values, formatter = formatScalarValue) {
   return (Array.isArray(values) ? values : [])
     .map((value) => formatter(value))
     .filter(Boolean);
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function getRawFactCore(fact) {
+  const payload = fact?.factPayload || fact?.fact_payload || {};
+  const raw = payload?.raw && typeof payload.raw === 'object' ? payload.raw : null;
+  const evidence = raw?.evidence && typeof raw.evidence === 'object'
+    ? raw.evidence
+    : (payload?.evidence && typeof payload.evidence === 'object' ? payload.evidence : payload);
+  const entities = raw?.entities && typeof raw.entities === 'object' ? raw.entities : {};
+  const importance = Array.isArray(payload?.importance) ? payload.importance : [];
+
+  return {
+    payload,
+    raw: raw || payload,
+    evidence: evidence || {},
+    entities,
+    importance: importance[0] || null
+  };
+}
+
+function normalizeDriverLabel(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return null;
+  }
+
+  const houseRulerMatch = text.match(/^(\d+)(?:st|nd|rd|th)?_ruler_house_(\d+)$/i);
+  if (houseRulerMatch) {
+    return `${houseRulerMatch[1]}th ruler in house ${houseRulerMatch[2]}`;
+  }
+
+  const houseMatch = text.match(/^house_(\d+)$/i);
+  if (houseMatch) {
+    return `House ${houseMatch[1]}`;
+  }
+
+  return humanizeRawKey(text);
+}
+
+function normalizeEntityList(values, formatter = humanizeRawKey) {
+  return normalizeRawList(values, (value) => {
+    const rendered = formatScalarValue(value);
+    return rendered ? formatter(rendered) : null;
+  });
+}
+
+function formatRawJoinedList(values, limit = 4) {
+  const items = values.filter(Boolean).slice(0, limit);
+  return items.length > 0 ? items.join(', ') : null;
+}
+
+function extractTransitTimelinePayload(result) {
+  const timeline = result?.timeline;
+  if (!timeline) {
+    return null;
+  }
+
+  if (Array.isArray(timeline?.transits)) {
+    return timeline;
+  }
+
+  if (timeline?.data && Array.isArray(timeline.data.transits)) {
+    return timeline.data;
+  }
+
+  const rawText = typeof timeline?.text === 'string'
+    ? timeline.text
+    : (typeof timeline === 'string' ? timeline : null);
+
+  if (!rawText) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawText);
+    if (Array.isArray(parsed?.transits)) {
+      return parsed;
+    }
+    if (parsed?.data && Array.isArray(parsed.data.transits)) {
+      return parsed.data;
+    }
+  } catch (_error) {
+    return null;
+  }
+
+  return null;
 }
 
 function getRawSubjectLabel(locale, subjectLabel) {
@@ -996,6 +1160,95 @@ function getRawSubjectLabel(locale, subjectLabel) {
     fr: 'vous',
     de: 'dich',
     es: 'ti'
+  });
+}
+
+function detectFullRawListingRequest(userText) {
+  const value = String(userText || '').toLowerCase();
+
+  const allAspects = (
+    /\ball (major )?aspects\b/.test(value) ||
+    /\ball my aspects\b/.test(value) ||
+    /\blist all aspects\b/.test(value) ||
+    /\btous les aspects\b/.test(value) ||
+    /\bliste tous les aspects\b/.test(value) ||
+    /\balle aspekte\b/.test(value) ||
+    /\bliste alle aspekte\b/.test(value) ||
+    /\btodos los aspectos\b/.test(value) ||
+    /\blista todos los aspectos\b/.test(value)
+  );
+
+  if (allAspects) {
+    return 'all_aspects';
+  }
+
+  const allMonthlyTransits = (
+    /\ball (monthly )?transits( this month| for this month)?\b/.test(value) ||
+    /\blist all (monthly )?transits\b/.test(value) ||
+    /\btous les transits du mois\b/.test(value) ||
+    /\bliste tous les transits\b/.test(value) ||
+    /\balle transite( dieses monats| diesen monat)?\b/.test(value) ||
+    /\bliste alle transite\b/.test(value) ||
+    /\btodos los tránsitos del mes\b/.test(value) ||
+    /\btodos los transitos del mes\b/.test(value) ||
+    /\blista todos los transitos\b/.test(value)
+  );
+
+  if (allMonthlyTransits) {
+    return 'all_monthly_transits';
+  }
+
+  return null;
+}
+
+function chunkRawItems(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function buildRawListingTitle(locale, kind, subjectLabel, extra = null) {
+  const subject = getRawSubjectLabel(locale, subjectLabel);
+
+  if (kind === 'all_aspects') {
+    const base = formatRawLabel(locale, {
+      en: `All major aspects for ${subject}`,
+      fr: `Tous les aspects majeurs pour ${subject}`,
+      de: `Alle Hauptaspekte für ${subject}`,
+      es: `Todos los aspectos mayores para ${subject}`
+    });
+    return extra ? `${base} — ${extra}` : base;
+  }
+
+  const base = formatRawLabel(locale, {
+    en: `All monthly transits for ${subject}`,
+    fr: `Tous les transits du mois pour ${subject}`,
+    de: `Alle Monatstransite für ${subject}`,
+    es: `Todos los tránsitos del mes para ${subject}`
+  });
+  return extra ? `${base} — ${extra}` : base;
+}
+
+function buildRawListingParts(locale, title, items, options = {}) {
+  const itemType = options.itemType || 'line';
+  const chunkSize = Math.max(1, Number(options.chunkSize || (itemType === 'block' ? 6 : 18)));
+  const chunks = chunkRawItems(items, chunkSize);
+
+  return chunks.map((chunk, index) => {
+    const chunkTitle = index === 0
+      ? title
+      : formatRawLabel(locale, {
+          en: `${title} (continued ${index + 1}/${chunks.length})`,
+          fr: `${title} (suite ${index + 1}/${chunks.length})`,
+          de: `${title} (Fortsetzung ${index + 1}/${chunks.length})`,
+          es: `${title} (continuación ${index + 1}/${chunks.length})`
+        });
+
+    return itemType === 'block'
+      ? normalizeRawPresentationText([chunkTitle, ...chunk].join('\n\n'))
+      : normalizeRawPresentationText([chunkTitle, ...chunk].join('\n'));
   });
 }
 
@@ -1062,7 +1315,7 @@ function isMonthlyTransitFact(fact) {
 }
 
 function buildTransitFactLines(locale, fact) {
-  const payload = fact.factPayload || fact.fact_payload || {};
+  const { evidence, entities, raw, importance } = getRawFactCore(fact);
   const lines = [];
   const title = normalizeRawTitle(fact.title) || formatRawLabel(locale, {
     en: 'Transit',
@@ -1071,32 +1324,45 @@ function buildTransitFactLines(locale, fact) {
     es: 'Tránsito'
   });
 
-  const type = payload.windowType
-    || payload.passType
-    || payload.category
+  const type = evidence.windowType
+    || evidence.window_type
+    || evidence.passType
+    || raw.kind
+    || raw.category
     || ((Array.isArray(fact.tags) ? fact.tags : []).find((tag) => String(tag).startsWith('kind:')) || '').replace(/^kind:/, '');
-  const windowText = formatRawDateWindow(payload.startDatetime, payload.endDatetime);
-  const peak = formatRawDate(payload.peakDatetime);
-  const exactHits = normalizeRawList(payload.exactHitsInMonth, (value) => formatScalarValue(value));
-  const exactDatetimes = normalizeRawList(payload.exactDatetimes, formatRawDate);
+  const windowText = formatRawDateWindow(
+    evidence.startDatetime || evidence.start_datetime,
+    evidence.endDatetime || evidence.end_datetime
+  );
+  const peak = formatRawDate(
+    evidence.peakDatetime || evidence.peak_datetime || importance?.peak_datetime
+  );
+  const exactHits = normalizeRawList(evidence.exactHitsInMonth || evidence.exact_hits_in_month, (value) => formatScalarValue(value));
+  const exactDatetimes = normalizeRawList(evidence.exactDatetimes || evidence.exact_datetimes, formatRawDate);
   const visibleWindow = (
-    payload.visibleStartDay || payload.visibleEndDay
-      ? `${payload.visibleStartDay || '?'} → ${payload.visibleEndDay || '?'}`
+    evidence.visibleStartDay || evidence.visibleEndDay || evidence.visible_start_day || evidence.visible_end_day
+      ? `${evidence.visibleStartDay || evidence.visible_start_day || '?'} → ${evidence.visibleEndDay || evidence.visible_end_day || '?'}`
       : null
   );
-  const transitPlanet = formatScalarValue(payload.transitPlanet)
-    ? humanizeRawKey(formatScalarValue(payload.transitPlanet))
+  const transitPlanetSource = evidence.transitPlanet || evidence.transit_planet || asArray(evidence.transit_planets)[0];
+  const transitPlanet = formatScalarValue(transitPlanetSource)
+    ? humanizeRawKey(formatScalarValue(transitPlanetSource))
     : null;
-  const natalPoint = formatScalarValue(payload.natalPoint)
-    ? humanizeRawKey(formatScalarValue(payload.natalPoint))
+  const natalPointSource = evidence.natalPoint || evidence.natal_point || asArray(evidence.natal_points)[0];
+  const natalPoint = formatScalarValue(natalPointSource)
+    ? humanizeRawKey(formatScalarValue(natalPointSource))
     : null;
-  const aspectType = formatScalarValue(payload.aspectType);
-  const houses = normalizeRawList(payload.houses, (value) => humanizeRawKey(formatScalarValue(value)));
+  const aspectType = formatScalarValue(evidence.aspectType || evidence.aspect_type || normalizeEntityList(entities.aspect_types)[0]);
+  const houses = normalizeRawList(evidence.houses || entities.houses, (value) => humanizeRawKey(formatScalarValue(value)));
 
   lines.push(title);
 
   if (type) {
-    lines.push(`${formatRawLabel(locale, { en: 'Type', fr: 'Type', de: 'Typ', es: 'Tipo' })}: ${humanizeRawKey(type)}`);
+    const normalizedType = humanizeRawKey(type);
+    const typeLabel = /window/i.test(String(raw.kind || '')) && !/window/i.test(normalizedType)
+      ? `${normalizedType} Window`
+      : normalizedType;
+    lines.push(`${formatRawLabel(locale, { en: 'Type', fr: 'Type', de: 'Typ', es: 'Tipo' })}: ${localizeRawType(locale, typeLabel)}`);
   }
 
   if (windowText) {
@@ -1124,7 +1390,7 @@ function buildTransitFactLines(locale, fact) {
     lines.push(`${formatRawLabel(locale, { en: 'Houses', fr: 'Maisons', de: 'Häuser', es: 'Casas' })}: ${houses.join(', ')}`);
   }
 
-  if (payload.continuesFromPreviousMonth) {
+  if (evidence.continuesFromPreviousMonth || evidence.continues_from_previous_month) {
     lines.push(formatRawLabel(locale, {
       en: 'Carries over from the previous month',
       fr: 'Se prolonge depuis le mois précédent',
@@ -1133,7 +1399,7 @@ function buildTransitFactLines(locale, fact) {
     }));
   }
 
-  if (payload.continuesToNextMonth) {
+  if (evidence.continuesToNextMonth || evidence.continues_to_next_month) {
     lines.push(formatRawLabel(locale, {
       en: 'Continues into the next month',
       fr: 'Se prolonge sur le mois suivant',
@@ -1152,7 +1418,7 @@ function buildTransitFactLines(locale, fact) {
 }
 
 function buildNatalFactLines(locale, fact) {
-  const payload = fact.factPayload || fact.fact_payload || {};
+  const { evidence, entities, raw } = getRawFactCore(fact);
   const title = normalizeRawTitle(fact.title);
   const lines = [];
 
@@ -1161,19 +1427,24 @@ function buildNatalFactLines(locale, fact) {
   }
 
   const primaryFields = [
-    ['planet', payload.planet || payload.transitPlanet],
-    ['sign', payload.sign],
-    ['house', payload.house],
-    ['aspect', payload.aspectType],
-    ['angle', payload.angle]
+    [{ en: 'Planets', fr: 'Planètes', de: 'Planeten', es: 'Planetas' }, formatRawJoinedList(normalizeEntityList(entities.planets))],
+    [{ en: 'Signs', fr: 'Signes', de: 'Zeichen', es: 'Signos' }, formatRawJoinedList(normalizeEntityList(entities.signs))],
+    [{ en: 'Houses', fr: 'Maisons', de: 'Häuser', es: 'Casas' }, formatRawJoinedList(normalizeEntityList(entities.houses))],
+    [{ en: 'Aspects', fr: 'Aspects', de: 'Aspekte', es: 'Aspectos' }, formatRawJoinedList(normalizeEntityList(entities.aspect_types))],
+    [{ en: 'Structures', fr: 'Structures', de: 'Strukturen', es: 'Estructuras' }, formatRawJoinedList(normalizeEntityList(entities.configuration_types || entities.signature_types))]
   ]
-    .map(([key, value]) => {
+    .map(([label, value]) => {
       const rendered = formatScalarValue(value);
-      return rendered ? `${formatRawLabel(locale, { en: humanizeRawKey(key), fr: humanizeRawKey(key), de: humanizeRawKey(key), es: humanizeRawKey(key) })}: ${humanizeRawKey(rendered)}` : null;
+      return rendered ? `${formatRawLabel(locale, label)}: ${humanizeRawKey(rendered)}` : null;
     })
     .filter(Boolean);
 
   lines.push(...primaryFields.slice(0, 3));
+
+  const drivers = normalizeEntityList(evidence.drivers, normalizeDriverLabel);
+  if (drivers.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Factors', fr: 'Facteurs', de: 'Faktoren', es: 'Factores' })}: ${drivers.slice(0, 4).join(', ')}`);
+  }
 
   const factText = sanitizeRawFactText(fact.factText || fact.fact_text, title);
   if (factText) {
@@ -1189,18 +1460,384 @@ function buildNatalFactLines(locale, fact) {
   return wordCount >= 3 ? filtered : [];
 }
 
+function buildNatalStructureLines(locale, fact) {
+  const title = normalizeRawTitle(fact.title);
+  const { evidence, entities, raw } = getRawFactCore(fact);
+  const lines = [];
+
+  const structureTypes = normalizeEntityList(
+    entities.configuration_types?.length > 0 ? entities.configuration_types : entities.signature_types
+  );
+  const kind = humanizeRawKey(raw?.kind || '');
+  const scope = formatScalarValue(evidence.scope)
+    ? humanizeRawKey(formatScalarValue(evidence.scope))
+    : null;
+  const sign = formatScalarValue(evidence.sign_id || asArray(entities.signs)[0])
+    ? humanizeRawKey(formatScalarValue(evidence.sign_id || asArray(entities.signs)[0]))
+    : null;
+  const house = formatScalarValue(evidence.house || evidence.house_id || asArray(entities.houses)[0]);
+  const bodies = [...new Set(normalizeEntityList(evidence.bodies?.length > 0 ? evidence.bodies : entities.planets))];
+  const handle = formatScalarValue(evidence.handle_id)
+    ? humanizeRawKey(formatScalarValue(evidence.handle_id))
+    : null;
+  const count = formatScalarValue(evidence.count);
+  const scopeLabel = scope ? scope.toLowerCase() : null;
+  const primaryStructure = structureTypes[0] || null;
+  const compactTitle = (
+    kind === 'Stellium' && scopeLabel === 'house' && house
+      ? `${formatRawLabel(locale, { en: 'Stellium in House', fr: 'Stellium en maison', de: 'Stellium in Haus', es: 'Stellium en casa' })} ${house}`
+      : kind === 'Stellium' && scopeLabel === 'sign' && sign
+        ? `${formatRawLabel(locale, { en: 'Stellium in', fr: 'Stellium en', de: 'Stellium in', es: 'Stellium en' })} ${sign}`
+        : primaryStructure === 'bucket' && handle
+          ? `${formatRawLabel(locale, { en: 'Bucket shape', fr: 'Figure en seau', de: 'Eimerfigur', es: 'Figura de cubo' })} • ${formatRawLabel(locale, { en: 'Handle', fr: 'Poignée', de: 'Henkel', es: 'Asa' })} ${handle}`
+          : primaryStructure === 'intercepted_sign' && sign
+            ? `${formatRawLabel(locale, { en: 'Intercepted sign', fr: 'Signe intercepté', de: 'Eingeschlossenes Zeichen', es: 'Signo interceptado' })} • ${sign}`
+            : title
+  );
+
+  if (compactTitle) {
+    lines.push(compactTitle);
+  }
+
+  if (kind) {
+    lines.push(`${formatRawLabel(locale, { en: 'Type', fr: 'Type', de: 'Typ', es: 'Tipo' })}: ${kind}`);
+  }
+
+  if (structureTypes.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Structure', fr: 'Structure', de: 'Struktur', es: 'Estructura' })}: ${structureTypes.join(', ')}`);
+  }
+
+  if (scope || sign || house) {
+    const parts = [
+      scope ? `${formatRawLabel(locale, { en: 'Scope', fr: 'Portée', de: 'Bereich', es: 'Alcance' })}: ${scope}` : null,
+      sign ? `${formatRawLabel(locale, { en: 'Sign', fr: 'Signe', de: 'Zeichen', es: 'Signo' })}: ${sign}` : null,
+      house ? `${formatRawLabel(locale, { en: 'House', fr: 'Maison', de: 'Haus', es: 'Casa' })}: ${house}` : null
+    ].filter(Boolean);
+
+    if (parts.length > 0) {
+      lines.push(parts.join(' • '));
+    }
+  }
+
+  if (count) {
+    lines.push(`${formatRawLabel(locale, { en: 'Bodies', fr: 'Corps', de: 'Körper', es: 'Cuerpos' })}: ${count}`);
+  }
+
+  if (bodies.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Planets', fr: 'Planètes', de: 'Planeten', es: 'Planetas' })}: ${bodies.slice(0, 8).join(', ')}`);
+  }
+
+  if (handle) {
+    lines.push(`${formatRawLabel(locale, { en: 'Focus', fr: 'Focus', de: 'Fokus', es: 'Foco' })}: ${handle}`);
+  }
+
+  return lines.filter(Boolean);
+}
+
+function formatPlanetPlacementLine(locale, planet) {
+  if (!planet) {
+    return null;
+  }
+
+  const planetName = humanizeRawKey(planet.id || planet.name || 'planet');
+  const signName = humanizeRawKey(planet.sign_id || planet.sign || '');
+  const houseValue = formatScalarValue(planet.house);
+  const retrograde = planet.is_retrograde ? formatRawLabel(locale, {
+    en: 'Rx',
+    fr: 'Rx',
+    de: 'Rx',
+    es: 'Rx'
+  }) : null;
+  const parts = [
+    `${planetName}: ${signName || '?'}`,
+    houseValue ? `${formatRawLabel(locale, { en: 'House', fr: 'Maison', de: 'Haus', es: 'Casa' })} ${houseValue}` : null,
+    retrograde
+  ].filter(Boolean);
+
+  return parts.join(' • ');
+}
+
+function formatAspectLine(locale, aspect) {
+  if (!aspect) {
+    return null;
+  }
+
+  const point1 = humanizeRawKey(aspect.planet1_id || aspect.point1_id || aspect.planet1 || aspect.point1 || '');
+  const point2 = humanizeRawKey(aspect.planet2_id || aspect.point2_id || aspect.planet2 || aspect.point2 || '');
+  const aspectType = humanizeRawKey(aspect.aspect_name || aspect.aspect_type || aspect.aspect || '');
+  const orb = formatScalarValue(aspect.orb);
+  const pieces = [
+    [point1, aspectType, point2].filter(Boolean).join(' ')
+  ];
+
+  if (orb) {
+    pieces.push(`${formatRawLabel(locale, { en: 'Orb', fr: 'Orbe', de: 'Orbis', es: 'Orbe' })}: ${orb}`);
+  }
+
+  return pieces.join(' • ');
+}
+
+function formatAspectFactLine(locale, fact) {
+  const title = normalizeRawTitle(fact.title);
+  const { entities, raw, evidence } = getRawFactCore(fact);
+  const planets = asArray(entities.planets).map((value) => humanizeRawKey(value));
+  const aspectType = humanizeRawKey(
+    evidence?.aspect_type
+    || evidence?.aspectType
+    || asArray(entities.aspect_types)[0]
+    || raw?.aspect_type
+    || raw?.aspectType
+    || fact?.aspect_type
+    || ''
+  );
+  const parts = [];
+
+  if (planets.length >= 2) {
+    parts.push([planets[0], aspectType, planets[1]].filter(Boolean).join(' '));
+  } else if (title) {
+    parts.push(title);
+  }
+
+  const orb = formatScalarValue(evidence?.orb || raw?.orb || fact?.orb);
+  if (orb) {
+    parts.push(`${formatRawLabel(locale, { en: 'Orb', fr: 'Orbe', de: 'Orbis', es: 'Orbe' })}: ${orb}`);
+  }
+
+  return parts.filter(Boolean).join(' • ');
+}
+
+function buildTransitTimelineEntryLines(locale, transit) {
+  const title = normalizeRawTitle(transit.label) || formatRawLabel(locale, {
+    en: 'Transit',
+    fr: 'Transit',
+    de: 'Transit',
+    es: 'Tránsito'
+  });
+  const lines = [title];
+  const windowText = formatRawDateWindow(transit.start_datetime, transit.end_datetime);
+  const exactHits = normalizeRawList(transit.exact_datetimes, formatRawDate);
+  const peak = formatRawDate(transit.peak_datetime);
+  const focus = [transit.transit_planet, transit.aspect_type ? humanizeRawKey(transit.aspect_type) : null, transit.natal_point]
+    .map((item) => {
+      const rendered = formatScalarValue(item);
+      return rendered ? humanizeRawKey(rendered) : null;
+    })
+    .filter(Boolean)
+    .join(' ');
+  const houses = normalizeRawList(transit.houses, (value) => humanizeRawKey(formatScalarValue(value)));
+
+  if (windowText) {
+    lines.push(`${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${windowText}`);
+  }
+
+  if (peak) {
+    lines.push(`${formatRawLabel(locale, { en: 'Peak', fr: 'Pic', de: 'Höhepunkt', es: 'Pico' })}: ${peak}`);
+  } else if (exactHits.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Exact', fr: 'Exact', de: 'Exakt', es: 'Exacto' })}: ${exactHits.slice(0, 3).join(', ')}`);
+  }
+
+  if (focus) {
+    lines.push(`${formatRawLabel(locale, { en: 'Focus', fr: 'Focus', de: 'Fokus', es: 'Foco' })}: ${focus}`);
+  }
+
+  if (houses.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Houses', fr: 'Maisons', de: 'Häuser', es: 'Casas' })}: ${houses.join(', ')}`);
+  }
+
+  return lines.filter(Boolean).join('\n');
+}
+
+function buildRawNatalOverview(locale, subjectProfile, facts, options = {}) {
+  const normalizedProfile = normalizeNatalProfile(
+    subjectProfile?.rawNatalPayload,
+    subjectProfile?.cityLabel,
+    { birthCountry: subjectProfile?.birthCountry }
+  );
+
+  const preferredPlanetOrder = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'north_node', 'chiron'];
+  const seenPlanets = new Set();
+  const placements = asArray(normalizedProfile.planets)
+    .filter((planet) => planet?.id && planet.id !== 'true_node' && planet.id !== 'lilith')
+    .filter((planet) => {
+      const id = String(planet.id || '').toLowerCase();
+      if (seenPlanets.has(id)) {
+        return false;
+      }
+
+      seenPlanets.add(id);
+      return true;
+    })
+    .sort((left, right) => preferredPlanetOrder.indexOf(String(left.id || '').toLowerCase()) - preferredPlanetOrder.indexOf(String(right.id || '').toLowerCase()))
+    .map((planet) => formatPlanetPlacementLine(locale, planet))
+    .filter(Boolean);
+
+  const indexedAspectLines = asArray(options.aspectFacts)
+    .map((fact) => formatAspectFactLine(locale, fact))
+    .filter(Boolean);
+  const aspects = (
+    indexedAspectLines.length > 0
+      ? indexedAspectLines
+      : asArray(normalizedProfile.majorAspects)
+        .slice(0, 5)
+        .map((aspect) => formatAspectLine(locale, aspect))
+        .filter(Boolean)
+  ).slice(0, 5);
+
+  const structureBlocks = [];
+  selectRawDisplayFacts(facts, options)
+    .filter((fact) => !isMonthlyTransitFact(fact))
+    .forEach((fact) => {
+      if (structureBlocks.length >= 5) {
+        return;
+      }
+
+      const lines = buildNatalStructureLines(locale, fact);
+      if (lines.length > 0 && String(lines[0] || '').trim()) {
+        structureBlocks.push(lines);
+      }
+    });
+
+  const blocks = [
+    `${localizeRawSectionTitle(locale, 'natalFacts')} ${formatRawLabel(locale, {
+      en: 'for',
+      fr: 'pour',
+      de: 'für',
+      es: 'para'
+    })} ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`
+  ];
+
+  if (placements.length > 0) {
+    blocks.push([
+      localizeRawSectionTitle(locale, 'placements'),
+      ...placements
+    ].join('\n'));
+  }
+
+  if (aspects.length > 0) {
+    blocks.push([
+      localizeRawSectionTitle(locale, 'aspects'),
+      ...aspects
+    ].join('\n'));
+  }
+
+  if (structureBlocks.length > 0) {
+    blocks.push([
+      localizeRawSectionTitle(locale, 'structures'),
+      ...structureBlocks.map((lines, index) => [`${index + 1}. ${lines[0]}`, ...lines.slice(1)].join('\n'))
+    ].join('\n'));
+  }
+
+  return normalizeRawPresentationText(blocks.join('\n\n'));
+}
+
+function scoreRawDisplayFact(fact, options = {}) {
+  const userText = String(options.userText || '').toLowerCase();
+  const answerStyle = String(options.answerStyle || '');
+  const isTransit = isMonthlyTransitFact(fact);
+  const title = String(normalizeRawTitle(fact.title) || '').toLowerCase();
+  const tags = Array.isArray(fact.tags) ? fact.tags.map((tag) => String(tag).toLowerCase()) : [];
+  const { evidence, entities, raw } = getRawFactCore(fact);
+  let score = Number(fact.importance || 0);
+
+  if (isTransit) {
+    if (evidence.start_datetime || evidence.startDatetime) score += 20;
+    if (evidence.peak_datetime || evidence.peakDatetime) score += 20;
+    if (asArray(evidence.exact_datetimes || evidence.exactDatetimes).length > 0) score += 15;
+    if (asArray(evidence.transit_planets || entities.planets).length > 0) score += 8;
+    if (asArray(evidence.houses || entities.houses).length > 0) score += 6;
+    if (/pressure window|support window|stellium|station|ingress|configuration|t square|grand trine|kite/.test(title)) score += 12;
+    return score;
+  }
+
+  const broadNatalQuestion = !/(career|work|money|love|relationship|family|spiritual|mind|mental|emotion|aspect|house|ruler|saturn|jupiter|venus|mars|mercury|moon|sun|chiron|pluto|uranus|neptune)/.test(userText)
+    && (answerStyle === 'natal_theme' || /theme|chart|natal|astro/.test(userText));
+
+  if (broadNatalQuestion) {
+    if (/(chart ruler|asc|ascendant|midheaven|mc|stellium|bucket|intercepted|shape|dominant|house stellium)/.test(title)) score += 40;
+    if (['placement', 'angle', 'stellium', 'configuration', 'dominant', 'ruler'].includes(String(raw?.kind || '').toLowerCase())) score += 28;
+    if (asArray(entities.planets).length > 0) score += 10;
+    if (asArray(entities.houses).length > 0 || asArray(entities.signs).length > 0) score += 8;
+    if (String(raw?.kind || '').toLowerCase() === 'signature') score -= 18;
+  }
+
+  if (/rare/.test(title) && !/rare|special|structure|interception/.test(userText)) {
+    score -= 50;
+  }
+
+  if (/signature rare/.test(title)) {
+    score -= 80;
+  }
+
+  return score;
+}
+
+function isBroadRawNatalQuestion(userText, answerStyle) {
+  const value = String(userText || '').toLowerCase();
+  return (
+    !/(career|work|money|love|relationship|family|spiritual|mind|mental|emotion|aspect|house|ruler|saturn|jupiter|venus|mars|mercury|moon|sun|chiron|pluto|uranus|neptune|interception|rare|signature|stellium)/.test(value) &&
+    (answerStyle === 'natal_theme' || /theme|chart|natal|astro|thème/.test(value))
+  );
+}
+
+function countConcreteRawNatalFacts(facts) {
+  return asArray(facts).filter((fact) => {
+    const title = String(normalizeRawTitle(fact.title) || '').toLowerCase();
+    const { raw, entities } = getRawFactCore(fact);
+    return (
+      ['placement', 'angle', 'stellium', 'configuration', 'ruler', 'dominant'].includes(String(raw?.kind || '').toLowerCase()) ||
+      /(chart ruler|asc|ascendant|midheaven|mc|stellium|bucket|intercepted|shape|dominant)/.test(title) ||
+      asArray(entities.houses).length > 0 ||
+      asArray(entities.signs).length > 0
+    );
+  }).length;
+}
+
+function countUsableRawCards(locale, facts, options = {}) {
+  return asArray(facts).filter((fact) => {
+    const lines = isMonthlyTransitFact(fact)
+      ? buildTransitFactLines(locale, fact)
+      : buildNatalFactLines(locale, fact);
+    return lines.length > 0 && String(lines[0] || '').trim();
+  }).length;
+}
+
+function selectRawDisplayFacts(facts, options = {}) {
+  const unique = new Map();
+  asArray(facts).forEach((fact) => {
+    const normalizedTitle = String(normalizeRawTitle(fact.title) || '').toLowerCase();
+    const key = isMonthlyTransitFact(fact)
+      ? `${fact.sourceKind || fact.source_kind}:${normalizedTitle || String(fact.factKey || '')}:${String(fact.factKey || '')}`
+      : `${fact.sourceKind || fact.source_kind}:${normalizedTitle || String(fact.factKey || '')}`;
+    if (!unique.has(key)) {
+      unique.set(key, fact);
+    }
+  });
+
+  const requestedLimit = Math.max(1, Math.min(Number(options.limit || 5), 8));
+  const candidateLimit = Math.max(requestedLimit, Math.min(requestedLimit * 3, 18));
+  return [...unique.values()]
+    .sort((left, right) => scoreRawDisplayFact(right, options) - scoreRawDisplayFact(left, options))
+    .slice(0, candidateLimit);
+}
+
 function buildRawFactCards(locale, facts, options = {}) {
   const subjectLabel = options.subjectLabel || 'Chart User';
-  const intro = buildRawFactsIntro(locale, subjectLabel, facts, options.intro || null);
+  const limit = Math.max(1, Math.min(Number(options.limit || 5), 8));
+  const rankedFacts = selectRawDisplayFacts(facts, options);
+  const intro = buildRawFactsIntro(locale, subjectLabel, rankedFacts, options.intro || null);
   const blocks = [intro];
 
   const usableFacts = [];
-  facts.slice(0, options.limit || 5).forEach((fact) => {
+  rankedFacts.forEach((fact) => {
+    if (usableFacts.length >= limit) {
+      return;
+    }
+
     const lines = isMonthlyTransitFact(fact)
       ? buildTransitFactLines(locale, fact)
       : buildNatalFactLines(locale, fact);
 
-    if (lines.length === 0) {
+    if (lines.length === 0 || !String(lines[0] || '').trim()) {
       return;
     }
 
@@ -1220,7 +1857,7 @@ function buildRawFactCards(locale, facts, options = {}) {
     }));
   }
 
-  return normalizeAssistantText(blocks.join('\n\n'));
+  return normalizeRawPresentationText(blocks.join('\n\n'));
 }
 
 function escapeTelegramHtml(value) {
@@ -1237,7 +1874,7 @@ function fitCell(value, width) {
 }
 
 function buildRawTransitTable(locale, facts, subjectProfile) {
-  const rows = facts
+  const rows = selectRawDisplayFacts(facts, { limit: 5 })
     .filter((fact) => (fact.sourceKind || fact.source_kind) === factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
     .slice(0, 5);
 
@@ -1255,8 +1892,12 @@ function buildRawTransitTable(locale, facts, subjectProfile) {
   const header = `${fitCell('#', 2)} ${fitCell('Transit', 24)} ${fitCell('Window', 23)} ${fitCell('Peak', 16)} ${fitCell('Focus', 18)}`;
   const divider = `${'-'.repeat(2)} ${'-'.repeat(24)} ${'-'.repeat(23)} ${'-'.repeat(16)} ${'-'.repeat(18)}`;
   const body = rows.map((fact, index) => {
-    const payload = fact.factPayload || fact.fact_payload || {};
-    const focus = [payload.transitPlanet, payload.aspectType ? humanizeRawKey(payload.aspectType) : null, payload.natalPoint]
+    const { evidence } = getRawFactCore(fact);
+    const focus = [
+      evidence.transitPlanet || evidence.transit_planet,
+      evidence.aspectType || evidence.aspect_type ? humanizeRawKey(evidence.aspectType || evidence.aspect_type) : null,
+      evidence.natalPoint || evidence.natal_point
+    ]
       .map((item) => {
         const rendered = formatScalarValue(item);
         return rendered ? humanizeRawKey(rendered) : null;
@@ -1267,14 +1908,14 @@ function buildRawTransitTable(locale, facts, subjectProfile) {
     return [
       fitCell(String(index + 1), 2),
       fitCell(normalizeRawTitle(fact.title) || '', 24),
-      fitCell(formatRawDateWindow(payload.startDatetime, payload.endDatetime)
-        || ((payload.visibleStartDay || payload.visibleEndDay)
-          ? `${payload.visibleStartDay || '?'}→${payload.visibleEndDay || '?'}`
+      fitCell(formatRawDateWindow(evidence.startDatetime || evidence.start_datetime, evidence.endDatetime || evidence.end_datetime)
+        || ((evidence.visibleStartDay || evidence.visibleEndDay || evidence.visible_start_day || evidence.visible_end_day)
+          ? `${evidence.visibleStartDay || evidence.visible_start_day || '?'}→${evidence.visibleEndDay || evidence.visible_end_day || '?'}`
           : (fact.cacheMonth || fact.cache_month || '')), 23),
-      fitCell(formatRawDate(payload.peakDatetime)
-        || normalizeRawList(payload.exactDatetimes, formatRawDate)[0]
-        || normalizeRawList(payload.exactHitsInMonth, formatScalarValue).join(', '), 16),
-      fitCell(focus || normalizeRawList(payload.houses, (value) => humanizeRawKey(formatScalarValue(value))).join(', '), 18)
+      fitCell(formatRawDate(evidence.peakDatetime || evidence.peak_datetime)
+        || normalizeRawList(evidence.exactDatetimes || evidence.exact_datetimes, formatRawDate)[0]
+        || normalizeRawList(evidence.exactHitsInMonth || evidence.exact_hits_in_month, formatScalarValue).join(', '), 16),
+      fitCell(focus || normalizeRawList(evidence.houses, (value) => humanizeRawKey(formatScalarValue(value))).join(', '), 18)
     ].join(' ');
   });
 
@@ -1318,7 +1959,42 @@ function collectRawToolSections(value, prefix = '', depth = 0) {
 }
 
 function buildRawToolResultText(locale, toolName, result) {
-  if (toolName === 'get_cached_monthly_transits' && result?.available && Array.isArray(result?.timeline?.transits)) {
+  if (toolName === 'get_cached_house_info' && result?.house) {
+    const house = result.house;
+    const lines = [
+      `${formatRawLabel(locale, { en: 'House', fr: 'Maison', de: 'Haus', es: 'Casa' })} ${formatScalarValue(house.house || house.name || '?')}`,
+      `${formatRawLabel(locale, { en: 'Sign', fr: 'Signe', de: 'Zeichen', es: 'Signo' })}: ${humanizeRawKey(house.sign_id || house.sign || '')}`
+    ];
+
+    if (formatScalarValue(house.pos)) {
+      lines.push(`${formatRawLabel(locale, { en: 'Degree', fr: 'Degré', de: 'Grad', es: 'Grado' })}: ${formatScalarValue(house.pos)}`);
+    }
+
+    return normalizeRawPresentationText(lines.join('\n'));
+  }
+
+  if (toolName === 'get_cached_major_aspects' && Array.isArray(result?.aspects)) {
+    const lines = result.aspects
+      .slice(0, 5)
+      .map((aspect) => formatAspectLine(locale, aspect))
+      .filter(Boolean);
+
+    return normalizeRawPresentationText([
+      localizeRawSectionTitle(locale, 'aspects'),
+      ...(lines.length > 0 ? lines : [formatRawLabel(locale, {
+        en: 'No cached major aspects are available.',
+        fr: 'Aucun aspect majeur en cache n’est disponible.',
+        de: 'Keine zwischengespeicherten Hauptaspekte verfügbar.',
+        es: 'No hay aspectos mayores en caché disponibles.'
+      })])
+    ].join('\n'));
+  }
+
+  const timelinePayload = toolName === 'get_cached_monthly_transits'
+    ? extractTransitTimelinePayload(result)
+    : null;
+
+  if (toolName === 'get_cached_monthly_transits' && result?.available && Array.isArray(timelinePayload?.transits)) {
     const title = formatRawLabel(locale, {
       en: 'Monthly transit timeline',
       fr: 'Timeline des transits du mois',
@@ -1326,7 +2002,7 @@ function buildRawToolResultText(locale, toolName, result) {
       es: 'Cronología mensual de tránsitos'
     });
     const month = formatScalarValue(result.cacheMonth);
-    const rows = result.timeline.transits.slice(0, 5).map((transit) => {
+    const rows = timelinePayload.transits.slice(0, 5).map((transit) => {
       const lines = [normalizeRawTitle(transit.label) || 'Transit'];
       const windowText = formatRawDateWindow(transit.start_datetime, transit.end_datetime);
       const exactHits = normalizeRawList(transit.exact_datetimes, formatRawDate);
@@ -1353,7 +2029,7 @@ function buildRawToolResultText(locale, toolName, result) {
       return lines.join('\n');
     });
 
-    return normalizeAssistantText([
+    return normalizeRawPresentationText([
       month ? `${title} — ${month}` : title,
       ...rows
     ].join('\n\n'));
@@ -1388,13 +2064,36 @@ function buildRawToolLoopAnswer(locale, subjectProfile, toolResults = []) {
     es: `Resultados factuales para ${getRawSubjectLabel(locale, subjectLabel)}`
   });
 
+  const hasIndexedFacts = toolResults.some((tool) => (
+    tool?.name === 'search_cached_profile_facts' &&
+    Array.isArray(tool?.result?.facts) &&
+    tool.result.facts.length > 0
+  ));
+
   const sections = toolResults
     .filter((tool) => tool?.result && !tool.result?.error)
     .filter((tool) => !(tool.name === 'get_cached_monthly_transits' && tool.result?.available === false))
+    .filter((tool) => !(hasIndexedFacts && tool.name === 'get_cached_monthly_transits'))
     .map((tool) => {
       if (tool.name === 'search_cached_profile_facts' && Array.isArray(tool.result?.facts)) {
+        const broadNatalRaw = (
+          subjectProfile?.rawNatalPayload &&
+          tool.result.facts.some((fact) => (fact.source_kind || fact.sourceKind) === factIndex.NATAL_SOURCE_KIND) &&
+          tool.result.facts.every((fact) => (fact.source_kind || fact.sourceKind) !== factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+        );
+
+        if (broadNatalRaw) {
+          return buildRawNatalOverview(locale, subjectProfile, tool.result.facts, {
+            subjectLabel,
+            userText: tool.result?.questionText || '',
+            limit: 5
+          });
+        }
+
         return buildRawFactCards(locale, tool.result.facts, {
           subjectLabel,
+          userText: tool.result?.questionText || '',
+          subjectProfile,
           limit: 5
         });
       }
@@ -1404,7 +2103,7 @@ function buildRawToolLoopAnswer(locale, subjectProfile, toolResults = []) {
     .filter(Boolean);
 
   if (sections.length === 0) {
-    return normalizeAssistantText([
+    return normalizeRawPresentationText([
       intro,
       formatRawLabel(locale, {
         en: 'No grounded raw result is available for this question.',
@@ -1415,7 +2114,58 @@ function buildRawToolLoopAnswer(locale, subjectProfile, toolResults = []) {
     ].join('\n\n'));
   }
 
-  return normalizeAssistantText([intro, ...sections].join('\n\n'));
+  return normalizeRawPresentationText([intro, ...sections].join('\n\n'));
+}
+
+function buildRawRelocationNeedsText(locale, subjectProfile) {
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const title = formatRawLabel(locale, {
+    en: `Relocation inputs needed for ${subject}`,
+    fr: `Paramètres de relocalisation requis pour ${subject}`,
+    de: `Benötigte Relokationsangaben für ${subject}`,
+    es: `Datos de relocalización necesarios para ${subject}`
+  });
+
+  const linesByLocale = {
+    en: [
+      title,
+      'To return grounded relocation results, I need:',
+      '1. Your main goal: career, love, home, wellbeing, creativity, or spiritual growth.',
+      '2. One target city, or up to 3 cities/countries to compare.',
+      '3. Optional timeframe if the move is tied to a specific month or year.'
+    ],
+    fr: [
+      title,
+      'Pour renvoyer des résultats de relocalisation fondés, il me faut :',
+      '1. Votre objectif principal : carrière, amour, foyer, bien-être, créativité ou croissance spirituelle.',
+      '2. Une ville cible, ou jusqu’à 3 villes/pays à comparer.',
+      '3. Optionnel : la période visée si le déménagement dépend d’un mois ou d’une année précise.'
+    ],
+    de: [
+      title,
+      'Für belastbare Relokationsresultate brauche ich:',
+      '1. Dein Hauptziel: Karriere, Liebe, Zuhause, Wohlbefinden, Kreativität oder spirituelles Wachstum.',
+      '2. Eine Zielstadt oder bis zu 3 Städte/Länder zum Vergleich.',
+      '3. Optional einen Zeitraum, falls der Umzug an einen bestimmten Monat oder ein Jahr gebunden ist.'
+    ],
+    es: [
+      title,
+      'Para devolver resultados de relocalización fundamentados, necesito:',
+      '1. Tu objetivo principal: carrera, amor, hogar, bienestar, creatividad o crecimiento espiritual.',
+      '2. Una ciudad objetivo, o hasta 3 ciudades/países para comparar.',
+      '3. Opcional: el periodo si la mudanza depende de un mes o año concreto.'
+    ]
+  };
+
+  return normalizeRawPresentationText((linesByLocale[locale] || linesByLocale.en).join('\n'));
+}
+
+function needsRelocationInputs(userText) {
+  const value = String(userText || '').toLowerCase();
+  const hasGoal = /\bcareer\b|\bwork\b|\blove\b|\bhome\b|\bfamily\b|\bwellbeing\b|\bcreativity\b|\bspiritual\b|\bcarri[èe]re\b|\bamour\b|\bfoyer\b|\bfamille\b|\bbien[- ]?[êe]tre\b|\bcr[ée]ativit[ée]\b|\bspirituel\b/i.test(value);
+  const hasSpecificLocation = /\b(to|in|at|vers|à|a|en|au|aux)\s+[a-zà-ÿ' -]{2,}\b/i.test(value) && !/\b(world|monde|everywhere|partout)\b/i.test(value);
+  const isOpenEndedWorldAsk = /\bwhere should i\b|\bo[uù]\b.*\bhabiter\b|\bo[uù]\b.*\bvivre\b|\bdans le monde\b|\bin the world\b/i.test(value);
+  return isOpenEndedWorldAsk && !hasGoal && !hasSpecificLocation;
 }
 
 function summarizeFactTags(tags, limit = 5) {
@@ -1585,7 +2335,9 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   }
 
   const startedAt = performance.now();
-  const transitBiased = isTransitBiasedQuestion(userText);
+  const rawMode = options.responseMode === 'raw';
+  const transitBiased = isTransitBiasedQuestion(userText)
+    || plannedRoute?.sourceKinds?.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND);
   let searchInput = plannedRoute && plannedRoute.target === 'indexed_facts'
     ? {
         primaryProfileId: subjectProfile.profileId,
@@ -1672,23 +2424,92 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     }
   }
 
+  if (
+    rawMode &&
+    searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
+    isBroadRawNatalQuestion(userText, plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText)) &&
+    (
+      countConcreteRawNatalFacts(facts) < 5 ||
+      countUsableRawCards(locale, facts, {
+        userText,
+        answerStyle: plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText),
+        limit: 5
+      }) < 5
+    )
+  ) {
+    const broadNatalInput = {
+      primaryProfileId: subjectProfile.profileId,
+      secondaryProfileId: null,
+      sourceKinds: [factIndex.NATAL_SOURCE_KIND],
+      categories: [],
+      tags: [],
+      cacheMonth: null,
+      limit: 12
+    };
+    const broadNatalFacts = await factIndex.searchFacts(identity, broadNatalInput);
+    const currentConcreteCount = countConcreteRawNatalFacts(facts);
+    const broadConcreteCount = countConcreteRawNatalFacts(broadNatalFacts);
+    const currentUsableCount = countUsableRawCards(locale, facts, {
+      userText,
+      answerStyle: plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText),
+      limit: 5
+    });
+    const broadUsableCount = countUsableRawCards(locale, broadNatalFacts, {
+      userText,
+      answerStyle: plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText),
+      limit: 5
+    });
+    if (
+      broadConcreteCount > currentConcreteCount ||
+      broadUsableCount > currentUsableCount
+    ) {
+      searchInput = broadNatalInput;
+      facts = broadNatalFacts;
+    }
+  }
+
   if (facts.length < 2) {
     return null;
   }
 
   const answerStyle = plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText);
-  const rawMode = options.responseMode === 'raw';
-  const draftAnswer = rawMode
-    ? buildRawFactCards(locale, facts, {
-        subjectLabel: subjectProfile?.profileName || 'Chart User',
-        intro: formatRawLabel(locale, {
-          en: 'Indexed facts',
-          fr: 'Faits indexés',
-          de: 'Indexierte Fakten',
-          es: 'Hechos indexados'
-        }),
+  const aspectFacts = (
+    rawMode &&
+    subjectProfile?.rawNatalPayload &&
+    searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
+    isBroadRawNatalQuestion(userText, answerStyle)
+  )
+    ? await factIndex.searchFacts(identity, {
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null,
+        sourceKinds: [factIndex.NATAL_SOURCE_KIND],
+        categories: [],
+        tags: ['kind:aspect'],
+        cacheMonth: null,
         limit: 5
       })
+    : [];
+  const draftAnswer = rawMode
+    ? (
+        rawMode &&
+        subjectProfile?.rawNatalPayload &&
+        searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
+        isBroadRawNatalQuestion(userText, answerStyle)
+          ? buildRawNatalOverview(locale, subjectProfile, facts, {
+              subjectLabel: subjectProfile?.profileName || 'Chart User',
+              userText,
+              aspectFacts,
+              answerStyle,
+              limit: 5
+            })
+          : buildRawFactCards(locale, facts, {
+              subjectLabel: subjectProfile?.profileName || 'Chart User',
+              userText,
+              subjectProfile,
+              answerStyle,
+              limit: 5
+            })
+      )
     : buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle);
   if (!draftAnswer) {
     return null;
@@ -1741,6 +2562,202 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     }],
     durationMs: Math.round(performance.now() - startedAt),
     rewriteDurationMs
+  };
+}
+
+async function tryFullRawListing(identity, userText, subjectProfile, factAvailability, locale, requestKind, monthlyTransitCache = null) {
+  if (requestKind === 'all_aspects') {
+    const aspectFacts = await factIndex.searchFacts(identity, {
+      primaryProfileId: subjectProfile.profileId,
+      secondaryProfileId: null,
+      sourceKinds: [factIndex.NATAL_SOURCE_KIND],
+      categories: [],
+      tags: ['kind:aspect'],
+      cacheMonth: null,
+      limit: 120
+    });
+
+    const indexedLines = aspectFacts
+      .map((fact) => formatAspectFactLine(locale, fact))
+      .filter(Boolean);
+
+    const normalizedProfile = normalizeNatalProfile(
+      subjectProfile.rawNatalPayload,
+      subjectProfile.cityLabel,
+      { birthCountry: subjectProfile.birthCountry }
+    );
+    const fallbackLines = asArray(normalizedProfile.majorAspects)
+      .map((aspect) => formatAspectLine(locale, aspect))
+      .filter(Boolean);
+    const lines = indexedLines.length > 0 ? indexedLines : fallbackLines;
+
+    if (lines.length === 0) {
+      return {
+        textParts: [normalizeRawPresentationText(formatRawLabel(locale, {
+          en: `No major aspects are available for ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`,
+          fr: `Aucun aspect majeur n’est disponible pour ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`,
+          de: `Keine Hauptaspekte für ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} verfügbar.`,
+          es: `No hay aspectos mayores disponibles para ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`
+        }))],
+        usedTools: indexedLines.length > 0
+          ? [{
+              name: 'search_cached_profile_facts',
+              args: {
+                primaryProfileId: subjectProfile.profileId,
+                secondaryProfileId: null,
+                sourceKinds: [factIndex.NATAL_SOURCE_KIND],
+                categories: [],
+                tags: ['kind:aspect'],
+                cacheMonth: null,
+                limit: 120
+              },
+              result: {
+                available: false,
+                facts: []
+              }
+            }]
+          : [{
+              name: 'get_cached_major_aspects',
+              args: { limit: 120 },
+              result: { aspects: [] }
+            }],
+        renderMode: 'plain'
+      };
+    }
+
+    return {
+      textParts: buildRawListingParts(
+        locale,
+        buildRawListingTitle(locale, 'all_aspects', subjectProfile.profileName, String(lines.length)),
+        lines,
+        { itemType: 'line', chunkSize: 18 }
+      ),
+      usedTools: indexedLines.length > 0
+        ? [{
+            name: 'search_cached_profile_facts',
+            args: {
+              primaryProfileId: subjectProfile.profileId,
+              secondaryProfileId: null,
+              sourceKinds: [factIndex.NATAL_SOURCE_KIND],
+              categories: [],
+              tags: ['kind:aspect'],
+              cacheMonth: null,
+              limit: 120
+            },
+            result: {
+              available: true,
+              facts: aspectFacts.map((fact) => ({
+                category: fact.category,
+                title: fact.title,
+                tags: fact.tags,
+                fact_text: fact.factText,
+                fact_payload: fact.factPayload,
+                source_kind: fact.sourceKind,
+                cache_month: fact.cacheMonth
+              }))
+            }
+          }]
+        : [{
+            name: 'get_cached_major_aspects',
+            args: { limit: 120 },
+            result: { aspects: normalizedProfile.majorAspects || [] }
+          }],
+      renderMode: 'plain'
+    };
+  }
+
+  let ensuredTransitCache = monthlyTransitCache;
+  if (!ensuredTransitCache) {
+    const ensuredTimeline = await toolCache.ensureMonthlyTransitTimeline(identity, subjectProfile, { source: 'runtime' });
+    ensuredTransitCache = ensuredTimeline?.cacheEntry || await toolCache.getCurrentMonthTransitCache(identity, subjectProfile);
+  }
+
+  const indexedFacts = await factIndex.searchFacts(identity, {
+    primaryProfileId: subjectProfile.profileId,
+    secondaryProfileId: null,
+    sourceKinds: [factIndex.MONTHLY_TRANSIT_SOURCE_KIND],
+    categories: [],
+    tags: [],
+    cacheMonth: factAvailability?.indexedTransitCacheMonth || ensuredTransitCache?.cacheMonth || null,
+    limit: 200
+  });
+
+  const indexedBlocks = indexedFacts
+    .map((fact) => buildTransitFactLines(locale, fact))
+    .filter((lines) => Array.isArray(lines) && lines.length > 0)
+    .map((lines) => lines.join('\n'));
+
+  const timelinePayload = extractTransitTimelinePayload(ensuredTransitCache?.response || ensuredTransitCache);
+  const timelineBlocks = Array.isArray(timelinePayload?.transits)
+    ? timelinePayload.transits.map((transit) => buildTransitTimelineEntryLines(locale, transit)).filter(Boolean)
+    : [];
+
+  const useIndexedFacts = (
+    indexedBlocks.length > 0 &&
+    (
+      timelineBlocks.length === 0 ||
+      indexedBlocks.length >= timelineBlocks.length
+    )
+  );
+  const selectedBlocks = useIndexedFacts ? indexedBlocks : timelineBlocks;
+  const cacheMonth = factAvailability?.indexedTransitCacheMonth || ensuredTransitCache?.cacheMonth || null;
+
+  if (selectedBlocks.length === 0) {
+    return {
+      textParts: [normalizeRawPresentationText(formatRawLabel(locale, {
+        en: `No monthly transit listing is available for ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`,
+        fr: `Aucune liste de transits du mois n’est disponible pour ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`,
+        de: `Keine Monatstransitliste für ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} verfügbar.`,
+        es: `No hay lista de tránsitos del mes disponible para ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`
+      }))],
+      usedTools: [],
+      renderMode: 'plain'
+    };
+  }
+
+  return {
+    textParts: buildRawListingParts(
+      locale,
+      buildRawListingTitle(locale, 'all_monthly_transits', subjectProfile.profileName, cacheMonth || String(selectedBlocks.length)),
+      selectedBlocks,
+      { itemType: 'block', chunkSize: 6 }
+    ),
+    usedTools: useIndexedFacts
+      ? [{
+          name: 'search_cached_profile_facts',
+          args: {
+            primaryProfileId: subjectProfile.profileId,
+            secondaryProfileId: null,
+            sourceKinds: [factIndex.MONTHLY_TRANSIT_SOURCE_KIND],
+            categories: [],
+            tags: [],
+            cacheMonth: cacheMonth || null,
+            limit: 200
+          },
+          result: {
+            available: true,
+            facts: indexedFacts.map((fact) => ({
+              category: fact.category,
+              title: fact.title,
+              tags: fact.tags,
+              fact_text: fact.factText,
+              fact_payload: fact.factPayload,
+              source_kind: fact.sourceKind,
+              cache_month: fact.cacheMonth
+            }))
+          }
+        }]
+      : [{
+          name: 'get_cached_monthly_transits',
+          args: {},
+          result: {
+            available: Boolean(ensuredTransitCache),
+            cacheMonth: ensuredTransitCache?.cacheMonth || null,
+            tool: ensuredTransitCache?.toolName || null,
+            timeline: ensuredTransitCache?.response || null
+          }
+        }],
+    renderMode: 'plain'
   };
 }
 
@@ -1885,7 +2902,13 @@ async function createLocalToolExecutor(identity, subjectProfile, factAvailabilit
       }
       case 'get_cached_monthly_transits':
         {
-          const monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, subjectProfile);
+          let monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, subjectProfile);
+
+          if (!monthlyTransitCache) {
+            const ensuredTimeline = await toolCache.ensureMonthlyTransitTimeline(identity, subjectProfile, { source: 'runtime' });
+            monthlyTransitCache = ensuredTimeline?.cacheEntry || await toolCache.getCurrentMonthTransitCache(identity, subjectProfile);
+          }
+
           if (monthlyTransitCache) {
             await toolCache.ensureMonthlyTransitInsights(identity, subjectProfile, { source: 'runtime' });
           }
@@ -1993,7 +3016,7 @@ function validateFinalAnswer(text, route, locale) {
 }
 
 function validateRawAnswer(text, locale) {
-  const normalized = normalizeAssistantText(text);
+  const normalized = normalizeRawPresentationText(text);
 
   if (RAW_INTERPRETIVE_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return formatRawLabel(locale, {
@@ -2103,6 +3126,19 @@ async function answerConversation(identity, userText) {
     };
   }
 
+  if (responseMode === 'raw' && route.kind === 'astrology_relocation' && needsRelocationInputs(userText)) {
+    const text = buildRawRelocationNeedsText(locale, subjectProfile);
+    pushHistory(identity, 'user', userText);
+    pushHistory(identity, 'model', text);
+    setLastToolResults(identity, []);
+    updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
+    return {
+      text,
+      usedTools: [],
+      intent: route.kind
+    };
+  }
+
   if (!subjectProfile?.rawNatalPayload) {
     return {
       text: {
@@ -2130,8 +3166,51 @@ async function answerConversation(identity, userText) {
     : await factIndex.getProfileFactAvailability(identity, subjectProfile, {
         cacheMonth: monthlyTransitCache?.cacheMonth || null
       });
+  const fullRawListing = responseMode === 'raw' ? detectFullRawListingRequest(userText) : null;
+
+  if (fullRawListing) {
+    const fullRawResult = await tryFullRawListing(
+      identity,
+      userText,
+      subjectProfile,
+      factAvailability,
+      locale,
+      fullRawListing,
+      monthlyTransitCache
+    );
+
+    if (fullRawResult) {
+      const textParts = Array.isArray(fullRawResult.textParts) ? fullRawResult.textParts : [fullRawResult.text].filter(Boolean);
+      pushHistory(identity, 'user', userText);
+      pushHistory(identity, 'model', textParts.join('\n\n'));
+      setLastToolResults(identity, fullRawResult.usedTools || []);
+      updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
+
+      return {
+        text: textParts[0] || '',
+        textParts,
+        renderMode: fullRawResult.renderMode || 'plain',
+        usedTools: fullRawResult.usedTools || [],
+        intent: route.kind
+      };
+    }
+  }
+
   const plannedRoute = buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAvailability)
-    || await planFactSearchQuery(locale, plannerQuestionText, intent, subjectProfile, factAvailability);
+    || (route.kind === 'astrology_relocation'
+      ? {
+          target: 'mcp',
+          primaryProfileId: subjectProfile.profileId,
+          secondaryProfileId: null,
+          sourceKinds: [],
+          categories: [],
+          tags: [],
+          cacheMonth: null,
+          limit: 4,
+          reason: 'Relocation and astrocartography questions require MCP tools.',
+          answerStyle: 'system_answer'
+        }
+      : await planFactSearchQuery(locale, plannerQuestionText, intent, subjectProfile, factAvailability));
   if (plannedRoute && !plannedRoute.answerStyle) {
     plannedRoute.answerStyle = route.answerStyle;
   }
@@ -2160,7 +3239,9 @@ async function answerConversation(identity, userText) {
     mcpStatus = `unavailable (${error.message || 'connection failed'})`;
   }
 
-  const allDeclarations = [...localDeclarations, ...mcpDeclarations];
+  const allDeclarations = route.kind === 'astrology_relocation'
+    ? [...mcpDeclarations]
+    : [...localDeclarations, ...mcpDeclarations];
   const localOnlyPreferred = shouldPreferIndexedFacts || isLocalOnlyPreferred(effectiveIntent, factAvailability);
   const localExecutor = await createLocalToolExecutor(identity, subjectProfile, factAvailability);
   const executionContext = {
@@ -2324,7 +3405,12 @@ async function answerConversation(identity, userText) {
   if (responseMode === 'raw') {
     result = {
       ...result,
-      text: buildRawToolLoopAnswer(locale, subjectProfile, result.toolResults)
+      text: (
+        route.kind === 'astrology_relocation' &&
+        (!Array.isArray(result.toolResults) || result.toolResults.length === 0)
+      )
+        ? buildRawRelocationNeedsText(locale, subjectProfile)
+        : buildRawToolLoopAnswer(locale, subjectProfile, result.toolResults)
     };
   }
 

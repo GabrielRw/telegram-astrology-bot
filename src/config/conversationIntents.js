@@ -12,10 +12,14 @@ const INTENTS = [
       /\bastrocart/i,
       /\bcity\b/i,
       /\bville\b/i,
+      /\bhabiter\b/i,
+      /\bvivre\b/i,
       /\bstadt\b/i,
       /\bciudad\b/i,
       /\bwhere should i\b/i,
       /\bo[uù] devrais-je\b/i,
+      /\bo[uù] est ce que je dois habiter\b/i,
+      /\bo[uù] vivre\b/i,
       /\bwo sollte ich\b/i,
       /\bd[óo]nde deber[ií]a\b/i
     ],
@@ -91,7 +95,7 @@ function historyImpliesRelocation(history) {
     .map((item) => String(item?.text || ''))
     .join(' ');
 
-  return /\brelocat|\bastrocart|\bwhere should i relocate|\bwhich city|\bmoving to france|\bprimary goal\b|\bo[uù] devrais-je|\bquelle ville\b|\bumzieh|\bwelche stadt\b|\bd[óo]nde deber[ií]a|\bqu[ée] ciudad\b/i.test(recentText);
+  return /\brelocat|\bastrocart|\bwhere should i relocate|\bwhich city|\bmoving to france|\bprimary goal\b|\bo[uù] devrais-je|\bo[uù] est ce que je dois habiter\b|\bo[uù] vivre\b|\bquelle ville\b|\bumzieh|\bwelche stadt\b|\bd[óo]nde deber[ií]a|\bqu[ée] ciudad\b/i.test(recentText);
 }
 
 function detectConversationIntent(text, history = []) {
