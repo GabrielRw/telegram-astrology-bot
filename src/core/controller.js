@@ -408,7 +408,7 @@ async function sendProfileActions(event, channelApi, chatState) {
     });
   }
 
-  await sendChoiceBatches(event, channelApi, t(event, 'prompts.profileActions'), choices);
+  await channelApi.sendChoices(event, t(event, 'prompts.profileActions'), choices);
 
   if (otherProfiles.length > 1) {
     const switchChoices = otherProfiles.slice(1).map((entry) => ({
