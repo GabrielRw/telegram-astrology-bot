@@ -946,14 +946,17 @@ function buildCanonicalToolPrompt(route, userText, subjectProfile, result, local
   return { systemInstruction, userPrompt };
 }
 
-async function presentCanonicalToolResult(locale, route, userText, subjectProfile, toolCallResult, responseMode) {
+async function presentCanonicalToolResult(locale, route, userText, subjectProfile, toolCallResult, responseMode, channel = null) {
   const toolResults = [{
     name: route.toolTarget,
     result: toolCallResult
   }];
 
   if (responseMode === 'raw') {
-    return buildRawToolLoopAnswer(locale, subjectProfile, toolResults);
+    return buildRawToolLoopResponse(locale, subjectProfile, toolResults, {
+      channel,
+      userText
+    });
   }
 
   const { systemInstruction, userPrompt } = buildCanonicalToolPrompt(route, userText, subjectProfile, toolCallResult, locale);
@@ -972,7 +975,10 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
       toolTarget: route.toolTarget,
       error: error?.message || String(error)
     });
-    return buildRawToolLoopAnswer(locale, subjectProfile, toolResults);
+    return buildRawToolLoopResponse(locale, subjectProfile, toolResults, {
+      channel,
+      userText
+    });
   }
 }
 
@@ -1321,10 +1327,19 @@ async function executeCanonicalToolRoute(identity, route, userText, subjectProfi
     executor: (resolvedArgs) => mcpService.callToolByOriginalName(execution.toolName, resolvedArgs)
   });
 
-  const text = await presentCanonicalToolResult(locale, route, userText, subjectProfile, resolved.result, responseMode);
+  const presented = await presentCanonicalToolResult(
+    locale,
+    route,
+    userText,
+    subjectProfile,
+    resolved.result,
+    responseMode,
+    identity?.channel || null
+  );
   return {
-    text,
-    renderMode: 'plain',
+    text: typeof presented === 'string' ? presented : presented.text,
+    textParts: typeof presented === 'string' ? undefined : presented.textParts,
+    renderMode: typeof presented === 'string' ? 'plain' : (presented.renderMode || 'plain'),
     usedTools: [{
       name: execution.toolName,
       args: execution.requestArgs,
@@ -2993,7 +3008,7 @@ function buildRawToolResultText(locale, toolName, result) {
   return lines.join('\n');
 }
 
-function buildRawToolLoopAnswer(locale, subjectProfile, toolResults = []) {
+function buildRawToolLoopResponse(locale, subjectProfile, toolResults = [], options = {}) {
   const subjectLabel = subjectProfile?.profileName || 'Chart User';
   const intro = formatRawLabel(locale, {
     en: `Grounded results for ${getRawSubjectLabel(locale, subjectLabel)}`,
@@ -3021,27 +3036,50 @@ function buildRawToolLoopAnswer(locale, subjectProfile, toolResults = []) {
         );
 
         if (broadNatalRaw) {
-          return buildRawNatalOverview(locale, subjectProfile, tool.result.facts, {
-            subjectLabel,
-            userText: tool.result?.questionText || '',
-            limit: 5
-          });
+          if (options.channel === 'telegram') {
+            const textParts = splitTelegramHtmlSections(buildTelegramRawNatalOverviewHtml(locale, subjectProfile, tool.result.facts, {
+              subjectLabel,
+              userText: options.userText || tool.result?.questionText || '',
+              limit: 5
+            }));
+            return {
+              kind: 'telegram_html',
+              text: textParts[0] || '',
+              textParts
+            };
+          }
+
+          return {
+            kind: 'plain',
+            text: buildRawNatalOverview(locale, subjectProfile, tool.result.facts, {
+              subjectLabel,
+              userText: options.userText || tool.result?.questionText || '',
+              limit: 5
+            })
+          };
         }
 
-        return buildRawFactCards(locale, tool.result.facts, {
-          subjectLabel,
-          userText: tool.result?.questionText || '',
-          subjectProfile,
-          limit: 5
-        });
+        return {
+          kind: 'plain',
+          text: buildRawFactCards(locale, tool.result.facts, {
+            subjectLabel,
+            userText: options.userText || tool.result?.questionText || '',
+            subjectProfile,
+            limit: 5
+          })
+        };
       }
 
-      return buildRawToolResultText(locale, tool.name, tool.result);
+      return {
+        kind: 'plain',
+        text: buildRawToolResultText(locale, tool.name, tool.result)
+      };
     })
     .filter(Boolean);
 
   if (sections.length === 0) {
-    return normalizeRawPresentationText([
+    return {
+      text: normalizeRawPresentationText([
       intro,
       formatRawLabel(locale, {
         en: 'No grounded raw result is available for this question.',
@@ -3049,10 +3087,30 @@ function buildRawToolLoopAnswer(locale, subjectProfile, toolResults = []) {
         de: 'Für diese Frage ist kein belastbares Rohresultat verfügbar.',
         es: 'No hay un resultado bruto fundamentado disponible para esta pregunta.'
       })
-    ].join('\n\n'));
+      ].join('\n\n')),
+      renderMode: 'plain',
+      textParts: undefined
+    };
   }
 
-  return normalizeRawPresentationText([intro, ...sections].join('\n\n'));
+  const telegramHtmlSection = sections.find((section) => section?.kind === 'telegram_html');
+  if (telegramHtmlSection) {
+    return {
+      text: telegramHtmlSection.text,
+      textParts: telegramHtmlSection.textParts,
+      renderMode: 'telegram_html'
+    };
+  }
+
+  return {
+    text: normalizeRawPresentationText([intro, ...sections.map((section) => section.text)].join('\n\n')),
+    renderMode: 'plain',
+    textParts: undefined
+  };
+}
+
+function buildRawToolLoopAnswer(locale, subjectProfile, toolResults = [], options = {}) {
+  return buildRawToolLoopResponse(locale, subjectProfile, toolResults, options).text;
 }
 
 function buildRawRelocationNeedsText(locale, subjectProfile) {
@@ -4318,6 +4376,7 @@ async function answerConversation(identity, userText) {
 
     return {
       text: finalText,
+      textParts: rawTransitTable ? undefined : fastPathResult.textParts,
       renderMode: rawTransitTable ? 'telegram_pre' : (fastPathResult.renderMode || 'plain'),
       usedTools: fastPathResult.usedTools,
       intent: route.kind
@@ -4346,6 +4405,7 @@ async function answerConversation(identity, userText) {
 
       return {
         text: finalText,
+        textParts: canonicalToolResult.textParts,
         renderMode: canonicalToolResult.renderMode || 'plain',
         usedTools: canonicalToolResult.usedTools || [],
         intent: route.kind
@@ -4377,14 +4437,25 @@ async function answerConversation(identity, userText) {
   });
 
   if (responseMode === 'raw') {
+    const rawToolLoopResponse = (
+      route.kind === 'astrology_relocation' &&
+      (!Array.isArray(result.toolResults) || result.toolResults.length === 0)
+    )
+      ? {
+          text: buildRawRelocationNeedsText(locale, subjectProfile),
+          renderMode: 'plain',
+          textParts: undefined
+        }
+      : buildRawToolLoopResponse(locale, subjectProfile, result.toolResults, {
+          channel: identity?.channel || null,
+          userText
+        });
+
     result = {
       ...result,
-      text: (
-        route.kind === 'astrology_relocation' &&
-        (!Array.isArray(result.toolResults) || result.toolResults.length === 0)
-      )
-        ? buildRawRelocationNeedsText(locale, subjectProfile)
-        : buildRawToolLoopAnswer(locale, subjectProfile, result.toolResults)
+      text: rawToolLoopResponse.text,
+      textParts: rawToolLoopResponse.textParts,
+      renderMode: rawToolLoopResponse.renderMode || result.renderMode || 'plain'
     };
   }
 
@@ -4398,6 +4469,7 @@ async function answerConversation(identity, userText) {
 
   return {
     text: finalText,
+    textParts: result.textParts,
     renderMode: result.renderMode || 'plain',
     usedTools: result.toolResults,
     intent: route.kind
