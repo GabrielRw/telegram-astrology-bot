@@ -35,10 +35,12 @@ const {
   consumePendingQuestion,
   getChoiceMap,
   getChatState,
+  getResponseMode,
   notifyPersistence,
   setChoiceMap,
   setPendingSynastryQuestion,
-  setPendingQuestion
+  setPendingQuestion,
+  setResponseMode
 } = require('../state/chatState');
 const {
   formatNatalMessage,
@@ -55,6 +57,7 @@ const ACTIONS = {
   PROFILE_UPDATE: 'PROFILE_UPDATE',
   PROFILE_RESET: 'PROFILE_RESET',
   PROFILE_SHOW_CHART: 'PROFILE_SHOW_CHART',
+  PROFILE_TOGGLE_RESPONSE_MODE: 'PROFILE_TOGGLE_RESPONSE_MODE',
   SYNASTRY_PARTNER_PREFIX: 'SYNASTRY_PARTNER_'
 };
 
@@ -204,6 +207,13 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
       return true;
     }
 
+    if (result?.renderMode === 'telegram_pre' && event.channel === 'telegram') {
+      await channelApi.editText(event, loadingRef, result.text, { html: true });
+      await billing.recordAnsweredQuestion(event);
+      await maybeSendAstroMap(event, channelApi, userText, result);
+      return true;
+    }
+
     const chunks = splitConversationReply(result.text);
 
     if (chunks.length === 0) {
@@ -282,7 +292,9 @@ async function maybeSendAstroMap(event, channelApi, userText, conversationResult
     const rendered = await renderAstrocartographyMap({
       locale: getLocale(event),
       toolResults: conversationResult.usedTools,
-      userText
+      userText,
+      renderMode: 'atlas',
+      projectionName: 'equirectangular'
     });
 
     if (!rendered) {
@@ -321,6 +333,8 @@ function buildProfileMessage(chatState, access) {
   const timeLine = profile.timeKnown
     ? t(locale, 'profile.birthTimeSaved', { value: String(profile.birthDatetime).slice(11, 16) || 'Saved' })
     : t(locale, 'profile.birthTimeMissing');
+  const responseMode = getResponseMode(chatState);
+  const responseModeLabel = t(locale, `responseModes.${responseMode}`);
 
   return [
     t(locale, 'profile.title'),
@@ -331,6 +345,7 @@ function buildProfileMessage(chatState, access) {
     t(locale, 'profile.city', { value: city }),
     timeLine,
     t(locale, 'profile.language', { value: getLanguageName(chatState.locale, locale) }),
+    t(locale, 'profile.responseMode', { value: responseModeLabel }),
     t(locale, 'profile.billing', {
       value: billing.getBillingStatusLabel(access, (path, args) => t(locale, path, args))
     }),
@@ -341,11 +356,16 @@ function buildProfileMessage(chatState, access) {
 }
 
 async function sendProfileActions(event, channelApi, chatState) {
+  const responseMode = getResponseMode(chatState);
   const choices = [
     { id: ACTIONS.PROFILE_ADD, title: t(event, 'buttons.addProfile') },
     { id: ACTIONS.PROFILE_UPDATE, title: t(event, 'buttons.update') },
     { id: ACTIONS.PROFILE_RESET, title: t(event, 'buttons.reset') },
-    { id: ACTIONS.PROFILE_SHOW_CHART, title: t(event, 'buttons.showChart') }
+    { id: ACTIONS.PROFILE_SHOW_CHART, title: t(event, 'buttons.showChart') },
+    {
+      id: ACTIONS.PROFILE_TOGGLE_RESPONSE_MODE,
+      title: t(event, responseMode === 'raw' ? 'buttons.enableInterpretedMode' : 'buttons.enableRawMode')
+    }
   ];
 
   const otherProfiles = (chatState.profileDirectory || []).filter((entry) => entry.profileId !== chatState.activeProfileId);
@@ -689,6 +709,16 @@ async function handleIncomingAction(event, channelApi) {
   if (actionId === ACTIONS.PROFILE_SHOW_CHART) {
     await channelApi.ackAction(event);
     return sendCompactChart(event, channelApi);
+  }
+
+  if (actionId === ACTIONS.PROFILE_TOGGLE_RESPONSE_MODE) {
+    const nextMode = getResponseMode(event) === 'raw' ? 'interpreted' : 'raw';
+    setResponseMode(event, nextMode);
+    await channelApi.ackAction(event);
+    await channelApi.sendText(event, t(event, 'profile.responseMode', {
+      value: t(event, `responseModes.${nextMode}`)
+    }));
+    return true;
   }
 
   if (actionId.startsWith(ACTIONS.SYNASTRY_PARTNER_PREFIX)) {

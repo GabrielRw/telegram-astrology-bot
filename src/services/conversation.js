@@ -45,6 +45,20 @@ const ANSWER_STYLES = new Set([
   'system_answer'
 ]);
 
+const RAW_INTERPRETIVE_PATTERNS = [
+  /\bthis means\b/i,
+  /\bthis suggests\b/i,
+  /\byou tend to\b/i,
+  /\byou are likely to\b/i,
+  /\btu as tendance à\b/i,
+  /\bcela signifie\b/i,
+  /\bcela sugg[èe]re\b/i,
+  /\bdas bedeutet\b/i,
+  /\bdas deutet darauf hin\b/i,
+  /\besto significa\b/i,
+  /\besto sugiere\b/i
+];
+
 function findPlanet(profile, planet) {
   const key = String(planet || '').trim().toLowerCase();
   return profile?.planetsById?.[key] || null;
@@ -102,6 +116,7 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
     'Use FreeAstro MCP only when indexed facts and cached data are insufficient.',
     'When using tool data, interpret it like an astrologer, but stay specific to the chart and concise.',
     'Never answer a system or clarification question with an astrology reading.',
+    `Response mode: ${options.responseMode || 'interpreted'}.`,
     ...relocationRules,
     `Conversation route: ${options.routeKind || 'astrology_natal'}.`,
     `Common route match: ${options.commonRouteId || 'none'}.`,
@@ -132,6 +147,15 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
     'Synastry context:',
     describeSynastryContext(options.synastryContext)
   );
+
+  if (options.responseMode === 'raw') {
+    lines.push(
+      '',
+      'Raw mode is active.',
+      'Never interpret, infer meaning, or produce an astrologer-style reading.',
+      'Only organize and present literal grounded results, values, dates, titles, and tool outputs in a clean readable structure.'
+    );
+  }
 
   return lines.join('\n');
 }
@@ -871,6 +895,233 @@ function sentenceCase(value) {
     : `${text}.`;
 }
 
+function formatRawLabel(locale, labels) {
+  return labels[locale] || labels.en;
+}
+
+function formatScalarValue(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.00$/, '');
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+
+  return String(value).replace(/\s+/g, ' ').trim();
+}
+
+function buildRawFactCards(locale, facts, options = {}) {
+  const subjectLabel = options.subjectLabel || 'Chart User';
+  const intro = options.intro || formatRawLabel(locale, {
+    en: `Raw results for ${subjectLabel}`,
+    fr: `Résultats bruts pour ${subjectLabel}`,
+    de: `Rohresultate für ${subjectLabel}`,
+    es: `Resultados brutos para ${subjectLabel}`
+  });
+  const blocks = [intro];
+
+  facts.slice(0, options.limit || 5).forEach((fact, index) => {
+    const title = formatScalarValue(fact.title) || `${formatRawLabel(locale, {
+      en: 'Fact',
+      fr: 'Fait',
+      de: 'Fakt',
+      es: 'Dato'
+    })} ${index + 1}`;
+    const lines = [
+      `${index + 1}. ${title}`
+    ];
+
+    const factText = formatScalarValue(fact.factText || fact.fact_text);
+    const normalizedTitle = normalizeSentenceForCompare(title);
+    const normalizedFactText = normalizeSentenceForCompare(factText);
+    const repeatsTitle = normalizedTitle && normalizedFactText && normalizedFactText.startsWith(normalizedTitle);
+    if (factText && !repeatsTitle) {
+      lines.push(factText);
+    }
+
+    const category = formatScalarValue(fact.category);
+    if (category) {
+      lines.push(`${formatRawLabel(locale, { en: 'Category', fr: 'Catégorie', de: 'Kategorie', es: 'Categoría' })}: ${category}`);
+    }
+
+    const sourceKind = formatScalarValue(fact.sourceKind || fact.source_kind);
+    if (sourceKind) {
+      lines.push(`${formatRawLabel(locale, { en: 'Source', fr: 'Source', de: 'Quelle', es: 'Fuente' })}: ${sourceKind}`);
+    }
+
+    const cacheMonth = formatScalarValue(fact.cacheMonth || fact.cache_month);
+    if (cacheMonth) {
+      lines.push(`${formatRawLabel(locale, { en: 'Month', fr: 'Mois', de: 'Monat', es: 'Mes' })}: ${cacheMonth}`);
+    }
+
+    const payload = fact.factPayload || fact.fact_payload;
+    if (payload && typeof payload === 'object') {
+      Object.entries(payload)
+        .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
+        .slice(0, 4)
+        .forEach(([key, value]) => {
+          const rendered = formatScalarValue(value);
+          if (rendered) {
+            lines.push(`${sentenceCase(String(key).replace(/_/g, ' ')).replace(/[.!?]$/, '')}: ${rendered}`);
+          }
+        });
+    }
+
+    blocks.push(lines.join('\n'));
+  });
+
+  return normalizeAssistantText(blocks.join('\n\n'));
+}
+
+function escapeTelegramHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function fitCell(value, width) {
+  const text = formatScalarValue(value) || '';
+  const shortened = text.length > width ? `${text.slice(0, Math.max(1, width - 1))}…` : text;
+  return shortened.padEnd(width, ' ');
+}
+
+function buildRawTransitTable(locale, facts, subjectProfile) {
+  const rows = facts
+    .filter((fact) => (fact.sourceKind || fact.source_kind) === factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+    .slice(0, 5);
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const title = formatRawLabel(locale, {
+    en: `Raw transit table for ${subjectProfile?.profileName || 'Chart User'}`,
+    fr: `Table brute des transits pour ${subjectProfile?.profileName || 'Chart User'}`,
+    de: `Rohtabelle der Transite für ${subjectProfile?.profileName || 'Chart User'}`,
+    es: `Tabla bruta de tránsitos para ${subjectProfile?.profileName || 'Chart User'}`
+  });
+
+  const header = `${fitCell('#', 2)} ${fitCell('Title', 28)} ${fitCell('Category', 16)} ${fitCell('Month', 7)}`;
+  const divider = `${'-'.repeat(2)} ${'-'.repeat(28)} ${'-'.repeat(16)} ${'-'.repeat(7)}`;
+  const body = rows.map((fact, index) => {
+    return [
+      fitCell(String(index + 1), 2),
+      fitCell(fact.title || '', 28),
+      fitCell(fact.category || '', 16),
+      fitCell(fact.cacheMonth || fact.cache_month || '', 7)
+    ].join(' ');
+  });
+
+  return `<pre>${escapeTelegramHtml([title, '', header, divider, ...body].join('\n'))}</pre>`;
+}
+
+function collectRawToolSections(value, prefix = '', depth = 0) {
+  if (depth > 2 || value === null || value === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 5)
+      .flatMap((item, index) => collectRawToolSections(item, prefix ? `${prefix} ${index + 1}` : `${index + 1}`, depth + 1));
+  }
+
+  if (typeof value !== 'object') {
+    const rendered = formatScalarValue(value);
+    return rendered && prefix ? [[prefix, rendered]] : [];
+  }
+
+  return Object.entries(value).flatMap(([key, child]) => {
+    const label = prefix ? `${prefix} • ${sentenceCase(String(key).replace(/_/g, ' ')).replace(/[.!?]$/, '')}` : sentenceCase(String(key).replace(/_/g, ' ')).replace(/[.!?]$/, '');
+    if (child === null || child === undefined || child === '') {
+      return [];
+    }
+
+    if (typeof child !== 'object') {
+      const rendered = formatScalarValue(child);
+      return rendered ? [[label, rendered]] : [];
+    }
+
+    if (Array.isArray(child) && child.every((item) => typeof item !== 'object')) {
+      const rendered = child.map(formatScalarValue).filter(Boolean).join(', ');
+      return rendered ? [[label, rendered]] : [];
+    }
+
+    return collectRawToolSections(child, label, depth + 1);
+  });
+}
+
+function buildRawToolResultText(locale, toolName, result) {
+  const title = sentenceCase(toolName.replace(/^mcp_/, '').replace(/^v1_/, '').replace(/_/g, ' ')).replace(/[.!?]$/, '');
+  const sections = collectRawToolSections(result).slice(0, 12);
+  const lines = [title];
+
+  if (sections.length === 0) {
+    lines.push(formatRawLabel(locale, {
+      en: 'No structured result fields were returned.',
+      fr: 'Aucun champ structuré n’a été renvoyé.',
+      de: 'Es wurden keine strukturierten Ergebnisfelder zurückgegeben.',
+      es: 'No se devolvieron campos estructurados.'
+    }));
+  } else {
+    sections.forEach(([label, value]) => {
+      lines.push(`${label}: ${value}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
+function buildRawToolLoopAnswer(locale, subjectProfile, toolResults = []) {
+  const subjectLabel = subjectProfile?.profileName || 'Chart User';
+  const intro = formatRawLabel(locale, {
+    en: `Raw results for ${subjectLabel}`,
+    fr: `Résultats bruts pour ${subjectLabel}`,
+    de: `Rohresultate für ${subjectLabel}`,
+    es: `Resultados brutos para ${subjectLabel}`
+  });
+
+  const sections = toolResults
+    .filter((tool) => tool?.result && !tool.result?.error)
+    .map((tool) => {
+      if (tool.name === 'search_cached_profile_facts' && Array.isArray(tool.result?.facts)) {
+        return buildRawFactCards(locale, tool.result.facts, {
+          subjectLabel,
+          intro: formatRawLabel(locale, {
+            en: 'Indexed facts',
+            fr: 'Faits indexés',
+            de: 'Indexierte Fakten',
+            es: 'Hechos indexados'
+          }),
+          limit: 5
+        });
+      }
+
+      return buildRawToolResultText(locale, tool.name, tool.result);
+    })
+    .filter(Boolean);
+
+  if (sections.length === 0) {
+    return normalizeAssistantText([
+      intro,
+      formatRawLabel(locale, {
+        en: 'No grounded raw result is available for this question.',
+        fr: 'Aucun résultat brut fondé n’est disponible pour cette question.',
+        de: 'Für diese Frage ist kein belastbares Rohresultat verfügbar.',
+        es: 'No hay un resultado bruto fundamentado disponible para esta pregunta.'
+      })
+    ].join('\n\n'));
+  }
+
+  return normalizeAssistantText([intro, ...sections].join('\n\n'));
+}
+
 function summarizeFactTags(tags, limit = 5) {
   return (Array.isArray(tags) ? tags : [])
     .filter((tag) => !String(tag).startsWith('month:'))
@@ -1130,7 +1381,19 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   }
 
   const answerStyle = plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText);
-  const draftAnswer = buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle);
+  const rawMode = options.responseMode === 'raw';
+  const draftAnswer = rawMode
+    ? buildRawFactCards(locale, facts, {
+        subjectLabel: subjectProfile?.profileName || 'Chart User',
+        intro: formatRawLabel(locale, {
+          en: 'Indexed facts',
+          fr: 'Faits indexés',
+          de: 'Indexierte Fakten',
+          es: 'Hechos indexados'
+        }),
+        limit: 5
+      })
+    : buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle);
   if (!draftAnswer) {
     return null;
   }
@@ -1138,29 +1401,32 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   let rewrittenAnswer = draftAnswer;
   let rewriteDurationMs = 0;
 
-  try {
-    const rewriteStartedAt = performance.now();
-    rewrittenAnswer = await maybeRewriteFactAnswer(
-      locale,
-      userText,
-      facts,
-      intent,
-      subjectProfile,
-      draftAnswer,
-      answerStyle,
-      options.responsePerspective || 'second_person'
-    );
-    rewriteDurationMs = Math.round(performance.now() - rewriteStartedAt);
-  } catch (error) {
-    info('conversation fact fast-path rewrite failed', {
-      stateKey: `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`,
-      intent: intent.id,
-      error: error.message || 'unknown'
-    });
+  if (!rawMode) {
+    try {
+      const rewriteStartedAt = performance.now();
+      rewrittenAnswer = await maybeRewriteFactAnswer(
+        locale,
+        userText,
+        facts,
+        intent,
+        subjectProfile,
+        draftAnswer,
+        answerStyle,
+        options.responsePerspective || 'second_person'
+      );
+      rewriteDurationMs = Math.round(performance.now() - rewriteStartedAt);
+    } catch (error) {
+      info('conversation fact fast-path rewrite failed', {
+        stateKey: `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`,
+        intent: intent.id,
+        error: error.message || 'unknown'
+      });
+    }
   }
 
   return {
     text: rewrittenAnswer,
+    renderMode: rawMode && intent.id === 'transits' ? 'telegram_pre' : 'plain',
     usedTools: [{
       name: 'search_cached_profile_facts',
       args: searchInput,
@@ -1427,6 +1693,21 @@ function validateFinalAnswer(text, route, locale) {
   return normalized;
 }
 
+function validateRawAnswer(text, locale) {
+  const normalized = normalizeAssistantText(text);
+
+  if (RAW_INTERPRETIVE_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return formatRawLabel(locale, {
+      en: 'Raw mode blocked an interpretive reply.',
+      fr: 'Le mode brut a bloqué une réponse interprétative.',
+      de: 'Der Rohmodus hat eine interpretierende Antwort blockiert.',
+      es: 'El modo bruto bloqueó una respuesta interpretativa.'
+    });
+  }
+
+  return normalized;
+}
+
 function updateConversationState(identity, route, subjectProfile, secondaryProfile = null, resolvedQuestion = null) {
   setConversationContext(identity, {
     lastReferencedProfileId: subjectProfile?.profileId || null,
@@ -1443,6 +1724,7 @@ function updateConversationState(identity, route, subjectProfile, secondaryProfi
 async function answerConversation(identity, userText) {
   const chatState = getChatState(identity);
   const locale = getLocale(chatState);
+  const responseMode = chatState.responseMode === 'raw' ? 'raw' : 'interpreted';
   const conversationContext = getConversationContext(identity);
   const explicitFollowUp = detectExplicitFollowUp(userText, conversationContext, chatState.history);
   const routeSeedText = explicitFollowUp?.rewrittenQuestion || userText;
@@ -1625,6 +1907,7 @@ async function answerConversation(identity, userText) {
     routeKind: route.kind,
     commonRouteId: route.commonRouteId || null,
     answerStyle: plannedRoute?.answerStyle || route.answerStyle,
+    responseMode,
     responsePerspective,
     targetProfileLabel: subjectProfile.profileName,
     synastryContext: {
@@ -1635,7 +1918,8 @@ async function answerConversation(identity, userText) {
 
   const fastPathResult = shouldPreferIndexedFacts
     ? await tryFactFastPath(identity, effectiveUserQuestion, effectiveIntent, subjectProfile, factAvailability, locale, plannedRoute, {
-        responsePerspective
+        responsePerspective,
+        responseMode
       })
     : null;
   if (fastPathResult) {
@@ -1650,13 +1934,23 @@ async function answerConversation(identity, userText) {
     });
 
     pushHistory(identity, 'user', userText);
-    const finalText = validateFinalAnswer(fastPathResult.text, route, locale);
+    const rawTransitTable = (
+      responseMode === 'raw' &&
+      route.kind === 'astrology_transits' &&
+      identity?.channel === 'telegram'
+    )
+      ? buildRawTransitTable(locale, fastPathResult.usedTools?.[0]?.result?.facts || [], subjectProfile)
+      : null;
+    const finalText = responseMode === 'raw'
+      ? (rawTransitTable || validateRawAnswer(fastPathResult.text, locale))
+      : validateFinalAnswer(fastPathResult.text, route, locale);
     pushHistory(identity, 'model', finalText);
     setLastToolResults(identity, fastPathResult.usedTools);
     updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
 
     return {
       text: finalText,
+      renderMode: rawTransitTable ? 'telegram_pre' : (fastPathResult.renderMode || 'plain'),
       usedTools: fastPathResult.usedTools,
       intent: route.kind
     };
@@ -1728,14 +2022,24 @@ async function answerConversation(identity, userText) {
     });
   }
 
+  if (responseMode === 'raw') {
+    result = {
+      ...result,
+      text: buildRawToolLoopAnswer(locale, subjectProfile, result.toolResults)
+    };
+  }
+
   pushHistory(identity, 'user', userText);
-  const finalText = validateFinalAnswer(result.text, route, locale);
+  const finalText = responseMode === 'raw'
+    ? validateRawAnswer(result.text, locale)
+    : validateFinalAnswer(result.text, route, locale);
   pushHistory(identity, 'model', finalText);
   setLastToolResults(identity, result.toolResults);
   updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
 
   return {
     text: finalText,
+    renderMode: result.renderMode || 'plain',
     usedTools: result.toolResults,
     intent: route.kind
   };

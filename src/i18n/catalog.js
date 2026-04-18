@@ -103,7 +103,9 @@ const CATALOG = {
       update: 'Update',
       reset: 'Reset',
       switchProfile: 'Switch profile',
-      showChart: 'Show chart'
+      showChart: 'Show chart',
+      enableRawMode: 'Enable raw mode',
+      enableInterpretedMode: 'Enable interpreted mode'
     },
     prompts: {
       onboardingChat: 'I can answer that properly from your chart.\nFirst I need your birth date and birth city.\n\nSend your birth date in YYYY-MM-DD format.',
@@ -136,6 +138,7 @@ const CATALOG = {
       birthTimeSaved: 'Birth time: {value}',
       birthTimeMissing: 'Birth time: not saved',
       language: 'Language: {value}',
+      responseMode: 'Response mode: {value}',
       billing: 'Plan: {value}',
       footer: 'Use the buttons below to add, switch, update, reset, or view the active chart.',
       billingFooter: 'Use /billing to see quota details or /subscribe to unlock unlimited questions.',
@@ -145,6 +148,10 @@ const CATALOG = {
       noOtherProfiles: 'There are no other saved profiles yet.',
       cleared: 'Your saved birth details were cleared. Send /start when you want to set them again.',
       chartUnavailable: 'Your chart image is not available right now.'
+    },
+    responseModes: {
+      interpreted: 'Interpreted',
+      raw: 'Raw results only'
     },
     errors: {
       cancelled: 'Cancelled.',
@@ -240,9 +247,13 @@ const CATALOG = {
       yes: 'Oui',
       no: 'Non',
       showMoreQuestions: 'Voir plus',
+      addProfile: 'Ajouter un profil',
       update: 'Modifier',
       reset: 'Réinitialiser',
-      showChart: 'Voir le thème'
+      switchProfile: 'Changer de profil',
+      showChart: 'Voir le thème',
+      enableRawMode: 'Activer le mode brut',
+      enableInterpretedMode: 'Activer le mode interprété'
     },
     prompts: {
       onboardingChat: 'Je peux répondre correctement à partir de votre thème.\nJ’ai d’abord besoin de votre date de naissance et de votre ville de naissance.\n\nEnvoyez votre date de naissance au format AAAA-MM-JJ.',
@@ -259,22 +270,35 @@ const CATALOG = {
       stillReading: 'Je lis encore votre thème...',
       chartCaption: 'Votre thème natal',
       profileActions: 'Actions du profil',
+      profileSwitch: 'Choisissez quel profil enregistré doit devenir actif.',
+      synastryPartner: 'Choisissez le profil enregistré à comparer avec votre thème actif.',
       languagePrompt: 'Choisissez votre langue.',
       languageUpdated: 'Langue définie sur {language}.'
     },
     profile: {
       none: 'Aucune donnée de naissance n’est enregistrée.\n\nUtilisez /start pour configurer votre thème.',
       title: 'Données de naissance enregistrées',
+      activeProfile: 'Profil actif : {value}',
+      savedProfiles: 'Profils enregistrés : {value}',
       birthDate: 'Date de naissance : {value}',
       city: 'Ville : {value}',
       birthTimeSaved: 'Heure de naissance : {value}',
       birthTimeMissing: 'Heure de naissance : non enregistrée',
       language: 'Langue : {value}',
+      responseMode: 'Mode de réponse : {value}',
       billing: 'Offre : {value}',
-      footer: 'Utilisez les boutons ci-dessous pour modifier, réinitialiser ou voir votre thème.',
+      footer: 'Utilisez les boutons ci-dessous pour ajouter, changer, modifier, réinitialiser, changer le mode ou voir le thème actif.',
       billingFooter: 'Utilisez /billing pour voir votre quota ou /subscribe pour débloquer les questions illimitées.',
+      switched: 'Le profil actif est maintenant {value}.',
+      added: 'Profil enregistré « {value} ».',
+      deleted: 'Profil supprimé « {value} ».',
+      noOtherProfiles: 'Il n’y a pas encore d’autre profil enregistré.',
       cleared: 'Vos données de naissance ont été effacées. Envoyez /start quand vous voudrez les reconfigurer.',
       chartUnavailable: 'L’image de votre thème n’est pas disponible pour le moment.'
+    },
+    responseModes: {
+      interpreted: 'Interprété',
+      raw: 'Résultats bruts uniquement'
     },
     errors: {
       cancelled: 'Annulé.',
@@ -367,9 +391,13 @@ const CATALOG = {
       yes: 'Ja',
       no: 'Nein',
       showMoreQuestions: 'Mehr Fragen',
+      addProfile: 'Profil hinzufügen',
       update: 'Aktualisieren',
       reset: 'Zurücksetzen',
-      showChart: 'Horoskop zeigen'
+      switchProfile: 'Profil wechseln',
+      showChart: 'Horoskop zeigen',
+      enableRawMode: 'Rohmodus aktivieren',
+      enableInterpretedMode: 'Interpretierten Modus aktivieren'
     },
     prompts: {
       onboardingChat: 'Ich kann das richtig aus deinem Horoskop beantworten.\nDafür brauche ich zuerst dein Geburtsdatum und deinen Geburtsort.\n\nSende dein Geburtsdatum im Format JJJJ-MM-TT.',
@@ -386,22 +414,35 @@ const CATALOG = {
       stillReading: 'Ich lese dein Horoskop noch...',
       chartCaption: 'Dein Geburtshoroskop',
       profileActions: 'Profilaktionen',
+      profileSwitch: 'Wähle, welches gespeicherte Profil aktiv werden soll.',
+      synastryPartner: 'Wähle das gespeicherte Profil zum Vergleich mit deinem aktiven Horoskop.',
       languagePrompt: 'Wähle deine Sprache.',
       languageUpdated: 'Sprache auf {language} gesetzt.'
     },
     profile: {
       none: 'Es sind noch keine Geburtsdaten gespeichert.\n\nNutze /start, um dein Horoskop einzurichten.',
       title: 'Gespeicherte Geburtsdaten',
+      activeProfile: 'Aktives Profil: {value}',
+      savedProfiles: 'Gespeicherte Profile: {value}',
       birthDate: 'Geburtsdatum: {value}',
       city: 'Stadt: {value}',
       birthTimeSaved: 'Geburtszeit: {value}',
       birthTimeMissing: 'Geburtszeit: nicht gespeichert',
       language: 'Sprache: {value}',
+      responseMode: 'Antwortmodus: {value}',
       billing: 'Tarif: {value}',
-      footer: 'Nutze die Buttons unten, um dein Profil zu aktualisieren, zurückzusetzen oder dein Horoskop zu sehen.',
+      footer: 'Nutze die Buttons unten, um das aktive Profil hinzuzufügen, zu wechseln, zu aktualisieren, zurückzusetzen, den Modus zu ändern oder das Horoskop zu sehen.',
       billingFooter: 'Nutze /billing für dein Kontingent oder /subscribe für unbegrenzte Fragen.',
+      switched: 'Aktives Profil gewechselt zu {value}.',
+      added: 'Profil „{value}“ gespeichert.',
+      deleted: 'Profil „{value}“ gelöscht.',
+      noOtherProfiles: 'Es gibt noch keine weiteren gespeicherten Profile.',
       cleared: 'Deine gespeicherten Geburtsdaten wurden gelöscht. Sende /start, wenn du sie erneut einrichten möchtest.',
       chartUnavailable: 'Das Bild deines Horoskops ist gerade nicht verfügbar.'
+    },
+    responseModes: {
+      interpreted: 'Interpretiert',
+      raw: 'Nur Rohresultate'
     },
     errors: {
       cancelled: 'Abgebrochen.',
@@ -494,9 +535,13 @@ const CATALOG = {
       yes: 'Sí',
       no: 'No',
       showMoreQuestions: 'Más preguntas',
+      addProfile: 'Añadir perfil',
       update: 'Actualizar',
       reset: 'Restablecer',
-      showChart: 'Ver carta'
+      switchProfile: 'Cambiar perfil',
+      showChart: 'Ver carta',
+      enableRawMode: 'Activar modo bruto',
+      enableInterpretedMode: 'Activar modo interpretado'
     },
     prompts: {
       onboardingChat: 'Puedo responder eso correctamente a partir de tu carta.\nPrimero necesito tu fecha de nacimiento y tu ciudad de nacimiento.\n\nEnvía tu fecha de nacimiento en formato AAAA-MM-DD.',
@@ -513,22 +558,35 @@ const CATALOG = {
       stillReading: 'Sigo leyendo tu carta...',
       chartCaption: 'Tu carta natal',
       profileActions: 'Acciones del perfil',
+      profileSwitch: 'Elige qué perfil guardado debe quedar activo.',
+      synastryPartner: 'Elige el perfil guardado para comparar con tu carta activa.',
       languagePrompt: 'Elige tu idioma.',
       languageUpdated: 'Idioma configurado en {language}.'
     },
     profile: {
       none: 'Todavía no hay datos de nacimiento guardados.\n\nUsa /start para configurar tu carta.',
       title: 'Datos de nacimiento guardados',
+      activeProfile: 'Perfil activo: {value}',
+      savedProfiles: 'Perfiles guardados: {value}',
       birthDate: 'Fecha de nacimiento: {value}',
       city: 'Ciudad: {value}',
       birthTimeSaved: 'Hora de nacimiento: {value}',
       birthTimeMissing: 'Hora de nacimiento: no guardada',
       language: 'Idioma: {value}',
+      responseMode: 'Modo de respuesta: {value}',
       billing: 'Plan: {value}',
-      footer: 'Usa los botones de abajo para actualizar, restablecer o ver tu carta.',
+      footer: 'Usa los botones de abajo para añadir, cambiar, actualizar, restablecer, cambiar el modo o ver la carta activa.',
       billingFooter: 'Usa /billing para ver tu cupo o /subscribe para desbloquear preguntas ilimitadas.',
+      switched: 'El perfil activo ahora es {value}.',
+      added: 'Perfil guardado «{value}».',
+      deleted: 'Perfil eliminado «{value}».',
+      noOtherProfiles: 'Todavía no hay otros perfiles guardados.',
       cleared: 'Tus datos de nacimiento guardados se borraron. Envía /start cuando quieras configurarlos otra vez.',
       chartUnavailable: 'La imagen de tu carta no está disponible ahora mismo.'
+    },
+    responseModes: {
+      interpreted: 'Interpretado',
+      raw: 'Solo resultados brutos'
     },
     errors: {
       cancelled: 'Cancelado.',

@@ -25,20 +25,21 @@ function createTelegramChannelApi(ctx) {
       interactiveChoices: true,
       richNatalActions: true
     },
-    async sendText(event, text) {
-      const message = await ctx.reply(text);
+    async sendText(event, text, options = {}) {
+      const message = await ctx.reply(text, options.html ? { parse_mode: 'HTML' } : undefined);
       return createTelegramMessageRef(ctx, message);
     },
-    async editText(event, messageRef, text) {
+    async editText(event, messageRef, text, options = {}) {
       if (!messageRef?.messageId) {
-        return this.sendText(event, text);
+        return this.sendText(event, text, options);
       }
 
       await ctx.telegram.editMessageText(
         Number(messageRef.chatId || ctx.chat.id),
         messageRef.messageId,
         undefined,
-        text
+        text,
+        options.html ? { parse_mode: 'HTML' } : undefined
       );
 
       return messageRef;

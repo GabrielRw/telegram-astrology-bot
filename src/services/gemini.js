@@ -23,7 +23,32 @@ function getModelName() {
 }
 
 function getFastPathModelName() {
-  return process.env.GEMINI_FAST_PATH_MODEL || getModelName();
+  return process.env.GEMINI_FAST_PATH_MODEL || 'gemini-2.5-flash-lite';
+}
+
+function splitModelList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueModels(models) {
+  return [...new Set((Array.isArray(models) ? models : []).filter(Boolean))];
+}
+
+function getFastPathFallbackModelNames() {
+  const configured = splitModelList(process.env.GEMINI_FAST_PATH_FALLBACK_MODELS);
+  if (configured.length > 0) {
+    return configured;
+  }
+
+  return ['gemini-2.0-flash-lite'];
+}
+
+function getFastPathModelCandidates(model) {
+  const primary = model || getFastPathModelName();
+  return uniqueModels([primary, ...getFastPathFallbackModelNames()]);
 }
 
 function getLocalizedGeminiMessage(locale, key, fallback) {
@@ -99,6 +124,19 @@ function isRetryableGeminiError(error) {
     message.includes('Internal error encountered') ||
     message.includes('503') ||
     message.includes('UNAVAILABLE')
+  );
+}
+
+function isFallbackableGeminiError(error) {
+  const message = String(error?.message || '');
+  return (
+    message.includes('quota') ||
+    message.includes('RESOURCE_EXHAUSTED') ||
+    message.includes('429') ||
+    message.includes('not found for API version') ||
+    message.includes('is not found') ||
+    message.includes('NOT_FOUND') ||
+    isRetryableGeminiError(error)
   );
 }
 
@@ -229,15 +267,35 @@ async function generatePlainText({
     createUserContent(userText)
   ];
 
-  const response = await generateContentWithRetry(ai, {
-    model: model || getModelName(),
-    contents,
-    config: {
-      systemInstruction
-    }
-  });
+  const requestedModel = model || getModelName();
+  const modelCandidates = requestedModel === getFastPathModelName()
+    ? getFastPathModelCandidates(requestedModel)
+    : [requestedModel];
+  let lastError = null;
 
-  return response.text || '';
+  for (let index = 0; index < modelCandidates.length; index += 1) {
+    const modelName = modelCandidates[index];
+
+    try {
+      const response = await generateContentWithRetry(ai, {
+        model: modelName,
+        contents,
+        config: {
+          systemInstruction
+        }
+      });
+
+      return response.text || '';
+    } catch (error) {
+      lastError = error;
+
+      if (!isFallbackableGeminiError(error) || index === modelCandidates.length - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError || new Error('Gemini request failed.');
 }
 
 function createLocalFunctionDeclarations() {

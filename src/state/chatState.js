@@ -46,6 +46,7 @@ function createDefaultState(identity) {
     localeSource: 'default',
     platformLocaleHint: null,
     activeProfileId: null,
+    responseMode: 'interpreted',
     profileDirectory: [],
     factAvailability: {
       hasNatalFacts: false,
@@ -475,9 +476,10 @@ function getChatStateSnapshot(identity) {
     localeSource: state.localeSource,
     platformLocaleHint: state.platformLocaleHint,
     activeProfileId: state.activeProfileId,
-      profileDirectory: state.profileDirectory,
-      factAvailability: state.factAvailability,
-      history: state.history,
+    responseMode: state.responseMode,
+    profileDirectory: state.profileDirectory,
+    factAvailability: state.factAvailability,
+    history: state.history,
     activeFlow: state.activeFlow,
     lastToolResults: state.lastToolResults,
     pendingQuestion: state.pendingQuestion,
@@ -498,6 +500,17 @@ function replaceChatState(identity, snapshot) {
     userId: normalized.userId,
     chatId: normalized.chatId
   });
+}
+
+function setResponseMode(identity, responseMode) {
+  const state = getChatState(identity);
+  state.responseMode = responseMode === 'raw' ? 'raw' : 'interpreted';
+  notifyPersistence(identity);
+  return state.responseMode;
+}
+
+function getResponseMode(identity) {
+  return getChatState(identity).responseMode === 'raw' ? 'raw' : 'interpreted';
 }
 
 function setPersistenceHook(nextHook) {
@@ -524,6 +537,7 @@ module.exports = {
   getConversationContext,
   getChatStateSnapshot,
   getProfileDirectory,
+  getResponseMode,
   getUiCache,
   hydrateActiveProfile,
   normalizeNatalProfile,
@@ -542,5 +556,6 @@ module.exports = {
   setPendingQuestion,
   setPersistenceHook,
   setProfileDirectory,
+  setResponseMode,
   setUiCache
 };
