@@ -190,6 +190,58 @@ function getLastResolvedQuestion(conversationContext, history = [], userText = '
   return previousUserQuestion?.text || null;
 }
 
+function parseRequestedResultLimit(text) {
+  const value = String(text || '').toLowerCase();
+  const patterns = [
+    /\btop\s*(\d{1,3})\b/i,
+    /\b(\d{1,3})\s+(?:transits?|aspects?|results?|r[ée]sultats?)\b/i,
+    /\buniquement\s+les?\s+(\d{1,3})\b/i,
+    /\bseulement\s+les?\s+(\d{1,3})\b/i,
+    /\bonly\s+the\s+(\d{1,3})\b/i,
+    /\bjust\s+the\s+(\d{1,3})\b/i,
+    /\bles?\s+(\d{1,3})\s+plus\s+forts?\b/i,
+    /\bthe\s+(\d{1,3})\s+strongest\b/i,
+    /\b(\d{1,3})\s+les?\s+plus\s+forts?\b/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    if (match?.[1]) {
+      const parsed = Number(match[1]);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return Math.min(parsed, 200);
+      }
+    }
+  }
+
+  return null;
+}
+
+function wantsStrongestSubset(text) {
+  return /\b(plus forts?|strongest|top)\b/i.test(String(text || ''));
+}
+
+function buildQuantitativeFollowUpQuestion(lastResolvedQuestion, limit, conversationContext) {
+  if (!lastResolvedQuestion || !limit) {
+    return null;
+  }
+
+  const routeId = conversationContext?.lastCommonRouteId || null;
+  if (routeId === 'monthly_transits_for_planet') {
+    return `${lastResolvedQuestion}\n\nReturn only the top ${limit} strongest monthly transits related to the requested planet.`;
+  }
+
+  if (routeId === 'month_ahead_transits' || routeId === 'all_monthly_transits') {
+    return `${lastResolvedQuestion}\n\nReturn only the top ${limit} strongest transits from that month.`;
+  }
+
+  if (routeId === 'all_natal_aspects') {
+    return `${lastResolvedQuestion}\n\nReturn only the top ${limit} strongest major aspects.`;
+  }
+
+  return `${lastResolvedQuestion}\n\nReturn only the top ${limit} strongest results.`;
+}
+
 function buildTopicFollowUpQuestion(topic, lastRouteKind) {
   const normalizedTopic = String(topic || '').toLowerCase();
   const transitMode = lastRouteKind === 'astrology_transits';
@@ -257,6 +309,23 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
       rewrittenQuestion: `${lastResolvedQuestion}\n\nFocus on today specifically.`,
       routeKind: lastRouteKind
     };
+  }
+
+  const requestedLimit = parseRequestedResultLimit(normalized);
+  if (
+    requestedLimit &&
+    lastResolvedQuestion &&
+    /^(?:retourne|montre|affiche|donne|garde|only|just|show|return|keep|uniquement|seulement|juste|les?|the|top|\d+)/i.test(normalized) &&
+    (wantsStrongestSubset(normalized) || /^(?:retourne|montre|affiche|donne|only|just|show|return|uniquement|seulement)/i.test(normalized))
+  ) {
+    const rewrittenQuestion = buildQuantitativeFollowUpQuestion(lastResolvedQuestion, requestedLimit, conversationContext);
+    if (rewrittenQuestion) {
+      return {
+        followUpType: 'quantitative_limit',
+        rewrittenQuestion,
+        routeKind: lastRouteKind
+      };
+    }
   }
 
   return null;
@@ -532,6 +601,62 @@ async function resolveCanonicalCommonRouteWithAi(locale, userText, route) {
   };
 }
 
+async function resolveFollowUpWithAi(locale, userText, conversationContext, route) {
+  const lastResolvedQuestion = getLastResolvedQuestion(conversationContext, [], userText);
+  if (!lastResolvedQuestion) {
+    return null;
+  }
+
+  const value = String(userText || '').trim();
+  if (!value || value.length > 120) {
+    return null;
+  }
+
+  const systemInstruction = [
+    'You detect whether a short astrology user message is a follow-up to the previous question.',
+    `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}, but output JSON only.`,
+    'Return one JSON object and nothing else.',
+    'Allowed keys: isFollowUp, rewrittenQuestion, confidence, reason.',
+    'If it is a follow-up, rewrite it as one complete standalone astrology question that preserves the previous scope and adds the new refinement.',
+    'If it is not a follow-up, set isFollowUp to false and rewrittenQuestion to null.'
+  ].join('\n');
+
+  const prompt = [
+    `Current short message: ${value}`,
+    `Previous resolved question: ${lastResolvedQuestion}`,
+    `Previous canonical route id: ${conversationContext?.lastCommonRouteId || 'none'}`,
+    `Previous route kind: ${conversationContext?.lastResponseRoute || route?.kind || 'unknown'}`,
+    'Return JSON now.'
+  ].join('\n');
+
+  let parsed = null;
+  try {
+    parsed = extractJsonObject(await generatePlainText({
+      systemInstruction,
+      userText: prompt,
+      history: [],
+      model: getFastPathModelName()
+    }));
+  } catch (_error) {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+
+  const confidence = Number(parsed.confidence || 0);
+  if (parsed.isFollowUp !== true || confidence < 0.7 || !parsed.rewrittenQuestion) {
+    return null;
+  }
+
+  return {
+    followUpType: 'ai_follow_up',
+    rewrittenQuestion: String(parsed.rewrittenQuestion),
+    routeKind: conversationContext?.lastResponseRoute || route?.kind || null
+  };
+}
+
 function buildUnsupportedAstrologyQuestionResponse(locale, route, suggestions = []) {
   if (locale === 'fr') {
     return 'Je ne suis pas encore capable de répondre à cette question pour le moment.';
@@ -559,6 +684,25 @@ function buildCanonicalMatcherUnavailableResponse(locale) {
   return locale === 'fr'
     ? 'Le moteur de routage IA est indisponible pour le moment. Réessayez plus tard.'
     : 'The AI routing engine is unavailable right now. Please try again later.';
+}
+
+function getRequestedListingLimit(userText, routeId, fallback = null) {
+  const parsed = parseRequestedResultLimit(userText);
+  if (parsed) {
+    return parsed;
+  }
+
+  if (wantsStrongestSubset(userText)) {
+    if (routeId === 'month_ahead_transits') {
+      return 5;
+    }
+
+    if (routeId === 'monthly_transits_for_planet' || routeId === 'all_natal_aspects') {
+      return 5;
+    }
+  }
+
+  return fallback;
 }
 
 function suggestCanonicalQuestions(userText, route, limit = 3) {
@@ -616,6 +760,43 @@ function buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAv
     answerStyle: commonRoute.answerStyle,
     commonRouteId: commonRoute.id
   };
+}
+
+function isCurrentMonthRequest(userText, timezone = 'UTC') {
+  const parsedMonth = parseMonthFromQuestion(userText, timezone);
+  if (!parsedMonth) {
+    return true;
+  }
+
+  const current = getCurrentLocalDateParts(timezone);
+  return parsedMonth.year === current.year && parsedMonth.month === current.month;
+}
+
+function buildCanonicalIndexedRoute(canonicalRoute, userText, subjectProfile, factAvailability) {
+  if (!canonicalRoute || !subjectProfile?.profileId) {
+    return null;
+  }
+
+  if (
+    canonicalRoute.id === 'monthly_transits_for_planet' &&
+    isCurrentMonthRequest(userText, subjectProfile.timezone || 'UTC')
+  ) {
+    return {
+      target: 'indexed_facts',
+      primaryProfileId: subjectProfile.profileId,
+      secondaryProfileId: null,
+      sourceKinds: [factIndex.MONTHLY_TRANSIT_SOURCE_KIND],
+      categories: [],
+      tags: [],
+      cacheMonth: factAvailability?.indexedTransitCacheMonth || null,
+      limit: 20,
+      reason: `Matched canonical route ${canonicalRoute.id} for current month cache`,
+      answerStyle: canonicalRoute.answerStyle,
+      commonRouteId: canonicalRoute.id
+    };
+  }
+
+  return null;
 }
 
 function cloneValue(value) {
@@ -1085,6 +1266,7 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
   const requestedMonthlyPlanet = parseRequestedMonthlyTransitPlanet(userText);
 
   if (route.id === 'month_ahead_transits' && Array.isArray(timelinePayload?.transits)) {
+    const requestedLimit = getRequestedListingLimit(userText, 'month_ahead_transits', 10);
     const visibleTransits = requestedMonthlyPlanet
       ? timelinePayload.transits.filter((entry) => matchesTransitPlanetFilter(entry, requestedMonthlyPlanet))
       : timelinePayload.transits;
@@ -1108,7 +1290,7 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
 
       return {
         text: buildRawTransitTable(locale, pseudoFacts, subjectProfile, {
-          limit: 10,
+          limit: requestedMonthlyPlanet ? Math.max(1, Math.min(200, requestedLimit)) : requestedLimit,
           includeFollowUp: !requestedMonthlyPlanet,
           responseMode
         }),
@@ -1119,7 +1301,7 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
     return buildMonthlyTransitOverviewFromTimeline(locale, visibleTransits, subjectProfile, {
       cacheMonth: toolCallResult?.cacheMonth || '',
       responseMode,
-      limit: requestedMonthlyPlanet ? visibleTransits.length || 10 : 10,
+      limit: requestedMonthlyPlanet ? (getRequestedListingLimit(userText, 'monthly_transits_for_planet', visibleTransits.length || 200)) : requestedLimit,
       includeFollowUp: !requestedMonthlyPlanet,
       title: filteredTitle
     });
@@ -1128,6 +1310,7 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
   if (route.id === 'monthly_transits_for_planet' && Array.isArray(timelinePayload?.transits)) {
     const planet = parsePlanetFromQuestion(userText);
     const matchingTransits = timelinePayload.transits.filter((entry) => matchesTransitPlanetFilter(entry, planet));
+    const requestedLimit = getRequestedListingLimit(userText, 'monthly_transits_for_planet', matchingTransits.length || 200);
     const title = formatRawLabel(locale, {
       en: `${planet ? humanizeRawKey(planet) : 'Selected'} monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}${toolCallResult?.cacheMonth ? ` — ${toolCallResult.cacheMonth}` : ''}`,
       fr: `Transits mensuels liés à ${planet ? humanizeRawKey(planet) : 'la planète demandée'} pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}${toolCallResult?.cacheMonth ? ` — ${toolCallResult.cacheMonth}` : ''}`,
@@ -1137,7 +1320,7 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
     return buildMonthlyTransitOverviewFromTimeline(locale, matchingTransits, subjectProfile, {
       cacheMonth: toolCallResult?.cacheMonth || '',
       responseMode,
-      limit: matchingTransits.length || 10,
+      limit: requestedLimit,
       includeFollowUp: false,
       title
     }) || buildCanonicalMissingArgsResponse(locale, route, ['transitPlanet']);
@@ -2198,6 +2381,18 @@ function isTopMonthlyTransitRoute(routeOrId) {
     : (routeOrId.commonRouteId || routeOrId.id || null);
 
   return id === 'month_ahead_transits';
+}
+
+function isMonthlyTransitListingRoute(routeOrId) {
+  if (!routeOrId) {
+    return false;
+  }
+
+  const id = typeof routeOrId === 'string'
+    ? routeOrId
+    : (routeOrId.commonRouteId || routeOrId.id || null);
+
+  return id === 'month_ahead_transits' || id === 'monthly_transits_for_planet';
 }
 
 function extractTransitTimelinePayload(result) {
@@ -3629,10 +3824,11 @@ function summarizeFactTags(tags, limit = 5) {
 function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle, options = {}) {
   if ((options.routeId || options.commonRouteId) === 'monthly_transits_for_planet') {
     const requestedPlanet = parseRequestedMonthlyTransitPlanet(userText) || parsePlanetFromQuestion(userText);
+    const requestedLimit = getRequestedListingLimit(userText, 'monthly_transits_for_planet', 200);
     return buildMonthlyTransitOverviewFromFacts(options.locale || 'en', facts, subjectProfile, {
       userText,
       responseMode: 'interpreted',
-      limit: 200,
+      limit: requestedLimit,
       includeFollowUp: false,
       title: requestedPlanet
         ? formatRawLabel(options.locale || 'en', {
@@ -3646,10 +3842,11 @@ function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, a
   }
 
   if (isTopMonthlyTransitRoute(options.commonRouteId || options.routeId)) {
+    const requestedLimit = getRequestedListingLimit(userText, 'month_ahead_transits', 10);
     return buildMonthlyTransitOverviewFromFacts(options.locale || 'en', facts, subjectProfile, {
       userText,
       responseMode: 'interpreted',
-      limit: 10
+      limit: requestedLimit
     }) || '';
   }
 
@@ -3965,7 +4162,10 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   }
 
   const answerStyle = plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText);
-  const topMonthlyTransitOverview = isTopMonthlyTransitRoute(plannedRoute);
+  const topMonthlyTransitOverview = isMonthlyTransitListingRoute(plannedRoute);
+  const requestedListingLimit = topMonthlyTransitOverview
+    ? getRequestedListingLimit(userText, requestedMonthlyPlanet ? 'monthly_transits_for_planet' : 'month_ahead_transits', requestedMonthlyPlanet ? 200 : 10)
+    : null;
   const structureFocusedRawNatal = (
     rawMode &&
     subjectProfile?.rawNatalPayload &&
@@ -3996,7 +4196,7 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
               userText,
               answerStyle,
               responseMode: 'raw',
-              limit: 10,
+              limit: requestedListingLimit,
               includeFollowUp: !requestedMonthlyPlanet,
               title: requestedMonthlyPlanet
                 ? formatRawLabel(locale, {
@@ -4079,7 +4279,7 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     identity?.channel === 'telegram'
   )
     ? buildRawTransitTable(locale, facts, subjectProfile, {
-        limit: 10,
+        limit: requestedListingLimit,
         includeFollowUp: !requestedMonthlyPlanet,
         userText,
         answerStyle
@@ -4658,7 +4858,10 @@ async function answerConversation(identity, userText) {
   const locale = getLocale(chatState);
   const responseMode = chatState.responseMode === 'raw' ? 'raw' : 'interpreted';
   const conversationContext = getConversationContext(identity);
-  const explicitFollowUp = detectExplicitFollowUp(userText, conversationContext, chatState.history);
+  let explicitFollowUp = detectExplicitFollowUp(userText, conversationContext, chatState.history);
+  if (!explicitFollowUp) {
+    explicitFollowUp = await resolveFollowUpWithAi(locale, userText, conversationContext, null);
+  }
   const routeSeedText = explicitFollowUp?.rewrittenQuestion || userText;
   const detectedRoute = detectConversationRoute(routeSeedText, chatState.history);
   const inheritedRoute = inheritRouteFromConversation(detectedRoute, conversationContext, userText);
@@ -4849,7 +5052,9 @@ async function answerConversation(identity, userText) {
     }
   }
 
-  const plannedRoute = buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAvailability);
+  const commonPlannedRoute = buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAvailability);
+  const canonicalPlannedRoute = buildCanonicalIndexedRoute(canonicalRoute, effectiveUserQuestion, subjectProfile, factAvailability);
+  const plannedRoute = commonPlannedRoute || canonicalPlannedRoute;
   if (plannedRoute && !plannedRoute.answerStyle) {
     plannedRoute.answerStyle = route.answerStyle;
   }
@@ -4924,7 +5129,15 @@ async function answerConversation(identity, userText) {
       identity?.channel === 'telegram'
     )
       ? buildRawTransitTable(locale, fastPathResult.usedTools?.[0]?.result?.facts || [], subjectProfile, {
-          limit: isTopMonthlyTransitRoute(plannedRoute?.commonRouteId || canonicalRoute?.id) ? 10 : 5,
+          limit: isMonthlyTransitListingRoute(plannedRoute?.commonRouteId || canonicalRoute?.id)
+            ? getRequestedListingLimit(
+                effectiveUserQuestion,
+                (plannedRoute?.commonRouteId || canonicalRoute?.id) === 'monthly_transits_for_planet'
+                  ? 'monthly_transits_for_planet'
+                  : 'month_ahead_transits',
+                (plannedRoute?.commonRouteId || canonicalRoute?.id) === 'monthly_transits_for_planet' ? 200 : 10
+              )
+            : 5,
           includeFollowUp: isTopMonthlyTransitRoute(plannedRoute?.commonRouteId || canonicalRoute?.id)
         })
       : null;
