@@ -37,6 +37,13 @@ module.exports = function registerProfileCommand(bot) {
     );
   });
 
+  bot.action(ACTIONS.PROFILE_TOGGLE_RESPONSE_MODE, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.PROFILE_TOGGLE_RESPONSE_MODE }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
   bot.action(/^PROFILE_SWITCH_.+$/, async (ctx) => {
     await handleIncomingAction(
       createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
