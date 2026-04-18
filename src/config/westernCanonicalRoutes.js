@@ -127,6 +127,7 @@ const WESTERN_CANONICAL_ROUTES = [
     responseShape: 'full_listing',
     scope: 'natal_aspects',
     intentSample: 'list all my aspects',
+    matchHint: 'Static natal chart aspect listing only. Use this only when the user wants the aspects that already exist inside the birth chart. Do not use for transit searches across time, date ranges, years, or since birth.',
     localized: {
       en: ['list all my aspects', 'show me all my aspects', 'give me all my natal aspects', 'all aspects in my chart'],
       fr: ['liste mes aspects', 'liste tous mes aspects', 'donne moi tous mes aspects astrologiques', 'donne moi tous mes aspects astrologiques de mon theme', 'aspects de mon theme', 'aspects de mon thème', 'tous mes aspects'],
@@ -274,13 +275,35 @@ const WESTERN_CANONICAL_ROUTES = [
     cacheStrategy: 'tool_only',
     responseShape: 'factual_cards',
     scope: 'monthly_transits_filtered',
-    intentSample: 'show me monthly transits related to a specific planet',
-    matchHint: 'Monthly transit listing filtered to one named planet, for example Pluto, Saturn, Venus, Mars, Jupiter, Uranus, Neptune, Chiron, Sun, Moon, or Mercury. Supports requested months and asks about when they end.',
+    intentSample: 'show me the top monthly transits related to a specific planet',
+    matchHint: 'Monthly transit listing filtered to one named planet, for example Pluto, Saturn, Venus, Mars, Jupiter, Uranus, Neptune, Chiron, Sun, Moon, or Mercury. Includes formulations asking for the strongest or top 3/top 5 transits related to that planet during this month or another requested month. Supports requested months and asks about when they end.',
     localized: {
-      en: ['show me all monthly transits related to pluto', 'give me all this month transits related to pluto', 'monthly pluto transits and when they end'],
-      fr: ['donne moi tous les transits du mois en rapport avec pluton', 'donne moi tous les transits du moi en rapport avec pluton', 'montre moi tous les transits du mois liés à pluton', 'montre moi tous les transits du mois lies a pluton et quand ils se terminent'],
-      de: ['zeige mir alle monatstransite in bezug auf pluto'],
-      es: ['muestrame todos los transitos del mes relacionados con pluton']
+      en: [
+        'show me all monthly transits related to pluto',
+        'give me all this month transits related to pluto',
+        'monthly pluto transits and when they end',
+        'return the 3 strongest transits related to pluto this month',
+        'show me the top 5 monthly transits related to saturn',
+        'what are the strongest venus transits for me this month'
+      ],
+      fr: [
+        'donne moi tous les transits du mois en rapport avec pluton',
+        'donne moi tous les transits du moi en rapport avec pluton',
+        'montre moi tous les transits du mois liés à pluton',
+        'montre moi tous les transits du mois lies a pluton et quand ils se terminent',
+        'retourne les 3 transits les plus forts en rapport avec pluton ce mois ci',
+        'retourne les 3 transits les plus forts en rapport avec pluton ce mois-ci',
+        'montre moi les 5 transits les plus forts lies a saturne ce mois ci',
+        'quels sont les transits les plus forts en rapport avec venus ce mois ci'
+      ],
+      de: [
+        'zeige mir alle monatstransite in bezug auf pluto',
+        'zeige mir die 3 starksten transite zu pluto in diesem monat'
+      ],
+      es: [
+        'muestrame todos los transitos del mes relacionados con pluton',
+        'devuelveme los 3 transitos mas fuertes relacionados con pluton este mes'
+      ]
     }
   }),
   buildCanonicalRoute({
@@ -415,10 +438,24 @@ const WESTERN_CANONICAL_ROUTES = [
     responseShape: 'factual_cards',
     scope: 'transit_search',
     intentSample: 'show me all exact transits of one planet to one natal point over a requested period',
-    matchHint: 'Search one transit planet against one natal point across a date range, month, year, or since birth. Supports aspect filters like square, conjunction, opposition, trine, sextile.',
+    matchHint: 'Search one transit planet against one natal point across a date range, month, year, or since birth. Supports aspect filters like square, conjunction, opposition, trine, sextile. Use this for phrases like between my Sun and Saturn since birth, exact Saturn transits to my Moon, or all squares/oppositions/trines over time. Never use this for a static natal aspect list.',
     localized: {
-      en: ['show me exact saturn transits to my moon', 'find exact transits to my moon', 'search transits of saturn to my moon', 'return all squares between my sun and saturn since birth'],
-      fr: ['montre moi les transits exacts de saturne a ma lune', 'montre moi les transits exacts de saturne à ma lune', 'cherche les transits exacts sur ma lune', 'retourne tous les carres entre mon soleil et saturne depuis ma naissance', 'retourne tous les carrés entre mon soleil et saturne depuis ma naissance'],
+      en: [
+        'show me exact saturn transits to my moon',
+        'find exact transits to my moon',
+        'search transits of saturn to my moon',
+        'return all squares between my sun and saturn since birth',
+        'show me all squares between my sun and saturn since birth'
+      ],
+      fr: [
+        'montre moi les transits exacts de saturne a ma lune',
+        'montre moi les transits exacts de saturne à ma lune',
+        'cherche les transits exacts sur ma lune',
+        'retourne tous les carres entre mon soleil et saturne depuis ma naissance',
+        'retourne tous les carrés entre mon soleil et saturne depuis ma naissance',
+        'montre moi tous les carrés entre mon soleil et saturne depuis ma naissance',
+        'cherche tous les carrés entre mon soleil et saturne depuis ma naissance'
+      ],
       de: ['zeige mir exakte saturn transite zu meinem mond'],
       es: ['muestrame los transitos exactos de saturno a mi luna']
     }
