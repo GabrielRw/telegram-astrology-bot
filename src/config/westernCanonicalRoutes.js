@@ -99,6 +99,24 @@ const WESTERN_CANONICAL_ROUTES = [
     }
   }),
   buildCanonicalRoute({
+    id: 'chart_structures',
+    family: 'natal',
+    routeKind: 'astrology_natal',
+    answerStyle: 'life_area_theme',
+    commonRouteId: 'special_structures',
+    requiredArgs: ['profile'],
+    cacheStrategy: 'indexed_natal_then_tool',
+    responseShape: 'factual_cards',
+    scope: 'chart_structures',
+    intentSample: 'what special structures are in my chart',
+    localized: {
+      en: ['what special structures are in my chart', 'what structures are in my chart', 'show me the structures in my chart'],
+      fr: ['quelles structures speciales sont dans mon theme', 'quels sont les structures de mon theme', 'quels sont les structures de mon thème', 'quels sont les structures de mon thèmes', 'montre moi les structures de mon theme', 'montre moi les structures de mon thème'],
+      de: ['welche besonderen strukturen gibt es in meinem horoskop', 'welche strukturen gibt es in meinem horoskop'],
+      es: ['que estructuras especiales hay en mi carta', 'que estructuras hay en mi carta']
+    }
+  }),
+  buildCanonicalRoute({
     id: 'all_natal_aspects',
     family: 'natal',
     routeKind: 'astrology_natal',

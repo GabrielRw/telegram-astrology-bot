@@ -2614,6 +2614,35 @@ function buildRawNatalOverview(locale, subjectProfile, facts, options = {}) {
   return normalizeRawPresentationText(blocks.join('\n\n'));
 }
 
+function buildRawNatalStructuresOverview(locale, subjectProfile, facts, options = {}) {
+  const { title, structureBlocks } = collectRawNatalOverviewData(locale, subjectProfile, facts, options);
+  const blocks = [title];
+
+  if (structureBlocks.length > 0) {
+    blocks.push([
+      localizeRawSectionTitle(locale, 'structures'),
+      ...structureBlocks
+        .map((lines, index) => {
+          const [heading, ...detailLines] = asArray(lines).filter(Boolean);
+          const body = detailLines.map((line) => `   ${line}`).join('\n');
+          return body ? [`${index + 1}. ${heading}`, body].join('\n') : `${index + 1}. ${heading}`;
+        })
+        .filter(Boolean)
+    ].join('\n\n'));
+  }
+
+  if (blocks.length === 1) {
+    blocks.push(formatRawLabel(locale, {
+      en: 'No chart structures were found in the grounded natal facts.',
+      fr: 'Aucune structure de thème n’a été trouvée dans les faits natals fondés.',
+      de: 'In den fundierten Radix-Fakten wurden keine Strukturen gefunden.',
+      es: 'No se encontraron estructuras de carta en los hechos natales fundamentados.'
+    }));
+  }
+
+  return normalizeRawPresentationText(blocks.join('\n\n'));
+}
+
 function buildTelegramRawNatalOverviewHtml(locale, subjectProfile, facts, options = {}) {
   const {
     title,
@@ -2650,6 +2679,34 @@ function buildTelegramRawNatalOverviewHtml(locale, subjectProfile, facts, option
       `<b>${escapeTelegramHtml(localizeRawSectionTitle(locale, 'structures'))}</b>`,
       ...renderedBlocks
     ].join('\n\n'));
+  }
+
+  return sections;
+}
+
+function buildTelegramRawNatalStructuresHtml(locale, subjectProfile, facts, options = {}) {
+  const { title, structureBlocks } = collectRawNatalOverviewData(locale, subjectProfile, facts, options);
+  const sections = [`<b>${escapeTelegramHtml(title)}</b>`];
+
+  if (structureBlocks.length > 0) {
+    const renderedBlocks = structureBlocks.map((lines, index) => {
+      const [heading, ...detailLines] = asArray(lines).filter(Boolean);
+      const pieces = [`<b>${index + 1}. ${escapeTelegramHtml(heading || '')}</b>`];
+      pieces.push(...detailLines.map((line) => escapeTelegramHtml(line)));
+      return pieces.join('\n');
+    });
+
+    sections.push([
+      `<b>${escapeTelegramHtml(localizeRawSectionTitle(locale, 'structures'))}</b>`,
+      ...renderedBlocks
+    ].join('\n\n'));
+  } else {
+    sections.push(escapeTelegramHtml(formatRawLabel(locale, {
+      en: 'No chart structures were found in the grounded natal facts.',
+      fr: 'Aucune structure de thème n’a été trouvée dans les faits natals fondés.',
+      de: 'In den fundierten Radix-Fakten wurden keine Strukturen gefunden.',
+      es: 'No se encontraron estructuras de carta en los hechos natales fundamentados.'
+    })));
   }
 
   return sections;
@@ -2730,6 +2787,11 @@ function isBroadRawNatalQuestion(userText, answerStyle) {
     !/(career|work|money|love|relationship|family|spiritual|mind|mental|emotion|aspect|house|ruler|saturn|jupiter|venus|mars|mercury|moon|sun|chiron|pluto|uranus|neptune|interception|rare|signature|stellium)/.test(value) &&
     (answerStyle === 'natal_theme' || /theme|chart|natal|astro|thème/.test(value))
   );
+}
+
+function isStructureFocusedRawNatalQuestion(userText) {
+  const value = String(userText || '').toLowerCase();
+  return /(structure|structures|motif|motifs|pattern|patterns|configuration|configurations)/.test(value);
 }
 
 function countConcreteRawNatalFacts(facts) {
@@ -3469,11 +3531,18 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   }
 
   const answerStyle = plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText);
+  const structureFocusedRawNatal = (
+    rawMode &&
+    subjectProfile?.rawNatalPayload &&
+    searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
+    isStructureFocusedRawNatalQuestion(userText)
+  );
   const aspectFacts = (
     rawMode &&
     subjectProfile?.rawNatalPayload &&
     searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
-    isBroadRawNatalQuestion(userText, answerStyle)
+    isBroadRawNatalQuestion(userText, answerStyle) &&
+    !structureFocusedRawNatal
   )
     ? await factIndex.searchFacts(identity, {
         primaryProfileId: subjectProfile.profileId,
@@ -3490,21 +3559,30 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
         rawMode &&
         subjectProfile?.rawNatalPayload &&
         searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
-        isBroadRawNatalQuestion(userText, answerStyle)
-          ? buildRawNatalOverview(locale, subjectProfile, facts, {
-              subjectLabel: subjectProfile?.profileName || 'Chart User',
-              userText,
-              aspectFacts,
-              answerStyle,
-              limit: 5
-            })
-          : buildRawFactCards(locale, facts, {
-              subjectLabel: subjectProfile?.profileName || 'Chart User',
-              userText,
-              subjectProfile,
-              answerStyle,
-              limit: 5
-            })
+        (
+          structureFocusedRawNatal
+            ? buildRawNatalStructuresOverview(locale, subjectProfile, facts, {
+                subjectLabel: subjectProfile?.profileName || 'Chart User',
+                userText,
+                answerStyle,
+                limit: 5
+              })
+            : isBroadRawNatalQuestion(userText, answerStyle)
+              ? buildRawNatalOverview(locale, subjectProfile, facts, {
+                  subjectLabel: subjectProfile?.profileName || 'Chart User',
+                  userText,
+                  aspectFacts,
+                  answerStyle,
+                  limit: 5
+                })
+              : buildRawFactCards(locale, facts, {
+                  subjectLabel: subjectProfile?.profileName || 'Chart User',
+                  userText,
+                  subjectProfile,
+                  answerStyle,
+                  limit: 5
+                })
+        )
       )
     : buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle);
   if (!draftAnswer) {
@@ -3516,15 +3594,24 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     identity?.channel === 'telegram' &&
     subjectProfile?.rawNatalPayload &&
     searchInput.sourceKinds.includes(factIndex.NATAL_SOURCE_KIND) &&
-    isBroadRawNatalQuestion(userText, answerStyle)
+    (isBroadRawNatalQuestion(userText, answerStyle) || structureFocusedRawNatal)
   )
-    ? buildTelegramRawNatalOverviewHtml(locale, subjectProfile, facts, {
-        subjectLabel: subjectProfile?.profileName || 'Chart User',
-        userText,
-        aspectFacts,
-        answerStyle,
-        limit: 5
-      })
+    ? (
+        structureFocusedRawNatal
+          ? buildTelegramRawNatalStructuresHtml(locale, subjectProfile, facts, {
+              subjectLabel: subjectProfile?.profileName || 'Chart User',
+              userText,
+              answerStyle,
+              limit: 5
+            })
+          : buildTelegramRawNatalOverviewHtml(locale, subjectProfile, facts, {
+              subjectLabel: subjectProfile?.profileName || 'Chart User',
+              userText,
+              aspectFacts,
+              answerStyle,
+              limit: 5
+            })
+      )
     : null;
   const telegramRawNatalHtmlParts = telegramRawNatalHtmlSections
     ? splitTelegramHtmlSections(telegramRawNatalHtmlSections)
