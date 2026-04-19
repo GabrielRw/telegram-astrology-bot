@@ -799,7 +799,7 @@ function buildCanonicalIndexedRoute(canonicalRoute, userText, subjectProfile, fa
       categories: [],
       tags: [],
       cacheMonth: factAvailability?.indexedTransitCacheMonth || null,
-      limit: 20,
+      limit: 200,
       reason: `Matched canonical route ${canonicalRoute.id} for current month cache`,
       answerStyle: canonicalRoute.answerStyle,
       commonRouteId: canonicalRoute.id
@@ -882,6 +882,7 @@ const PLANET_SYNONYMS = {
   merkur: 'mercury',
   mercurio: 'mercury',
   venus: 'venus',
+  vénus: 'venus',
   mars: 'mars',
   jupiter: 'jupiter',
   saturn: 'saturn',
@@ -942,7 +943,9 @@ const MONTH_NAME_MAP = {
 };
 const ASPECT_TYPE_SYNONYMS = {
   conjunction: 'conjunction',
+  conjunctions: 'conjunction',
   conjonction: 'conjunction',
+  conjonctions: 'conjunction',
   conjunct: 'conjunction',
   square: 'square',
   squares: 'square',
@@ -954,14 +957,25 @@ const ASPECT_TYPE_SYNONYMS = {
   oppose: 'opposition',
   oppositions: 'opposition',
   trine: 'trine',
+  trines: 'trine',
   trigone: 'trine',
+  trigones: 'trine',
+  sextiles: 'sextile',
   sextile: 'sextile'
 };
 
+function normalizeMatchingText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
 function parsePlanetFromQuestion(text) {
-  const value = String(text || '').toLowerCase();
+  const value = normalizeMatchingText(text);
   for (const [needle, planet] of Object.entries(PLANET_SYNONYMS)) {
-    if (new RegExp(`\\b${needle}\\b`, 'i').test(value)) {
+    const normalizedNeedle = normalizeMatchingText(needle);
+    if (new RegExp(`\\b${normalizedNeedle}\\b`, 'i').test(value)) {
       return planet;
     }
   }
@@ -973,7 +987,7 @@ function parseTransitPlanetFromQuestion(text) {
   const value = String(text || '').toLowerCase();
   const pairPatterns = [
     /\bbetween\s+my\s+([a-zà-ÿ]+)\s+and\s+([a-zà-ÿ]+)\b/i,
-    /\bentre\s+m[ao]n\s+([a-zà-ÿ]+)\s+et\s+([a-zà-ÿ]+)\b/i
+    /\bentre\s+m(?:on|a|es)\s+([a-zà-ÿ]+)\s+et\s+([a-zà-ÿ]+)\b/i
   ];
   for (const pattern of pairPatterns) {
     const match = value.match(pattern);
@@ -1023,7 +1037,7 @@ function parseNatalPointFromTransitSearchQuestion(text) {
   const value = String(text || '').toLowerCase();
   const targetedPatterns = [
     /\bbetween\s+my\s+([a-zà-ÿ]+)\s+and\s+([a-zà-ÿ]+)\b/i,
-    /\bentre\s+m[ao]n\s+([a-zà-ÿ]+)\s+et\s+([a-zà-ÿ]+)\b/i,
+    /\bentre\s+m(?:on|a|es)\s+([a-zà-ÿ]+)\s+et\s+([a-zà-ÿ]+)\b/i,
     /\b(?:to|against|vers|sur|à)\s+my\s+([a-z]+)/i,
     /\b(?:to|against|vers|sur|à)\s+(ascendant|rising|asc|descendant|desc|midheaven|mc|ic|sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron)\b/i,
     /\bmy\s+(ascendant|rising|asc|descendant|desc|midheaven|mc|ic|sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron)\b/i
@@ -1061,7 +1075,11 @@ function parseYearFromQuestion(text) {
 
 function parseMonthFromQuestion(text, timezone = 'UTC') {
   const value = String(text || '').toLowerCase();
+  const requestedMonthlyPlanet = parseRequestedMonthlyTransitPlanet(value);
   for (const [monthName, monthNumber] of Object.entries(MONTH_NAME_MAP)) {
+    if (monthName === 'mars' && requestedMonthlyPlanet === 'mars') {
+      continue;
+    }
     if (new RegExp(`\\b${monthName}\\b`, 'i').test(value)) {
       const parsedYear = parseYearFromQuestion(value) || getCurrentLocalDateParts(timezone).year;
       return { year: parsedYear, month: monthNumber };
@@ -1273,6 +1291,7 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
     result: toolCallResult
   }];
   const timelinePayload = extractTransitTimelinePayload(toolCallResult);
+  const transitSearchPayload = extractTransitSearchPayload(toolCallResult);
   const requestedMonthlyPlanet = parseRequestedMonthlyTransitPlanet(userText);
 
   if (route.id === 'month_ahead_transits' && Array.isArray(timelinePayload?.transits)) {
@@ -1340,6 +1359,12 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
       requestedPlanet: planet,
       strictPlanetMatch: true
     }) || buildCanonicalMissingArgsResponse(locale, route, ['transitPlanet']);
+  }
+
+  if (route.id === 'transit_search_exact' && transitSearchPayload) {
+    if (responseMode === 'raw') {
+      return buildTransitSearchRawResponse(locale, transitSearchPayload, subjectProfile);
+    }
   }
 
   if (responseMode === 'raw') {
@@ -2478,6 +2503,43 @@ function extractTransitTimelinePayload(result) {
   return null;
 }
 
+function extractTransitSearchPayload(result) {
+  const candidates = [
+    result,
+    result?.structuredContent,
+    result?.data,
+    result?.structuredContent?.data
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate?.passes) || Array.isArray(candidate?.cycles) || candidate?.search_summary) {
+      return candidate;
+    }
+
+    const rawText = typeof candidate?.text === 'string'
+      ? candidate.text
+      : (typeof candidate === 'string' ? candidate : null);
+
+    if (!rawText) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(rawText);
+      if (Array.isArray(parsed?.passes) || Array.isArray(parsed?.cycles) || parsed?.search_summary) {
+        return parsed;
+      }
+      if (parsed?.structuredContent && (Array.isArray(parsed.structuredContent?.passes) || Array.isArray(parsed.structuredContent?.cycles) || parsed.structuredContent?.search_summary)) {
+        return parsed.structuredContent;
+      }
+    } catch (_error) {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 function getRawSubjectLabel(locale, subjectLabel) {
   if (subjectLabel && subjectLabel !== 'Chart User') {
     return subjectLabel;
@@ -2489,6 +2551,98 @@ function getRawSubjectLabel(locale, subjectLabel) {
     de: 'dich',
     es: 'ti'
   });
+}
+
+function formatTransitSearchHeading(locale, payload, subjectProfile) {
+  const input = payload?.input || {};
+  const transitPlanet = humanizeRawKey(formatScalarValue(input.transit_planet) || 'Transit');
+  const natalPoint = humanizeRawKey(formatScalarValue(input.natal_point) || 'Point');
+  const aspectType = humanizeRawKey(formatScalarValue(asArray(input.aspect_types)[0]) || 'aspect');
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+
+  return formatRawLabel(locale, {
+    en: `${transitPlanet} ${aspectType} natal ${natalPoint} for ${subject}`,
+    fr: `${transitPlanet} ${aspectType} au ${natalPoint} natal pour ${subject}`,
+    de: `${transitPlanet} ${aspectType} zum Radix-${natalPoint} für ${subject}`,
+    es: `${transitPlanet} ${aspectType} al ${natalPoint} natal para ${subject}`
+  });
+}
+
+function buildTransitSearchRawResponse(locale, payload, subjectProfile) {
+  const heading = formatTransitSearchHeading(locale, payload, subjectProfile);
+  const meta = payload?.meta || {};
+  const summary = payload?.search_summary || {};
+  const cycles = asArray(payload?.cycles);
+  const passes = asArray(payload?.passes);
+  const lines = [heading];
+
+  const rangeStart = formatRawDate(meta.range_start);
+  const rangeEnd = formatRawDate(meta.range_end);
+  if (rangeStart || rangeEnd) {
+    lines.push(`${formatRawLabel(locale, { en: 'Range', fr: 'Période', de: 'Zeitraum', es: 'Periodo' })}: ${[rangeStart || '?', rangeEnd || '?'].join(' → ')}`);
+  }
+
+  const cycleCount = formatScalarValue(summary.cycle_count);
+  const passCount = formatScalarValue(summary.pass_count);
+  const hitCount = formatScalarValue(summary.hit_count);
+  const summaryParts = [
+    cycleCount ? `${formatRawLabel(locale, { en: 'Cycles', fr: 'Cycles', de: 'Zyklen', es: 'Ciclos' })}: ${cycleCount}` : null,
+    passCount ? `${formatRawLabel(locale, { en: 'Passes', fr: 'Passages', de: 'Durchgänge', es: 'Pasos' })}: ${passCount}` : null,
+    hitCount ? `${formatRawLabel(locale, { en: 'Exact hits', fr: 'Exactitudes', de: 'Exakte Treffer', es: 'Exactitudes' })}: ${hitCount}` : null
+  ].filter(Boolean);
+  if (summaryParts.length > 0) {
+    lines.push(summaryParts.join(' • '));
+  }
+
+  const renderedCycles = cycles.map((cycle, index) => {
+    const block = [];
+    block.push(`${index + 1}. ${normalizeRawTitle(cycle.label) || heading}`);
+    block.push(`${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${formatRawDate(cycle.cycle_start_datetime)} → ${formatRawDate(cycle.cycle_end_datetime)}`);
+    if (formatScalarValue(cycle.hit_count)) {
+      block.push(`${formatRawLabel(locale, { en: 'Exact hits', fr: 'Exactitudes', de: 'Exakte Treffer', es: 'Exactitudes' })}: ${formatScalarValue(cycle.hit_count)}`);
+    }
+    const closestOrb = formatScalarValue(cycle.closest_orb_deg);
+    if (closestOrb) {
+      block.push(`${formatRawLabel(locale, { en: 'Closest orb', fr: 'Orbe la plus proche', de: 'Kleinster Orbis', es: 'Orbe más cercano' })}: ${closestOrb}`);
+    }
+    const exacts = asArray(cycle?.passes).flatMap((pass) => asArray(pass.exact_datetimes)).map((value) => formatRawDate(value)).filter(Boolean);
+    if (exacts.length > 0) {
+      block.push(`${formatRawLabel(locale, { en: 'Exact', fr: 'Exact', de: 'Exakt', es: 'Exacto' })}: ${exacts.slice(0, 4).join(', ')}`);
+    }
+    return block.join('\n');
+  });
+
+  if (renderedCycles.length > 0) {
+    lines.push(formatRawLabel(locale, { en: 'Cycles', fr: 'Cycles', de: 'Zyklen', es: 'Ciclos' }));
+    lines.push(...renderedCycles);
+  }
+
+  const renderedPasses = passes.map((pass, index) => {
+    const block = [];
+    block.push(`${index + 1}. ${normalizeRawTitle(pass.label) || heading}`);
+    const passType = humanizeRawKey(formatScalarValue(pass.pass_type) || '');
+    const phase = humanizeRawKey(formatScalarValue(pass.applying_or_separating) || '');
+    if (passType || phase) {
+      block.push([passType, phase].filter(Boolean).join(' • '));
+    }
+    block.push(`${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${formatRawDate(pass.start_datetime)} → ${formatRawDate(pass.end_datetime)}`);
+    const exacts = asArray(pass.exact_datetimes).map((value) => formatRawDate(value)).filter(Boolean);
+    if (exacts.length > 0) {
+      block.push(`${formatRawLabel(locale, { en: 'Exact', fr: 'Exact', de: 'Exakt', es: 'Exacto' })}: ${exacts.join(', ')}`);
+    }
+    const orb = formatScalarValue(pass.closest_orb_deg);
+    if (orb) {
+      block.push(`${formatRawLabel(locale, { en: 'Closest orb', fr: 'Orbe la plus proche', de: 'Kleinster Orbis', es: 'Orbe más cercano' })}: ${orb}`);
+    }
+    return block.join('\n');
+  });
+
+  if (renderedCycles.length === 0 && renderedPasses.length > 0) {
+    lines.push(formatRawLabel(locale, { en: 'Passes', fr: 'Passages', de: 'Durchgänge', es: 'Pasos' }));
+    lines.push(...renderedPasses.slice(0, 8));
+  }
+
+  return normalizeRawPresentationText(lines.join('\n\n'));
 }
 
 function detectFullRawListingRequest(userText) {
@@ -2946,6 +3100,47 @@ function formatAspectFactLine(locale, fact) {
   return parts.filter(Boolean).join(' • ');
 }
 
+function matchesNatalAspectPlanetFilter(source, requestedPlanet) {
+  const normalizedPlanet = normalizeMatchingText(requestedPlanet);
+  if (!normalizedPlanet) {
+    return true;
+  }
+
+  const values = [];
+  if (source?.factPayload || source?.entities || source?.title) {
+    const fact = source;
+    const { entities, evidence, raw } = getRawFactCore(fact);
+    values.push(
+      ...asArray(entities?.planets),
+      evidence?.planet1,
+      evidence?.planet2,
+      evidence?.point1,
+      evidence?.point2,
+      raw?.planet1,
+      raw?.planet2,
+      raw?.point1,
+      raw?.point2,
+      fact?.title
+    );
+  } else {
+    values.push(
+      source?.planet1_id,
+      source?.planet2_id,
+      source?.point1_id,
+      source?.point2_id,
+      source?.planet1,
+      source?.planet2,
+      source?.point1,
+      source?.point2
+    );
+  }
+
+  return values
+    .map((value) => normalizeMatchingText(value))
+    .filter(Boolean)
+    .some((value) => value === normalizedPlanet || new RegExp(`\\b${normalizedPlanet}\\b`, 'i').test(value));
+}
+
 function buildTransitTimelineEntryLines(locale, transit) {
   const title = normalizeRawTitle(transit.label) || formatRawLabel(locale, {
     en: 'Transit',
@@ -3053,12 +3248,15 @@ function matchesTransitPlanetFilter(entry, planet, strict = false) {
 }
 
 function parseRequestedMonthlyTransitPlanet(text) {
-  const value = String(text || '').toLowerCase();
-  if (!/\b(en rapport avec|lié à|lies? a|related to|about|regarding|concernant)\b/i.test(value)) {
+  const rawValue = String(text || '');
+  const value = normalizeMatchingText(rawValue);
+  const relationCue = /\b(en rapport avec|lie a|related to|about|regarding|concernant|pour|for)\b/i.test(value);
+  const monthlyCue = /\b(transits?|transit)\b/i.test(value) && /\b(mois|month|mensuel|monthly)\b/i.test(value);
+  if (!relationCue && !monthlyCue) {
     return null;
   }
 
-  return parsePlanetFromQuestion(value);
+  return parsePlanetFromQuestion(rawValue);
 }
 
 function collectRawNatalOverviewData(locale, subjectProfile, facts, options = {}) {
@@ -4190,7 +4388,7 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
 
   const requestedMonthlyPlanet = parseRequestedMonthlyTransitPlanet(userText);
   if (requestedMonthlyPlanet && searchInput.sourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND)) {
-    const filteredFacts = facts.filter((fact) => {
+    const filterFactsByRequestedPlanet = (candidateFacts) => candidateFacts.filter((fact) => {
       const { evidence } = getRawFactCore(fact);
       return matchesTransitPlanetFilter({
         transit_planet: evidence.transitPlanet || evidence.transit_planet,
@@ -4198,9 +4396,50 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
         label: normalizeRawTitle(fact.title) || ''
       }, requestedMonthlyPlanet);
     });
+    const filteredFacts = filterFactsByRequestedPlanet(facts);
 
     if (filteredFacts.length > 0) {
       facts = filteredFacts;
+    } else {
+      const targetedSearchInputs = [
+        {
+          ...searchInput,
+          tags: [`planet:${requestedMonthlyPlanet}`],
+          limit: 30
+        },
+        {
+          ...searchInput,
+          tags: [`point:${requestedMonthlyPlanet}`],
+          limit: 30
+        },
+        {
+          ...searchInput,
+          tags: [requestedMonthlyPlanet],
+          limit: 30
+        }
+      ];
+      const targetedFacts = [];
+      const seenFactKeys = new Set();
+
+      for (const targetedInput of targetedSearchInputs) {
+        const candidateFacts = await factIndex.searchFacts(identity, targetedInput);
+        for (const fact of candidateFacts) {
+          if (seenFactKeys.has(fact.factKey)) {
+            continue;
+          }
+          seenFactKeys.add(fact.factKey);
+          targetedFacts.push(fact);
+        }
+      }
+
+      const targetedFilteredFacts = filterFactsByRequestedPlanet(targetedFacts);
+      if (targetedFilteredFacts.length > 0) {
+        searchInput = {
+          ...searchInput,
+          tags: []
+        };
+        facts = targetedFilteredFacts;
+      }
     }
   }
 
@@ -4438,6 +4677,7 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
 
 async function tryFullRawListing(identity, userText, subjectProfile, factAvailability, locale, requestKind, monthlyTransitCache = null, responseMode = 'raw') {
   if (requestKind === 'all_aspects') {
+    const requestedPlanet = parsePlanetFromQuestion(userText);
     const aspectFacts = await factIndex.searchFacts(identity, {
       primaryProfileId: subjectProfile.profileId,
       secondaryProfileId: null,
@@ -4448,7 +4688,10 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
       limit: 120
     });
 
-    const indexedLines = aspectFacts
+    const filteredAspectFacts = requestedPlanet
+      ? aspectFacts.filter((fact) => matchesNatalAspectPlanetFilter(fact, requestedPlanet))
+      : aspectFacts;
+    const indexedLines = filteredAspectFacts
       .map((fact) => formatAspectFactLine(locale, fact))
       .filter(Boolean);
 
@@ -4458,6 +4701,7 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
       { birthCountry: subjectProfile.birthCountry }
     );
     const fallbackLines = asArray(normalizedProfile.majorAspects)
+      .filter((aspect) => matchesNatalAspectPlanetFilter(aspect, requestedPlanet))
       .map((aspect) => formatAspectLine(locale, aspect))
       .filter(Boolean);
     const lines = indexedLines.length > 0 ? indexedLines : fallbackLines;
@@ -4499,7 +4743,14 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
     return {
       textParts: buildRawListingParts(
         locale,
-        buildRawListingTitle(locale, 'all_aspects', subjectProfile.profileName, String(lines.length), responseMode),
+        requestedPlanet
+          ? formatRawLabel(locale, {
+              en: `Major aspects involving ${humanizeRawKey(requestedPlanet)} for ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
+              fr: `Aspects majeurs impliquant ${humanizeRawKey(requestedPlanet)} pour ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
+              de: `Hauptaspekte mit ${humanizeRawKey(requestedPlanet)} für ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
+              es: `Aspectos mayores con ${humanizeRawKey(requestedPlanet)} para ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`
+            })
+          : buildRawListingTitle(locale, 'all_aspects', subjectProfile.profileName, String(lines.length), responseMode),
         lines,
         { itemType: 'line', chunkSize: 18 }
       ),
@@ -4648,7 +4899,7 @@ function getCanonicalFullListingKind(canonicalRoute) {
   return null;
 }
 
-async function tryCanonicalFullListing(identity, canonicalRoute, subjectProfile, factAvailability, locale, responseMode, monthlyTransitCache = null) {
+async function tryCanonicalFullListing(identity, canonicalRoute, userText, subjectProfile, factAvailability, locale, responseMode, monthlyTransitCache = null) {
   const requestKind = getCanonicalFullListingKind(canonicalRoute);
   if (!requestKind) {
     return null;
@@ -4656,7 +4907,7 @@ async function tryCanonicalFullListing(identity, canonicalRoute, subjectProfile,
 
   return tryFullRawListing(
     identity,
-    canonicalRoute.intentSample || canonicalRoute.id,
+    userText || canonicalRoute.intentSample || canonicalRoute.id,
     subjectProfile,
     factAvailability,
     locale,
@@ -5124,6 +5375,7 @@ async function answerConversation(identity, userText) {
     const fullListingResult = await tryCanonicalFullListing(
       identity,
       canonicalRoute,
+      userText,
       subjectProfile,
       factAvailability,
       locale,
