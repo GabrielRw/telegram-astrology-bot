@@ -69,7 +69,8 @@ function createDefaultState(identity) {
       lastIntentId: null,
       lastAnswerStyle: null,
       lastResolvedQuestion: null,
-      lastCommonRouteId: null
+      lastCommonRouteId: null,
+      lastQueryState: null
     },
     choiceMap: {},
     uiCache: {
@@ -102,7 +103,8 @@ function clearNatalProfile(identity) {
     lastIntentId: null,
     lastAnswerStyle: null,
     lastResolvedQuestion: null,
-    lastCommonRouteId: null
+    lastCommonRouteId: null,
+    lastQueryState: null
   };
   state.choiceMap = {};
   state.uiCache = {
@@ -240,7 +242,10 @@ function setConversationContext(chatId, context = {}, options = {}) {
       : (state.conversationContext?.lastResolvedQuestion || null),
     lastCommonRouteId: context.lastCommonRouteId !== undefined
       ? (context.lastCommonRouteId ? String(context.lastCommonRouteId) : null)
-      : (state.conversationContext?.lastCommonRouteId || null)
+      : (state.conversationContext?.lastCommonRouteId || null),
+    lastQueryState: context.lastQueryState !== undefined
+      ? (context.lastQueryState ? JSON.parse(JSON.stringify(context.lastQueryState)) : null)
+      : (state.conversationContext?.lastQueryState || null)
   };
 
   if (options.notify !== false) {
@@ -259,7 +264,8 @@ function getConversationContext(chatId) {
     lastIntentId: null,
     lastAnswerStyle: null,
     lastResolvedQuestion: null,
-    lastCommonRouteId: null
+    lastCommonRouteId: null,
+    lastQueryState: null
   };
 }
 

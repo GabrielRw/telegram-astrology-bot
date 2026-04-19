@@ -190,6 +190,200 @@ function getLastResolvedQuestion(conversationContext, history = [], userText = '
   return previousUserQuestion?.text || null;
 }
 
+function getPreviousUserQuestion(history = [], userText = '') {
+  return (Array.isArray(history) ? history : [])
+    .slice()
+    .reverse()
+    .find((item) => item?.role === 'user' && String(item.text || '').trim() !== String(userText || '').trim())
+    ?.text || null;
+}
+
+function sanitizeStructuredQueryPatch(patch = {}) {
+  if (!patch || typeof patch !== 'object') {
+    return {};
+  }
+
+  const next = {};
+  const normalizedPlanet = patch.planet ? parsePlanetFromQuestion(String(patch.planet)) : null;
+  const normalizedTransitPlanet = patch.transitPlanet ? parseTransitPlanetFromQuestion(String(patch.transitPlanet)) : null;
+  const normalizedNatalPoint = patch.natalPoint ? parseNatalPointFromQuestion(String(patch.natalPoint)) : null;
+  const normalizedAspectTypes = Array.isArray(patch.aspectTypes)
+    ? patch.aspectTypes
+      .map((value) => parseAspectTypesFromQuestion(String(value)))
+      .flat()
+      .filter(Boolean)
+    : [];
+
+  if (normalizedPlanet) {
+    next.planet = normalizedPlanet;
+  }
+
+  if (normalizedTransitPlanet) {
+    next.transitPlanet = normalizedTransitPlanet;
+  }
+
+  if (normalizedNatalPoint) {
+    next.natalPoint = normalizedNatalPoint;
+  }
+
+  if (normalizedAspectTypes.length > 0) {
+    next.aspectTypes = [...new Set(normalizedAspectTypes)];
+  }
+
+  if (patch.aspectClass === 'major' || patch.aspectClass === 'minor') {
+    next.aspectClass = patch.aspectClass;
+  }
+
+  if (typeof patch.sort === 'string' && patch.sort.trim()) {
+    next.sort = patch.sort.trim();
+  }
+
+  if (typeof patch.timeframe === 'string' && patch.timeframe.trim()) {
+    next.timeframe = patch.timeframe.trim();
+  }
+
+  if (typeof patch.focus === 'string' && patch.focus.trim()) {
+    next.focus = patch.focus.trim();
+  }
+
+  if (typeof patch.body === 'string' && patch.body.trim()) {
+    next.body = patch.body.trim();
+  }
+
+  if (typeof patch.sign === 'string' && patch.sign.trim()) {
+    next.sign = patch.sign.trim();
+  }
+
+  if (typeof patch.limit === 'number' && Number.isFinite(patch.limit) && patch.limit > 0) {
+    next.limit = Math.min(Math.round(patch.limit), 200);
+  }
+
+  if (patch.month && typeof patch.month === 'object') {
+    const year = Number(patch.month.year);
+    const month = Number(patch.month.month);
+    if (Number.isFinite(year) && Number.isFinite(month) && month >= 1 && month <= 12) {
+      next.month = { year, month };
+    }
+  }
+
+  if (patch.fullListing === true || patch.fullListing === false) {
+    next.fullListing = patch.fullListing;
+  }
+
+  return next;
+}
+
+function getLastQueryState(conversationContext) {
+  if (!conversationContext?.lastQueryState || typeof conversationContext.lastQueryState !== 'object') {
+    return null;
+  }
+
+  const value = conversationContext.lastQueryState;
+  return {
+    canonicalRouteId: value.canonicalRouteId ? String(value.canonicalRouteId) : null,
+    routeKind: value.routeKind ? String(value.routeKind) : null,
+    baseQuestion: value.baseQuestion ? String(value.baseQuestion) : null,
+    parameters: sanitizeStructuredQueryPatch(value.parameters || {})
+  };
+}
+
+function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone = 'UTC') {
+  const value = String(text || '');
+  const limit = parseRequestedResultLimit(value);
+  const strongest = wantsStrongestSubset(value);
+  const parsedMonth = parseMonthFromQuestion(value, timezone);
+
+  switch (routeId) {
+    case 'all_natal_aspects':
+      return sanitizeStructuredQueryPatch({
+        planet: parsePlanetFromQuestion(value),
+        aspectClass: wantsMinorAspects(value) ? 'minor' : 'major',
+        limit,
+        sort: strongest ? 'strength_desc' : null,
+        fullListing: true
+      });
+    case 'month_ahead_transits':
+    case 'all_monthly_transits':
+      return sanitizeStructuredQueryPatch({
+        month: parsedMonth,
+        timeframe: parsedMonth ? 'specific_month' : 'current_month',
+        limit,
+        sort: strongest ? 'strength_desc' : null,
+        fullListing: routeId === 'all_monthly_transits'
+      });
+    case 'monthly_transits_for_planet':
+      return sanitizeStructuredQueryPatch({
+        planet: parseRequestedMonthlyTransitPlanet(value) || parsePlanetFromQuestion(value),
+        month: parsedMonth,
+        timeframe: parsedMonth ? 'specific_month' : 'current_month',
+        limit,
+        sort: strongest ? 'strength_desc' : null
+      });
+    case 'transit_search_exact': {
+      const timeframe = /\b(depuis ma naissance|since birth|since i was born|from birth)\b/i.test(value)
+        ? 'since_birth'
+        : parsedMonth
+        ? 'specific_month'
+        : parseYearFromQuestion(value)
+        ? 'specific_year'
+        : null;
+      return sanitizeStructuredQueryPatch({
+        transitPlanet: parseTransitPlanetFromQuestion(value),
+        natalPoint: parseNatalPointFromTransitSearchQuestion(value),
+        aspectTypes: parseAspectTypesFromQuestion(value),
+        month: parsedMonth,
+        timeframe,
+        limit
+      });
+    }
+    default:
+      return {};
+  }
+}
+
+function buildStructuredQueryState({
+  route,
+  canonicalRoute,
+  commonRoute,
+  userText,
+  plannerQuestionText,
+  conversationContext,
+  subjectProfile,
+  explicitFollowUp,
+  timezone = 'UTC'
+}) {
+  const previousState = getLastQueryState(conversationContext);
+  const routeId = canonicalRoute?.id || commonRoute?.id || route?.commonRouteId || previousState?.canonicalRouteId || null;
+  const reusesPreviousState = Boolean(explicitFollowUp && previousState && previousState.canonicalRouteId === routeId);
+  const baseQuestion = reusesPreviousState
+    ? (previousState.baseQuestion || plannerQuestionText || userText)
+    : (plannerQuestionText || userText);
+  let parameters = reusesPreviousState
+    ? { ...(previousState.parameters || {}) }
+    : inferStructuredQueryParameters(routeId, plannerQuestionText || userText, subjectProfile, timezone);
+
+  if (!reusesPreviousState && explicitFollowUp?.rewrittenQuestion && explicitFollowUp.rewrittenQuestion !== plannerQuestionText) {
+    parameters = {
+      ...parameters,
+      ...inferStructuredQueryParameters(routeId, explicitFollowUp.rewrittenQuestion, subjectProfile, timezone)
+    };
+  }
+
+  if (explicitFollowUp?.queryPatch) {
+    parameters = {
+      ...parameters,
+      ...sanitizeStructuredQueryPatch(explicitFollowUp.queryPatch)
+    };
+  }
+
+  return {
+    canonicalRouteId: routeId,
+    routeKind: route?.kind || canonicalRoute?.routeKind || previousState?.routeKind || null,
+    baseQuestion,
+    parameters: sanitizeStructuredQueryPatch(parameters)
+  };
+}
+
 function parseRequestedResultLimit(text) {
   const value = String(text || '').toLowerCase();
   const patterns = [
@@ -224,8 +418,15 @@ function wantsStrongestSubset(text) {
 function looksLikeStandaloneAstrologyQuery(text) {
   const value = String(text || '').toLowerCase();
   const hasCoreTopic = /(transits?|aspects?|theme|thème|chart|ephemerides|éphémérides|solar return|retour solaire|relocation|synastr)/.test(value);
-  const hasSpecificScope = /(ce mois|ce mois ci|ce mois-ci|this month|since birth|depuis ma naissance|from birth|carr[eé]s?|square|conjunction|opposition|trine|sextile|soleil|sun|lune|moon|mercure|mercury|venus|mars|jupiter|saturne|saturn|uranus|neptune|pluton|pluto|chiron)/.test(value);
+  const hasSpecificScope = (
+    /(ce mois|ce mois ci|ce mois-ci|this month|since birth|depuis ma naissance|from birth|soleil|sun|lune|moon|mercure|mercury|venus|mars|jupiter|saturne|saturn|uranus|neptune|pluton|pluto|chiron)/.test(value) ||
+    parseAspectTypesFromQuestion(value).length > 0
+  );
   return hasCoreTopic && hasSpecificScope;
+}
+
+function wantsMinorAspects(text) {
+  return /\b(minor(?:\s+\w+)?\s+aspects?|aspects?\s+mineurs?)\b/i.test(String(text || ''));
 }
 
 function buildQuantitativeFollowUpQuestion(lastResolvedQuestion, limit, conversationContext) {
@@ -233,20 +434,22 @@ function buildQuantitativeFollowUpQuestion(lastResolvedQuestion, limit, conversa
     return null;
   }
 
+  const lastQueryState = getLastQueryState(conversationContext);
+  const baseQuestion = lastQueryState?.baseQuestion || lastResolvedQuestion;
   const routeId = conversationContext?.lastCommonRouteId || null;
   if (routeId === 'monthly_transits_for_planet') {
-    return `${lastResolvedQuestion}\n\nReturn only the top ${limit} strongest monthly transits related to the requested planet.`;
+    return `${baseQuestion}\n\nReturn only the top ${limit} strongest monthly transits related to the requested planet.`;
   }
 
   if (routeId === 'month_ahead_transits' || routeId === 'all_monthly_transits') {
-    return `${lastResolvedQuestion}\n\nReturn only the top ${limit} strongest transits from that month.`;
+    return `${baseQuestion}\n\nReturn only the top ${limit} strongest transits from that month.`;
   }
 
   if (routeId === 'all_natal_aspects') {
-    return `${lastResolvedQuestion}\n\nReturn only the top ${limit} strongest major aspects.`;
+    return `${baseQuestion}\n\nReturn only the top ${limit} strongest major aspects.`;
   }
 
-  return `${lastResolvedQuestion}\n\nReturn only the top ${limit} strongest results.`;
+  return `${baseQuestion}\n\nReturn only the top ${limit} strongest results.`;
 }
 
 function buildTopicFollowUpQuestion(topic, lastRouteKind) {
@@ -283,6 +486,7 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
   const value = String(userText || '').trim();
   const normalized = value.toLowerCase();
   const lastRouteKind = conversationContext?.lastResponseRoute || null;
+  const lastQueryState = getLastQueryState(conversationContext);
 
   if (!lastRouteKind || ['system_meta', 'clarification', 'profile_management'].includes(lastRouteKind)) {
     return null;
@@ -318,6 +522,22 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
     };
   }
 
+  if (
+    lastResolvedQuestion &&
+    conversationContext?.lastCommonRouteId === 'all_natal_aspects' &&
+    /^(?:(?:and|et|und|y)\s+)?(?:(?:les?|the)\s+)?(?:(?:minor|mineurs?)\s+)?aspects?\s*\??$|^(?:(?:and|et|und|y)\s+)?(?:(?:les?|the)\s+)?aspects?\s+(?:mineurs?|minor)\s*\??$/i.test(normalized)
+  ) {
+    const previousUserQuestion = lastQueryState?.baseQuestion || getPreviousUserQuestion(history, userText);
+    return {
+      followUpType: 'aspect_scope_refinement',
+      rewrittenQuestion: `${previousUserQuestion || lastResolvedQuestion}\n\nReturn the minor natal aspects only.`,
+      routeKind: lastRouteKind,
+      queryPatch: {
+        aspectClass: 'minor'
+      }
+    };
+  }
+
   const requestedLimit = parseRequestedResultLimit(normalized);
   if (
     requestedLimit &&
@@ -331,7 +551,11 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
       return {
         followUpType: 'quantitative_limit',
         rewrittenQuestion,
-        routeKind: lastRouteKind
+        routeKind: lastRouteKind,
+        queryPatch: {
+          limit: requestedLimit,
+          sort: 'strength_desc'
+        }
       };
     }
   }
@@ -609,6 +833,7 @@ async function resolveCanonicalCommonRouteWithAi(locale, userText, route) {
 
 async function resolveFollowUpWithAi(locale, userText, conversationContext, route) {
   const lastResolvedQuestion = getLastResolvedQuestion(conversationContext, [], userText);
+  const lastQueryState = getLastQueryState(conversationContext);
   if (!lastResolvedQuestion) {
     return null;
   }
@@ -626,7 +851,8 @@ async function resolveFollowUpWithAi(locale, userText, conversationContext, rout
     'You detect whether a short astrology user message is a follow-up to the previous question.',
     `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}, but output JSON only.`,
     'Return one JSON object and nothing else.',
-    'Allowed keys: isFollowUp, rewrittenQuestion, confidence, reason.',
+    'Allowed keys: isFollowUp, rewrittenQuestion, refinement, confidence, reason.',
+    'The refinement object may contain only these keys: planet, transitPlanet, natalPoint, aspectTypes, aspectClass, limit, sort, timeframe, month, focus, body, sign, fullListing.',
     'If it is a follow-up, rewrite it as one complete standalone astrology question that preserves the previous scope and adds the new refinement.',
     'If it is not a follow-up, set isFollowUp to false and rewrittenQuestion to null.'
   ].join('\n');
@@ -634,6 +860,7 @@ async function resolveFollowUpWithAi(locale, userText, conversationContext, rout
   const prompt = [
     `Current short message: ${value}`,
     `Previous resolved question: ${lastResolvedQuestion}`,
+    `Previous base question: ${lastQueryState?.baseQuestion || 'none'}`,
     `Previous canonical route id: ${conversationContext?.lastCommonRouteId || 'none'}`,
     `Previous route kind: ${conversationContext?.lastResponseRoute || route?.kind || 'unknown'}`,
     'Return JSON now.'
@@ -656,13 +883,17 @@ async function resolveFollowUpWithAi(locale, userText, conversationContext, rout
   }
 
   const confidence = Number(parsed.confidence || 0);
-  if (parsed.isFollowUp !== true || confidence < 0.7 || !parsed.rewrittenQuestion) {
+  const queryPatch = sanitizeStructuredQueryPatch(parsed.refinement || {});
+  if (parsed.isFollowUp !== true || confidence < 0.7 || (!parsed.rewrittenQuestion && Object.keys(queryPatch).length === 0)) {
     return null;
   }
 
   return {
     followUpType: 'ai_follow_up',
-    rewrittenQuestion: String(parsed.rewrittenQuestion),
+    rewrittenQuestion: parsed.rewrittenQuestion
+      ? String(parsed.rewrittenQuestion)
+      : (lastQueryState?.baseQuestion || lastResolvedQuestion),
+    queryPatch,
     routeKind: conversationContext?.lastResponseRoute || route?.kind || null
   };
 }
@@ -1397,7 +1628,7 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
   }
 }
 
-async function buildCanonicalToolExecution(identity, route, userText, subjectProfile, secondaryProfile, locale) {
+async function buildCanonicalToolExecution(identity, route, userText, subjectProfile, secondaryProfile, locale, queryState = null) {
   const flatNatal = buildFlatNatalRequestFromProfile(subjectProfile);
   const nestedNatal = buildNestedNatalRequestFromProfile(subjectProfile);
   const timezone = subjectProfile?.timezone || flatNatal?.tz_str || 'UTC';
@@ -1431,7 +1662,7 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
     case 'today_transits_me':
     case 'month_ahead_transits':
     case 'monthly_transits_for_planet': {
-      const parsedMonth = parseMonthFromQuestion(userText, timezone);
+      const parsedMonth = queryState?.parameters?.month || parseMonthFromQuestion(userText, timezone);
       const requestedMonthRange = parsedMonth ? buildMonthDateRange(parsedMonth) : null;
       const selectedMonthWindow = requestedMonthRange || (currentMonthWindow ? {
         rangeStart: currentMonthWindow.rangeStart,
@@ -1453,10 +1684,12 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
       } : { missing: ['profile'] };
     }
     case 'transit_search_exact': {
-      const transitPlanet = parseTransitPlanetFromQuestion(userText);
-      const natalPoint = parseNatalPointFromTransitSearchQuestion(userText);
+      const transitPlanet = queryState?.parameters?.transitPlanet || parseTransitPlanetFromQuestion(userText);
+      const natalPoint = queryState?.parameters?.natalPoint || parseNatalPointFromTransitSearchQuestion(userText);
       const range = buildTransitSearchWindow(userText, subjectProfile, timezone) || buildCurrentYearRange(timezone);
-      const aspectTypes = parseAspectTypesFromQuestion(userText);
+      const aspectTypes = Array.isArray(queryState?.parameters?.aspectTypes) && queryState.parameters.aspectTypes.length > 0
+        ? queryState.parameters.aspectTypes
+        : parseAspectTypesFromQuestion(userText);
       if (!transitPlanet) {
         return { missing: ['transitPlanet'] };
       }
@@ -1732,12 +1965,12 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
   }
 }
 
-async function executeCanonicalToolRoute(identity, route, userText, subjectProfile, secondaryProfile, locale, responseMode) {
+async function executeCanonicalToolRoute(identity, route, userText, subjectProfile, secondaryProfile, locale, responseMode, queryState = null) {
   if (!route?.toolTarget) {
     return null;
   }
 
-  const execution = await buildCanonicalToolExecution(identity, route, userText, subjectProfile, secondaryProfile, locale);
+  const execution = await buildCanonicalToolExecution(identity, route, userText, subjectProfile, secondaryProfile, locale, queryState);
   if (!execution) {
     return null;
   }
@@ -3056,9 +3289,9 @@ function formatAspectLine(locale, aspect) {
     return null;
   }
 
-  const point1 = humanizeRawKey(aspect.planet1_id || aspect.point1_id || aspect.planet1 || aspect.point1 || '');
-  const point2 = humanizeRawKey(aspect.planet2_id || aspect.point2_id || aspect.planet2 || aspect.point2 || '');
-  const aspectType = humanizeRawKey(aspect.aspect_name || aspect.aspect_type || aspect.aspect || '');
+  const point1 = humanizeRawKey(aspect.planet1_id || aspect.point1_id || aspect.planet1 || aspect.point1 || aspect.p1 || '');
+  const point2 = humanizeRawKey(aspect.planet2_id || aspect.point2_id || aspect.planet2 || aspect.point2 || aspect.p2 || '');
+  const aspectType = humanizeRawKey(aspect.aspect_name || aspect.aspect_type || aspect.aspect || aspect.type || '');
   const orb = formatScalarValue(aspect.orb);
   const pieces = [
     [point1, aspectType, point2].filter(Boolean).join(' ')
@@ -3139,6 +3372,76 @@ function matchesNatalAspectPlanetFilter(source, requestedPlanet) {
     .map((value) => normalizeMatchingText(value))
     .filter(Boolean)
     .some((value) => value === normalizedPlanet || new RegExp(`\\b${normalizedPlanet}\\b`, 'i').test(value));
+}
+
+function buildNormalizedNatalAspects(payload, majorOnly = true) {
+  return asArray(payload?.aspects)
+    .filter((aspect) => majorOnly ? aspect?.is_major : !aspect?.is_major)
+    .sort((left, right) => (Number(left?.orb) || 999) - (Number(right?.orb) || 999))
+    .map((aspect) => ({ ...aspect }));
+}
+
+function buildRawNatalAspectListing(locale, subjectProfile, aspects, options = {}) {
+  const requestedPlanet = options.requestedPlanet || null;
+  const minorOnly = Boolean(options.minorOnly);
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const lines = asArray(aspects).map((aspect) => formatAspectLine(locale, aspect)).filter(Boolean);
+  if (lines.length === 0) {
+    return {
+      textParts: [normalizeRawPresentationText(formatRawLabel(locale, {
+        en: `No ${minorOnly ? 'minor' : 'major'} aspects are available for ${subject}.`,
+        fr: `Aucun aspect ${minorOnly ? 'mineur' : 'majeur'} n’est disponible pour ${subject}.`,
+        de: `Keine ${minorOnly ? 'Neben' : 'Haupt'}aspekte für ${subject} verfügbar.`,
+        es: `No hay aspectos ${minorOnly ? 'menores' : 'mayores'} disponibles para ${subject}.`
+      }))],
+      renderMode: 'plain'
+    };
+  }
+
+  const title = requestedPlanet
+    ? formatRawLabel(locale, {
+        en: `${minorOnly ? 'Minor' : 'Major'} aspects involving ${humanizeRawKey(requestedPlanet)} for ${subject} — ${lines.length}`,
+        fr: `Aspects ${minorOnly ? 'mineurs' : 'majeurs'} impliquant ${humanizeRawKey(requestedPlanet)} pour ${subject} — ${lines.length}`,
+        de: `${minorOnly ? 'Neben' : 'Haupt'}aspekte mit ${humanizeRawKey(requestedPlanet)} für ${subject} — ${lines.length}`,
+        es: `Aspectos ${minorOnly ? 'menores' : 'mayores'} con ${humanizeRawKey(requestedPlanet)} para ${subject} — ${lines.length}`
+      })
+    : formatRawLabel(locale, {
+        en: `${minorOnly ? 'All minor aspects' : 'All major aspects'} for ${subject} — ${lines.length}`,
+        fr: `${minorOnly ? 'Tous les aspects mineurs' : 'Tous les aspects majeurs'} pour ${subject} — ${lines.length}`,
+        de: `${minorOnly ? 'Alle Nebenaspekte' : 'Alle Hauptaspekte'} für ${subject} — ${lines.length}`,
+        es: `${minorOnly ? 'Todos los aspectos menores' : 'Todos los aspectos mayores'} para ${subject} — ${lines.length}`
+      });
+
+  return {
+    textParts: buildRawListingParts(locale, title, lines, { itemType: 'line', chunkSize: 18 }),
+    renderMode: 'plain'
+  };
+}
+
+function filterNatalAspectsByPlanet(aspects, requestedPlanet) {
+  const normalizedPlanet = normalizeMatchingText(requestedPlanet);
+  if (!normalizedPlanet) {
+    return asArray(aspects);
+  }
+
+  return asArray(aspects).filter((aspect) => {
+    const candidates = [
+      aspect?.p1,
+      aspect?.p2,
+      aspect?.planet1_id,
+      aspect?.planet2_id,
+      aspect?.point1_id,
+      aspect?.point2_id,
+      aspect?.planet1,
+      aspect?.planet2,
+      aspect?.point1,
+      aspect?.point2
+    ]
+      .map((value) => normalizeMatchingText(value))
+      .filter(Boolean);
+
+    return candidates.includes(normalizedPlanet);
+  });
 }
 
 function buildTransitTimelineEntryLines(locale, transit) {
@@ -4108,8 +4411,8 @@ function summarizeFactTags(tags, limit = 5) {
 
 function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle, options = {}) {
   if ((options.routeId || options.commonRouteId) === 'monthly_transits_for_planet') {
-    const requestedPlanet = parseRequestedMonthlyTransitPlanet(userText) || parsePlanetFromQuestion(userText);
-    const requestedLimit = getRequestedListingLimit(userText, 'monthly_transits_for_planet', 200);
+    const requestedPlanet = options.queryState?.parameters?.planet || parseRequestedMonthlyTransitPlanet(userText) || parsePlanetFromQuestion(userText);
+    const requestedLimit = options.queryState?.parameters?.limit || getRequestedListingLimit(userText, 'monthly_transits_for_planet', 200);
     return buildMonthlyTransitOverviewFromFacts(options.locale || 'en', facts, subjectProfile, {
       userText,
       responseMode: 'interpreted',
@@ -4129,13 +4432,13 @@ function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, a
   }
 
   if (isTopMonthlyTransitRoute(options.commonRouteId || options.routeId)) {
-    const requestedLimit = getRequestedListingLimit(userText, 'month_ahead_transits', 10);
+    const requestedLimit = options.queryState?.parameters?.limit || getRequestedListingLimit(userText, 'month_ahead_transits', 10);
     return buildMonthlyTransitOverviewFromFacts(options.locale || 'en', facts, subjectProfile, {
       userText,
       responseMode: 'interpreted',
       limit: requestedLimit,
-      requestedPlanet: parseRequestedMonthlyTransitPlanet(userText),
-      strictPlanetMatch: Boolean(parseRequestedMonthlyTransitPlanet(userText))
+      requestedPlanet: options.queryState?.parameters?.planet || parseRequestedMonthlyTransitPlanet(userText),
+      strictPlanetMatch: Boolean(options.queryState?.parameters?.planet || parseRequestedMonthlyTransitPlanet(userText))
     }) || '';
   }
 
@@ -4386,7 +4689,7 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     }
   }
 
-  const requestedMonthlyPlanet = parseRequestedMonthlyTransitPlanet(userText);
+  const requestedMonthlyPlanet = options.queryState?.parameters?.planet || parseRequestedMonthlyTransitPlanet(userText);
   if (requestedMonthlyPlanet && searchInput.sourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND)) {
     const filterFactsByRequestedPlanet = (candidateFacts) => candidateFacts.filter((fact) => {
       const { evidence } = getRawFactCore(fact);
@@ -4572,7 +4875,8 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     : buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, answerStyle, {
         locale,
         commonRouteId: plannedRoute?.commonRouteId || null,
-        routeId: requestedMonthlyPlanet ? 'monthly_transits_for_planet' : null
+        routeId: requestedMonthlyPlanet ? 'monthly_transits_for_planet' : null,
+        queryState: options.queryState || null
       });
   if (!draftAnswer) {
     return null;
@@ -4675,9 +4979,11 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
   };
 }
 
-async function tryFullRawListing(identity, userText, subjectProfile, factAvailability, locale, requestKind, monthlyTransitCache = null, responseMode = 'raw') {
+async function tryFullRawListing(identity, userText, subjectProfile, factAvailability, locale, requestKind, monthlyTransitCache = null, responseMode = 'raw', queryState = null) {
   if (requestKind === 'all_aspects') {
-    const requestedPlanet = parsePlanetFromQuestion(userText);
+    const requestedPlanet = queryState?.parameters?.planet || parsePlanetFromQuestion(userText);
+    const minorOnly = (queryState?.parameters?.aspectClass === 'minor') || wantsMinorAspects(userText);
+    const requestedLimit = queryState?.parameters?.limit || null;
     const aspectFacts = await factIndex.searchFacts(identity, {
       primaryProfileId: subjectProfile.profileId,
       secondaryProfileId: null,
@@ -4700,21 +5006,25 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
       subjectProfile.cityLabel,
       { birthCountry: subjectProfile.birthCountry }
     );
-    const fallbackLines = asArray(normalizedProfile.majorAspects)
+    const fallbackAspectList = minorOnly
+      ? buildNormalizedNatalAspects(subjectProfile.rawNatalPayload, false)
+      : asArray(normalizedProfile.majorAspects);
+    const fallbackLines = fallbackAspectList
       .filter((aspect) => matchesNatalAspectPlanetFilter(aspect, requestedPlanet))
       .map((aspect) => formatAspectLine(locale, aspect))
       .filter(Boolean);
-    const lines = indexedLines.length > 0 ? indexedLines : fallbackLines;
+    const lines = (!minorOnly && indexedLines.length > 0 ? indexedLines : fallbackLines)
+      .slice(0, requestedLimit || undefined);
 
     if (lines.length === 0) {
       return {
         textParts: [normalizeRawPresentationText(formatRawLabel(locale, {
-          en: `No major aspects are available for ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`,
-          fr: `Aucun aspect majeur n’est disponible pour ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`,
-          de: `Keine Hauptaspekte für ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} verfügbar.`,
-          es: `No hay aspectos mayores disponibles para ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`
+          en: `No ${minorOnly ? 'minor' : 'major'} aspects are available for ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`,
+          fr: `Aucun aspect ${minorOnly ? 'mineur' : 'majeur'} n’est disponible pour ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`,
+          de: `Keine ${minorOnly ? 'Neben' : 'Haupt'}aspekte für ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} verfügbar.`,
+          es: `No hay aspectos ${minorOnly ? 'menores' : 'mayores'} disponibles para ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`
         }))],
-        usedTools: indexedLines.length > 0
+        usedTools: !minorOnly && indexedLines.length > 0
           ? [{
               name: 'search_cached_profile_facts',
               args: {
@@ -4732,7 +5042,7 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
               }
             }]
           : [{
-              name: 'get_cached_major_aspects',
+              name: minorOnly ? 'get_cached_minor_aspects' : 'get_cached_major_aspects',
               args: { limit: 120 },
               result: { aspects: [] }
             }],
@@ -4740,21 +5050,28 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
       };
     }
 
+    const title = requestedPlanet
+      ? formatRawLabel(locale, {
+          en: `${minorOnly ? 'Minor' : 'Major'} aspects involving ${humanizeRawKey(requestedPlanet)} for ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
+          fr: `Aspects ${minorOnly ? 'mineurs' : 'majeurs'} impliquant ${humanizeRawKey(requestedPlanet)} pour ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
+          de: `${minorOnly ? 'Neben' : 'Haupt'}aspekte mit ${humanizeRawKey(requestedPlanet)} für ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
+          es: `Aspectos ${minorOnly ? 'menores' : 'mayores'} con ${humanizeRawKey(requestedPlanet)} para ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`
+        })
+      : formatRawLabel(locale, {
+          en: `${minorOnly ? 'All minor aspects' : 'All major aspects'} for ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
+          fr: `${minorOnly ? 'Tous les aspects mineurs' : 'Tous les aspects majeurs'} pour ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
+          de: `${minorOnly ? 'Alle Nebenaspekte' : 'Alle Hauptaspekte'} für ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
+          es: `${minorOnly ? 'Todos los aspectos menores' : 'Todos los aspectos mayores'} para ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`
+        });
+
     return {
       textParts: buildRawListingParts(
         locale,
-        requestedPlanet
-          ? formatRawLabel(locale, {
-              en: `Major aspects involving ${humanizeRawKey(requestedPlanet)} for ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
-              fr: `Aspects majeurs impliquant ${humanizeRawKey(requestedPlanet)} pour ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
-              de: `Hauptaspekte mit ${humanizeRawKey(requestedPlanet)} für ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`,
-              es: `Aspectos mayores con ${humanizeRawKey(requestedPlanet)} para ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')} — ${lines.length}`
-            })
-          : buildRawListingTitle(locale, 'all_aspects', subjectProfile.profileName, String(lines.length), responseMode),
+        title,
         lines,
         { itemType: 'line', chunkSize: 18 }
       ),
-      usedTools: indexedLines.length > 0
+      usedTools: !minorOnly && indexedLines.length > 0
         ? [{
             name: 'search_cached_profile_facts',
             args: {
@@ -4780,9 +5097,9 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
             }
           }]
         : [{
-            name: 'get_cached_major_aspects',
+            name: minorOnly ? 'get_cached_minor_aspects' : 'get_cached_major_aspects',
             args: { limit: 120 },
-            result: { aspects: normalizedProfile.majorAspects || [] }
+            result: { aspects: fallbackAspectList || [] }
           }],
       renderMode: 'plain'
     };
@@ -4821,7 +5138,9 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
       indexedBlocks.length >= timelineBlocks.length
     )
   );
-  const selectedBlocks = useIndexedFacts ? indexedBlocks : timelineBlocks;
+  const requestedLimit = queryState?.parameters?.limit || null;
+  const selectedBlocks = (useIndexedFacts ? indexedBlocks : timelineBlocks)
+    .slice(0, requestedLimit || undefined);
   const cacheMonth = factAvailability?.indexedTransitCacheMonth || ensuredTransitCache?.cacheMonth || null;
 
   if (selectedBlocks.length === 0) {
@@ -4899,7 +5218,7 @@ function getCanonicalFullListingKind(canonicalRoute) {
   return null;
 }
 
-async function tryCanonicalFullListing(identity, canonicalRoute, userText, subjectProfile, factAvailability, locale, responseMode, monthlyTransitCache = null) {
+async function tryCanonicalFullListing(identity, canonicalRoute, userText, subjectProfile, factAvailability, locale, responseMode, monthlyTransitCache = null, queryState = null) {
   const requestKind = getCanonicalFullListingKind(canonicalRoute);
   if (!requestKind) {
     return null;
@@ -4913,7 +5232,8 @@ async function tryCanonicalFullListing(identity, canonicalRoute, userText, subje
     locale,
     requestKind,
     monthlyTransitCache,
-    responseMode
+    responseMode,
+    queryState
   );
 }
 
@@ -5189,7 +5509,7 @@ function validateRawAnswer(text, locale) {
   return normalized;
 }
 
-function updateConversationState(identity, route, subjectProfile, secondaryProfile = null, resolvedQuestion = null) {
+function updateConversationState(identity, route, subjectProfile, secondaryProfile = null, resolvedQuestion = null, queryState = null) {
   setConversationContext(identity, {
     lastReferencedProfileId: subjectProfile?.profileId || null,
     lastComparedProfileId: secondaryProfile?.profileId || null,
@@ -5198,7 +5518,8 @@ function updateConversationState(identity, route, subjectProfile, secondaryProfi
     lastIntentId: route?.intent?.id || null,
     lastAnswerStyle: route?.answerStyle || null,
     lastResolvedQuestion: resolvedQuestion || null,
-    lastCommonRouteId: route?.commonRouteId || null
+    lastCommonRouteId: route?.commonRouteId || null,
+    lastQueryState: queryState || null
   }, { notify: false });
 }
 
@@ -5248,7 +5569,9 @@ async function answerConversation(identity, userText) {
 
     if (canonicalRoute) {
       route = applyCanonicalRoute(route, canonicalRoute, plannerQuestionText);
-      plannerQuestionText = canonicalRoute.intentSample || plannerQuestionText;
+      plannerQuestionText = canonicalRoute.responseShape === 'full_listing'
+        ? plannerQuestionText
+        : (canonicalRoute.intentSample || plannerQuestionText);
       commonRoute = canonicalRoute?.commonRouteId
         ? getCommonQuestionRouteById(canonicalRoute.commonRouteId)
         : null;
@@ -5303,6 +5626,17 @@ async function answerConversation(identity, userText) {
   const subjectProfile = targetContext.subjectProfile || activeProfile;
   const secondaryProfile = targetContext.secondaryProfile || null;
   const effectiveUserQuestion = buildEffectiveUserQuestion(route, userText, plannerQuestionText, subjectProfile);
+  const currentQueryState = buildStructuredQueryState({
+    route,
+    canonicalRoute,
+    commonRoute,
+    userText,
+    plannerQuestionText: effectiveUserQuestion,
+    conversationContext,
+    subjectProfile,
+    explicitFollowUp,
+    timezone: subjectProfile?.timezone || subjectProfile?.birthTimezone || subjectProfile?.rawNatalPayload?.subject?.location?.timezone || 'UTC'
+  });
   const responsePerspective = shouldUseThirdPersonVoice(userText, subjectProfile, activeProfile)
     ? 'third_person'
     : 'second_person';
@@ -5371,16 +5705,65 @@ async function answerConversation(identity, userText) {
         cacheMonth: monthlyTransitCache?.cacheMonth || null
       });
 
+  if (
+    explicitFollowUp?.followUpType === 'aspect_scope_refinement' &&
+    conversationContext?.lastCommonRouteId === 'all_natal_aspects'
+  ) {
+    const requestedPlanet = currentQueryState?.parameters?.planet || null;
+    const requestedLimit = currentQueryState?.parameters?.limit || null;
+    const refinedAspects = filterNatalAspectsByPlanet(
+      buildNormalizedNatalAspects(subjectProfile.rawNatalPayload, false),
+      requestedPlanet
+    ).slice(0, requestedLimit || undefined);
+    info('aspect scope refinement resolved', {
+      stateKey,
+      requestedPlanet,
+      requestedLimit,
+      refinedCount: refinedAspects.length
+    });
+    const refinedListingResult = buildRawNatalAspectListing(locale, subjectProfile, refinedAspects, {
+      requestedPlanet,
+      minorOnly: true
+    });
+
+    if (refinedListingResult) {
+      const textParts = Array.isArray(refinedListingResult.textParts)
+        ? refinedListingResult.textParts
+        : [refinedListingResult.text].filter(Boolean);
+      pushHistory(identity, 'user', userText);
+      pushHistory(identity, 'model', textParts.join('\n\n'));
+      setLastToolResults(identity, [{
+        name: 'get_cached_minor_aspects',
+        args: { requestedPlanet: requestedPlanet || null, limit: requestedLimit || null },
+        result: { aspects: refinedAspects }
+      }]);
+      updateConversationState(identity, route, subjectProfile, secondaryProfile, explicitFollowUp.rewrittenQuestion || plannerQuestionText, currentQueryState);
+
+      return {
+        text: textParts[0] || '',
+        textParts,
+        renderMode: refinedListingResult.renderMode || 'plain',
+        usedTools: [{
+          name: 'get_cached_minor_aspects',
+          args: { requestedPlanet: requestedPlanet || null, limit: requestedLimit || null },
+          result: { aspects: refinedAspects }
+        }],
+        intent: route.kind
+      };
+    }
+  }
+
   if (canonicalRoute?.responseShape === 'full_listing') {
     const fullListingResult = await tryCanonicalFullListing(
       identity,
       canonicalRoute,
-      userText,
+      plannerQuestionText,
       subjectProfile,
       factAvailability,
       locale,
       responseMode,
-      monthlyTransitCache
+      monthlyTransitCache,
+      currentQueryState
     );
 
     if (fullListingResult) {
@@ -5390,7 +5773,7 @@ async function answerConversation(identity, userText) {
       pushHistory(identity, 'user', userText);
       pushHistory(identity, 'model', textParts.join('\n\n'));
       setLastToolResults(identity, fullListingResult.usedTools || []);
-      updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
+      updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState);
 
       return {
         text: textParts[0] || '',
@@ -5458,7 +5841,8 @@ async function answerConversation(identity, userText) {
   const fastPathResult = shouldPreferIndexedFacts
     ? await tryFactFastPath(identity, effectiveUserQuestion, effectiveIntent, subjectProfile, factAvailability, locale, plannedRoute, {
         responsePerspective,
-        responseMode
+        responseMode,
+        queryState: currentQueryState
       })
     : null;
   if (fastPathResult) {
@@ -5480,16 +5864,16 @@ async function answerConversation(identity, userText) {
     )
       ? buildRawTransitTable(locale, fastPathResult.usedTools?.[0]?.result?.facts || [], subjectProfile, {
           limit: isMonthlyTransitListingRoute(plannedRoute?.commonRouteId || canonicalRoute?.id)
-            ? getRequestedListingLimit(
+            ? (currentQueryState?.parameters?.limit || getRequestedListingLimit(
                 effectiveUserQuestion,
                 (plannedRoute?.commonRouteId || canonicalRoute?.id) === 'monthly_transits_for_planet'
                   ? 'monthly_transits_for_planet'
                   : 'month_ahead_transits',
                 (plannedRoute?.commonRouteId || canonicalRoute?.id) === 'monthly_transits_for_planet' ? 200 : 10
-              )
+              ))
             : 5,
-          requestedPlanet: parseRequestedMonthlyTransitPlanet(effectiveUserQuestion),
-          strictPlanetMatch: Boolean(parseRequestedMonthlyTransitPlanet(effectiveUserQuestion)),
+          requestedPlanet: currentQueryState?.parameters?.planet || parseRequestedMonthlyTransitPlanet(effectiveUserQuestion),
+          strictPlanetMatch: Boolean(currentQueryState?.parameters?.planet || parseRequestedMonthlyTransitPlanet(effectiveUserQuestion)),
           includeFollowUp: isTopMonthlyTransitRoute(plannedRoute?.commonRouteId || canonicalRoute?.id)
         })
       : null;
@@ -5498,7 +5882,7 @@ async function answerConversation(identity, userText) {
       : validateFinalAnswer(fastPathResult.text, route, locale);
     pushHistory(identity, 'model', finalText);
     setLastToolResults(identity, fastPathResult.usedTools);
-    updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
+    updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState);
 
     return {
       text: finalText,
@@ -5517,7 +5901,8 @@ async function answerConversation(identity, userText) {
       subjectProfile,
       secondaryProfile,
       locale,
-      responseMode
+      responseMode,
+      currentQueryState
     );
 
     if (canonicalToolResult) {
@@ -5527,7 +5912,7 @@ async function answerConversation(identity, userText) {
         : validateFinalAnswer(canonicalToolResult.text, route, locale);
       pushHistory(identity, 'model', finalText);
       setLastToolResults(identity, canonicalToolResult.usedTools || []);
-      updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
+      updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState);
 
       return {
         text: finalText,
@@ -5591,7 +5976,7 @@ async function answerConversation(identity, userText) {
     : validateFinalAnswer(result.text, route, locale);
   pushHistory(identity, 'model', finalText);
   setLastToolResults(identity, result.toolResults);
-  updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText);
+  updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState);
 
   return {
     text: finalText,
