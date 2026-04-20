@@ -307,6 +307,8 @@ function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone 
   const limit = parseRequestedResultLimit(value);
   const strongest = wantsStrongestSubset(value);
   const parsedMonth = parseMonthFromQuestion(value, timezone);
+  const wantsToday = /\b(today|aujourd'hui|aujourdhui|du jour|heute|hoy)\b/i.test(value);
+  const wantsWeek = /\b(this week|current week|for the week|de la semaine|cette semaine|semaine en cours|diese woche|esta semana)\b/i.test(value);
 
   switch (routeId) {
     case 'all_natal_aspects':
@@ -317,11 +319,18 @@ function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone 
         sort: strongest ? 'strength_desc' : null,
         fullListing: true
       });
+    case 'current_sky_today':
+    case 'today_transits_me':
+      return sanitizeStructuredQueryPatch({
+        timeframe: 'current_day',
+        limit,
+        sort: strongest ? 'strength_desc' : null
+      });
     case 'month_ahead_transits':
     case 'all_monthly_transits':
       return sanitizeStructuredQueryPatch({
         month: parsedMonth,
-        timeframe: parsedMonth ? 'specific_month' : 'current_month',
+        timeframe: parsedMonth ? 'specific_month' : (wantsToday ? 'current_day' : (wantsWeek ? 'current_week' : 'current_month')),
         limit,
         sort: strongest ? 'strength_desc' : null,
         fullListing: routeId === 'all_monthly_transits'
@@ -330,7 +339,7 @@ function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone 
       return sanitizeStructuredQueryPatch({
         planet: parseRequestedMonthlyTransitPlanet(value) || parsePlanetFromQuestion(value),
         month: parsedMonth,
-        timeframe: parsedMonth ? 'specific_month' : 'current_month',
+        timeframe: parsedMonth ? 'specific_month' : (wantsToday ? 'current_day' : (wantsWeek ? 'current_week' : 'current_month')),
         limit,
         sort: strongest ? 'strength_desc' : null
       });
@@ -376,7 +385,12 @@ function buildStructuredQueryState({
         ? (
             isExplicitTransitSearchQuestion(plannerQuestionText || userText)
               ? 'transit_search_exact'
-              : (parseRequestedMonthlyTransitPlanet(plannerQuestionText || userText) ? 'monthly_transits_for_planet' : 'month_ahead_transits')
+              : (/\b(today|aujourd'hui|aujourdhui|du jour|heute|hoy)\b/i.test(String(plannerQuestionText || userText || ''))
+                  ? (/\b(current sky|sky|ciel du jour|ciel actuel)\b/i.test(String(plannerQuestionText || userText || ''))
+                      ? 'current_sky_today'
+                      : 'today_transits_me')
+                : (parseRequestedMonthlyTransitPlanet(plannerQuestionText || userText) ? 'monthly_transits_for_planet' : 'month_ahead_transits')
+                )
           )
         : (
           route?.kind === 'astrology_natal' && /\baspect/i.test(String(plannerQuestionText || userText || ''))
@@ -1223,6 +1237,7 @@ function buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAv
 
   const includesTransit = commonRoute.sourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND);
   const isMonthlyTransitOverview = commonRoute.id === 'month_ahead_transits';
+  const isDailyTransitOverview = commonRoute.id === 'today_transits_me' || commonRoute.id === 'current_sky_today';
 
   return {
     target: 'indexed_facts',
@@ -1232,7 +1247,7 @@ function buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAv
     categories: commonRoute.categories || [],
     tags: commonRoute.tags || [],
     cacheMonth: includesTransit ? (factAvailability?.indexedTransitCacheMonth || null) : null,
-    limit: isMonthlyTransitOverview ? 20 : (includesTransit ? 8 : 4),
+    limit: isMonthlyTransitOverview ? 20 : (isDailyTransitOverview ? 20 : (includesTransit ? 8 : 4)),
     reason: `Matched common question route ${commonRoute.id}`,
     answerStyle: commonRoute.answerStyle,
     commonRouteId: commonRoute.id
@@ -1252,6 +1267,22 @@ function isCurrentMonthRequest(userText, timezone = 'UTC') {
 function buildCanonicalIndexedRoute(canonicalRoute, userText, subjectProfile, factAvailability) {
   if (!canonicalRoute || !subjectProfile?.profileId) {
     return null;
+  }
+
+  if (canonicalRoute.id === 'current_sky_today' || canonicalRoute.id === 'today_transits_me') {
+    return {
+      target: 'indexed_facts',
+      primaryProfileId: subjectProfile.profileId,
+      secondaryProfileId: null,
+      sourceKinds: [factIndex.MONTHLY_TRANSIT_SOURCE_KIND],
+      categories: [],
+      tags: [],
+      cacheMonth: factAvailability?.indexedTransitCacheMonth || null,
+      limit: 20,
+      reason: `Matched canonical route ${canonicalRoute.id} for current month cache`,
+      answerStyle: canonicalRoute.answerStyle,
+      commonRouteId: canonicalRoute.id
+    };
   }
 
   if (
@@ -1760,6 +1791,119 @@ function buildCurrentYearRange(timezone = 'UTC', yearOverride = null) {
   };
 }
 
+function buildCurrentDayRange(timezone = 'UTC') {
+  const currentDate = getDateStringInTimezone(timezone);
+  return {
+    start: currentDate,
+    end: currentDate
+  };
+}
+
+function buildCurrentWeekRange(timezone = 'UTC') {
+  const current = getCurrentLocalDateParts(timezone);
+  const currentDate = new Date(Date.UTC(current.year, current.month - 1, current.day));
+  const dayOfWeek = currentDate.getUTCDay();
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday = new Date(currentDate);
+  monday.setUTCDate(currentDate.getUTCDate() + mondayOffset);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  const toDateString = (date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+  return {
+    start: toDateString(monday),
+    end: toDateString(sunday)
+  };
+}
+
+function getTimeframeRange(timeframe, timezone = 'UTC') {
+  switch (String(timeframe || '').toLowerCase()) {
+    case 'current_day':
+      return buildCurrentDayRange(timezone);
+    case 'current_week':
+      return buildCurrentWeekRange(timezone);
+    default:
+      return null;
+  }
+}
+
+function getEntryDateWindow(entry) {
+  const { evidence } = getRawFactCore(entry || {});
+  const start = evidence.startDatetime || evidence.start_datetime || entry?.start_datetime || entry?.startDatetime || null;
+  const end = evidence.endDatetime || evidence.end_datetime || entry?.end_datetime || entry?.endDatetime || null;
+  if (start || end) {
+    return { start, end };
+  }
+
+  const cacheMonth = entry?.cacheMonth || entry?.cache_month || evidence.cache_month || null;
+  const visibleStartDay = evidence.visibleStartDay || evidence.visible_start_day || null;
+  const visibleEndDay = evidence.visibleEndDay || evidence.visible_end_day || null;
+  if (cacheMonth && (visibleStartDay || visibleEndDay)) {
+    const monthPrefix = String(cacheMonth).slice(0, 7);
+    return {
+      start: visibleStartDay ? `${monthPrefix}-${String(visibleStartDay).padStart(2, '0')}` : null,
+      end: visibleEndDay ? `${monthPrefix}-${String(visibleEndDay).padStart(2, '0')}` : null
+    };
+  }
+  return { start, end };
+}
+
+function normalizeDateForCompare(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return null;
+  }
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
+
+function entryIntersectsRange(entry, range) {
+  if (!range?.start || !range?.end) {
+    return true;
+  }
+  const window = getEntryDateWindow(entry);
+  const start = normalizeDateForCompare(window.start);
+  const end = normalizeDateForCompare(window.end);
+  if (!start && !end) {
+    return true;
+  }
+  const effectiveStart = start || end;
+  const effectiveEnd = end || start;
+  return effectiveStart <= range.end && effectiveEnd >= range.start;
+}
+
+function filterTransitEntriesByTimeframe(entries, timeframe, timezone = 'UTC') {
+  const range = getTimeframeRange(timeframe, timezone);
+  if (!range) {
+    return asArray(entries);
+  }
+  return asArray(entries).filter((entry) => entryIntersectsRange(entry, range));
+}
+
+function buildTransitTimeframeTitle(locale, subjectProfile, itemCount, options = {}) {
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const cacheMonth = formatScalarValue(options.cacheMonth || null);
+  const timeframe = String(options.timeframe || '').toLowerCase();
+  if (timeframe === 'current_day') {
+    const dateLabel = getDateStringInTimezone(options.timezone || 'UTC');
+    return formatRawLabel(locale, {
+      en: `Top ${itemCount} active transits today for ${subject} — ${dateLabel}`,
+      fr: `Top ${itemCount} des transits actifs du jour pour ${subject} — ${dateLabel}`,
+      de: `Top ${itemCount} der heutigen aktiven Transite für ${subject} — ${dateLabel}`,
+      es: `Top ${itemCount} de los tránsitos activos de hoy para ${subject} — ${dateLabel}`
+    });
+  }
+  if (timeframe === 'current_week') {
+    const range = getTimeframeRange('current_week', options.timezone || 'UTC');
+    return formatRawLabel(locale, {
+      en: `Top ${itemCount} active transits this week for ${subject} — ${range?.start || '?'} → ${range?.end || '?'}`,
+      fr: `Top ${itemCount} des transits actifs de la semaine pour ${subject} — ${range?.start || '?'} → ${range?.end || '?'}`,
+      de: `Top ${itemCount} der aktiven Transite dieser Woche für ${subject} — ${range?.start || '?'} → ${range?.end || '?'}`,
+      es: `Top ${itemCount} de los tránsitos activos de esta semana para ${subject} — ${range?.start || '?'} → ${range?.end || '?'}`
+    });
+  }
+  return buildMonthlyTransitOverviewTitle(locale, subjectProfile, itemCount, cacheMonth, options.responseMode || 'raw');
+}
+
 function buildBirthDateStringFromProfile(profile) {
   const natal = profile?.natalRequestPayload;
   if (!natal?.year || !natal?.month || !natal?.day) {
@@ -1973,12 +2117,19 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
   const timelinePayload = extractTransitTimelinePayload(toolCallResult);
   const transitSearchPayload = extractTransitSearchPayload(toolCallResult);
   const requestedMonthlyPlanet = parseRequestedMonthlyTransitPlanet(userText);
+  const timeframe = route.id === 'current_sky_today' || route.id === 'today_transits_me'
+    ? 'current_day'
+    : inferStructuredQueryParameters(route.id, userText, subjectProfile, subjectProfile?.timezone || 'UTC')?.timeframe || null;
 
-  if (route.id === 'month_ahead_transits' && Array.isArray(timelinePayload?.transits)) {
+  if ((route.id === 'month_ahead_transits' || route.id === 'current_sky_today' || route.id === 'today_transits_me') && Array.isArray(timelinePayload?.transits)) {
     const requestedLimit = getRequestedListingLimit(userText, 'month_ahead_transits', 10);
-    const visibleTransits = requestedMonthlyPlanet
-      ? timelinePayload.transits.filter((entry) => matchesTransitPlanetFilter(entry, requestedMonthlyPlanet))
-      : timelinePayload.transits;
+    const visibleTransits = filterTransitEntriesByTimeframe(
+      requestedMonthlyPlanet
+        ? timelinePayload.transits.filter((entry) => matchesTransitPlanetFilter(entry, requestedMonthlyPlanet))
+        : timelinePayload.transits,
+      timeframe,
+      subjectProfile?.timezone || 'UTC'
+    );
 
     const filteredTitle = requestedMonthlyPlanet
       ? formatRawLabel(locale, {
@@ -2003,7 +2154,9 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
           includeFollowUp: !requestedMonthlyPlanet,
           responseMode,
           requestedPlanet: requestedMonthlyPlanet,
-          strictPlanetMatch: Boolean(requestedMonthlyPlanet)
+          strictPlanetMatch: Boolean(requestedMonthlyPlanet),
+          timeframe,
+          timezone: subjectProfile?.timezone || 'UTC'
         }),
         renderMode: 'telegram_pre'
       };
@@ -2016,7 +2169,9 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
       includeFollowUp: !requestedMonthlyPlanet,
       title: filteredTitle,
       requestedPlanet: requestedMonthlyPlanet,
-      strictPlanetMatch: Boolean(requestedMonthlyPlanet)
+      strictPlanetMatch: Boolean(requestedMonthlyPlanet),
+      timeframe,
+      timezone: subjectProfile?.timezone || 'UTC'
     });
   }
 
@@ -2037,7 +2192,9 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
       includeFollowUp: false,
       title,
       requestedPlanet: planet,
-      strictPlanetMatch: true
+      strictPlanetMatch: true,
+      timeframe,
+      timezone: subjectProfile?.timezone || 'UTC'
     }) || buildCanonicalMissingArgsResponse(locale, route, ['transitPlanet']);
   }
 
@@ -2147,22 +2304,23 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
     case 'month_ahead_transits':
     case 'monthly_transits_for_planet': {
       const parsedMonth = queryState?.parameters?.month || parseMonthFromQuestion(userText, timezone);
+      const timeframe = queryState?.parameters?.timeframe || inferStructuredQueryParameters(route.id, userText, subjectProfile, timezone)?.timeframe || null;
       const requestedMonthRange = parsedMonth ? buildMonthDateRange(parsedMonth) : null;
-      const selectedMonthWindow = requestedMonthRange || (currentMonthWindow ? {
+      const selectedWindow = requestedMonthRange || getTimeframeRange(timeframe, timezone) || (currentMonthWindow ? {
         rangeStart: currentMonthWindow.rangeStart,
         rangeEnd: currentMonthWindow.rangeEnd,
         cacheMonth: currentMonthWindow.cacheMonth
       } : null);
-      return flatNatal && selectedMonthWindow ? {
+      return flatNatal && selectedWindow ? {
         toolName: 'v1_western_transits_timeline',
         requestArgs: {
           natal: flatNatal,
-          range_start: selectedMonthWindow.rangeStart || selectedMonthWindow.start,
-          range_end: selectedMonthWindow.rangeEnd || selectedMonthWindow.end,
-          mode: 'month',
+          range_start: selectedWindow.rangeStart || selectedWindow.start,
+          range_end: selectedWindow.rangeEnd || selectedWindow.end,
+          mode: timeframe === 'current_day' ? 'day' : (timeframe === 'current_week' ? 'week' : 'month'),
           include_houses: subjectProfile.timeKnown !== false
         },
-        cacheMonth: selectedMonthWindow.cacheMonth || (parsedMonth ? `${parsedMonth.year}-${String(parsedMonth.month).padStart(2, '0')}` : ''),
+        cacheMonth: selectedWindow.cacheMonth || (parsedMonth ? `${parsedMonth.year}-${String(parsedMonth.month).padStart(2, '0')}` : ''),
         primaryProfileId: subjectProfile.profileId,
         secondaryProfileId: null
       } : { missing: ['profile'] };
@@ -3166,7 +3324,7 @@ function isTopMonthlyTransitRoute(routeOrId) {
     ? routeOrId
     : (routeOrId.commonRouteId || routeOrId.id || null);
 
-  return id === 'month_ahead_transits';
+  return id === 'month_ahead_transits' || id === 'current_sky_today' || id === 'today_transits_me';
 }
 
 function isMonthlyTransitListingRoute(routeOrId) {
@@ -3178,7 +3336,7 @@ function isMonthlyTransitListingRoute(routeOrId) {
     ? routeOrId
     : (routeOrId.commonRouteId || routeOrId.id || null);
 
-  return id === 'month_ahead_transits' || id === 'monthly_transits_for_planet';
+  return id === 'month_ahead_transits' || id === 'monthly_transits_for_planet' || id === 'current_sky_today' || id === 'today_transits_me';
 }
 
 function extractTransitTimelinePayload(result) {
@@ -4357,6 +4515,11 @@ function formatAspectLine(locale, aspect) {
   const point1 = humanizeRawKey(aspect.planet1_id || aspect.point1_id || aspect.planet1 || aspect.point1 || aspect.p1 || '');
   const point2 = humanizeRawKey(aspect.planet2_id || aspect.point2_id || aspect.planet2 || aspect.point2 || aspect.p2 || '');
   const aspectType = humanizeRawKey(aspect.aspect_name || aspect.aspect_type || aspect.aspect || aspect.type || '');
+  const normalizedPoint1 = normalizeMatchingText(point1);
+  const normalizedPoint2 = normalizeMatchingText(point2);
+  if (!point1 || !point2 || !aspectType || (normalizedPoint1 && normalizedPoint1 === normalizedPoint2)) {
+    return null;
+  }
   const orb = formatScalarValue(aspect.orb);
   const pieces = [
     [point1, aspectType, point2].filter(Boolean).join(' ')
@@ -4372,7 +4535,7 @@ function formatAspectLine(locale, aspect) {
 function formatAspectFactLine(locale, fact) {
   const title = normalizeRawTitle(fact.title);
   const { entities, raw, evidence } = getRawFactCore(fact);
-  const planets = asArray(entities.planets).map((value) => humanizeRawKey(value));
+  const planets = [...new Set(asArray(entities.planets).map((value) => humanizeRawKey(value)).filter(Boolean))];
   const aspectType = humanizeRawKey(
     evidence?.aspect_type
     || evidence?.aspectType
@@ -4385,8 +4548,14 @@ function formatAspectFactLine(locale, fact) {
   const parts = [];
 
   if (planets.length >= 2) {
+    if (normalizeMatchingText(planets[0]) === normalizeMatchingText(planets[1])) {
+      return null;
+    }
     parts.push([planets[0], aspectType, planets[1]].filter(Boolean).join(' '));
   } else if (title) {
+    if (/north node\s+north node|true node\s+true node|mean node\s+mean node/i.test(title)) {
+      return null;
+    }
     parts.push(title);
   }
 
@@ -4396,6 +4565,49 @@ function formatAspectFactLine(locale, fact) {
   }
 
   return parts.filter(Boolean).join(' • ');
+}
+
+function scoreNatalAspectForOverview(aspect = {}) {
+  const point1 = normalizeMatchingText(aspect.planet1_id || aspect.point1_id || aspect.planet1 || aspect.point1 || aspect.p1 || '');
+  const point2 = normalizeMatchingText(aspect.planet2_id || aspect.point2_id || aspect.planet2 || aspect.point2 || aspect.p2 || '');
+  const personalPoints = new Set(['sun', 'moon', 'mercury', 'venus', 'mars', 'ascendant', 'mc', 'midheaven']);
+  let score = 0;
+
+  const orb = Number(aspect.orb);
+  if (Number.isFinite(orb)) {
+    score += Math.max(0, 12 - orb);
+  }
+
+  if (point1 && personalPoints.has(point1)) score += 5;
+  if (point2 && personalPoints.has(point2)) score += 5;
+
+  const aspectType = normalizeMatchingText(aspect.aspect_name || aspect.aspect_type || aspect.aspect || aspect.type || '');
+  if (aspectType === 'conjunction' || aspectType === 'opposition' || aspectType === 'square') score += 2;
+
+  return score;
+}
+
+function collectNatalOverviewAspectLines(locale, normalizedProfile, options = {}) {
+  const seen = new Set();
+  return asArray(normalizedProfile?.majorAspects)
+    .filter((aspect) => {
+      const point1 = normalizeMatchingText(aspect?.planet1_id || aspect?.point1_id || aspect?.planet1 || aspect?.point1 || aspect?.p1 || '');
+      const point2 = normalizeMatchingText(aspect?.planet2_id || aspect?.point2_id || aspect?.planet2 || aspect?.point2 || aspect?.p2 || '');
+      const aspectType = normalizeMatchingText(aspect?.aspect_name || aspect?.aspect_type || aspect?.aspect || aspect?.type || '');
+      if (!point1 || !point2 || !aspectType || point1 === point2) {
+        return false;
+      }
+      const key = [point1, aspectType, point2].sort().join('|');
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => scoreNatalAspectForOverview(right) - scoreNatalAspectForOverview(left))
+    .map((aspect) => formatAspectLine(locale, aspect))
+    .filter(Boolean)
+    .slice(0, options.limit || 5);
 }
 
 function matchesNatalAspectPlanetFilter(source, requestedPlanet) {
@@ -4567,13 +4779,17 @@ function scoreTransitTimelineEntry(transit) {
 function selectTopMonthlyTransitFacts(facts, limit = 10, options = {}) {
   const requestedPlanet = options.requestedPlanet || null;
   return selectRawDisplayFacts(
-    asArray(facts).filter((fact) => isMonthlyTransitFact(fact) && (!requestedPlanet || matchesTransitPlanetFilter(fact, requestedPlanet, options.strictPlanetMatch))),
+    filterTransitEntriesByTimeframe(
+      asArray(facts).filter((fact) => isMonthlyTransitFact(fact) && (!requestedPlanet || matchesTransitPlanetFilter(fact, requestedPlanet, options.strictPlanetMatch))),
+      options.timeframe,
+      options.timezone || 'UTC'
+    ),
     { ...options, limit }
   ).slice(0, limit);
 }
 
-function selectTopMonthlyTimelineEntries(transits, limit = 10) {
-  return asArray(transits)
+function selectTopMonthlyTimelineEntries(transits, limit = 10, options = {}) {
+  return filterTransitEntriesByTimeframe(asArray(transits), options.timeframe, options.timezone || 'UTC')
     .filter(Boolean)
     .slice()
     .sort((left, right) => scoreTransitTimelineEntry(right) - scoreTransitTimelineEntry(left))
@@ -4654,16 +4870,11 @@ function collectRawNatalOverviewData(locale, subjectProfile, facts, options = {}
   const indexedAspectLines = asArray(options.aspectFacts)
     .map((fact) => formatAspectFactLine(locale, fact))
     .filter(Boolean);
-  const aspects = (
-    indexedAspectLines.length > 0
-      ? indexedAspectLines
-      : asArray(normalizedProfile.majorAspects)
-        .slice(0, 5)
-        .map((aspect) => formatAspectLine(locale, aspect))
-        .filter(Boolean)
-  ).slice(0, 5);
+  const overviewAspectLines = collectNatalOverviewAspectLines(locale, normalizedProfile, { limit: 5 });
+  const aspects = (overviewAspectLines.length > 0 ? overviewAspectLines : indexedAspectLines).slice(0, 5);
 
   const structureBlocks = [];
+  const seenStructureHeadings = new Set();
   selectRawDisplayFacts(facts, options)
     .filter((fact) => !isMonthlyTransitFact(fact))
     .forEach((fact) => {
@@ -4672,18 +4883,20 @@ function collectRawNatalOverviewData(locale, subjectProfile, facts, options = {}
       }
 
       const lines = buildNatalStructureLines(locale, fact);
-      if (lines.length > 0 && String(lines[0] || '').trim()) {
+      const heading = String(lines[0] || '').trim();
+      if (lines.length > 0 && heading && !seenStructureHeadings.has(heading.toLowerCase())) {
+        seenStructureHeadings.add(heading.toLowerCase());
         structureBlocks.push(lines);
       }
     });
 
   return {
-    title: `${localizeRawSectionTitle(locale, 'natalFacts')} ${formatRawLabel(locale, {
-      en: 'for',
-      fr: 'pour',
-      de: 'für',
-      es: 'para'
-    })} ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+    title: formatRawLabel(locale, {
+      en: `Raw natal overview for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+      fr: `Vue brute du thème natal pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+      de: `Rohe Radix-Übersicht für ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+      es: `Vista bruta de la carta natal para ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`
+    }),
     placements,
     aspects,
     structureBlocks
@@ -5037,6 +5250,20 @@ function buildMonthlyTransitOverviewTitle(locale, subjectProfile, itemCount, cac
   return cacheMonth ? `${base} — ${cacheMonth}` : base;
 }
 
+function buildTransitOverviewTitle(locale, subjectProfile, itemCount, options = {}) {
+  const timeframe = String(options.timeframe || '').toLowerCase();
+  if (timeframe === 'current_day' || timeframe === 'current_week') {
+    return buildTransitTimeframeTitle(locale, subjectProfile, itemCount, options);
+  }
+  return buildMonthlyTransitOverviewTitle(
+    locale,
+    subjectProfile,
+    itemCount,
+    options.cacheMonth,
+    options.responseMode || 'raw'
+  );
+}
+
 function buildMonthlyTransitOverviewFromFacts(locale, facts, subjectProfile, options = {}) {
   const limit = Math.max(1, Math.min(Number(options.limit || 10), 200));
   const rows = selectTopMonthlyTransitFacts(facts, limit, options);
@@ -5053,7 +5280,12 @@ function buildMonthlyTransitOverviewFromFacts(locale, facts, subjectProfile, opt
     return null;
   }
 
-  const title = options.title || buildMonthlyTransitOverviewTitle(locale, subjectProfile, usableRows.length, cacheMonth, options.responseMode || 'raw');
+  const title = options.title || buildTransitOverviewTitle(locale, subjectProfile, usableRows.length, {
+    cacheMonth,
+    timeframe: options.timeframe,
+    timezone: options.timezone,
+    responseMode: options.responseMode || 'raw'
+  });
   const blocks = [title];
 
   usableRows.forEach((lines, index) => {
@@ -5071,7 +5303,7 @@ function buildMonthlyTransitOverviewFromTimeline(locale, transits, subjectProfil
   const filteredTransits = options.requestedPlanet
     ? asArray(transits).filter((transit) => matchesTransitPlanetFilter(transit, options.requestedPlanet, options.strictPlanetMatch))
     : asArray(transits);
-  const rows = selectTopMonthlyTimelineEntries(filteredTransits, limit);
+  const rows = selectTopMonthlyTimelineEntries(filteredTransits, limit, options);
   if (rows.length === 0) {
     return null;
   }
@@ -5085,7 +5317,12 @@ function buildMonthlyTransitOverviewFromTimeline(locale, transits, subjectProfil
     return null;
   }
 
-  const title = options.title || buildMonthlyTransitOverviewTitle(locale, subjectProfile, renderedRows.length, cacheMonth, options.responseMode || 'raw');
+  const title = options.title || buildTransitOverviewTitle(locale, subjectProfile, renderedRows.length, {
+    cacheMonth,
+    timeframe: options.timeframe,
+    timezone: options.timezone,
+    responseMode: options.responseMode || 'raw'
+  });
   const blocks = [title];
 
   renderedRows.forEach((block, index) => {
@@ -5121,19 +5358,11 @@ function buildRawTransitTable(locale, facts, subjectProfile, options = {}) {
   }
 
   const cacheMonth = rows[0]?.cacheMonth || rows[0]?.cache_month || null;
-  const title = formatRawLabel(locale, {
-    en: cacheMonth
-      ? `Top ${rows.length} major monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')} — ${cacheMonth}`
-      : `Top ${rows.length} major monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
-    fr: cacheMonth
-      ? `Top ${rows.length} des transits majeurs du mois pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')} — ${cacheMonth}`
-      : `Top ${rows.length} des transits majeurs du mois pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
-    de: cacheMonth
-      ? `Top ${rows.length} der wichtigsten Monatstransite für ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')} — ${cacheMonth}`
-      : `Top ${rows.length} der wichtigsten Monatstransite für ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
-    es: cacheMonth
-      ? `Top ${rows.length} de los tránsitos mayores del mes para ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')} — ${cacheMonth}`
-      : `Top ${rows.length} de los tránsitos mayores del mes para ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`
+  const title = buildTransitOverviewTitle(locale, subjectProfile, rows.length, {
+    cacheMonth,
+    timeframe: options.timeframe,
+    timezone: options.timezone,
+    responseMode: 'raw'
   });
 
   const header = `${fitCell('#', 2)} ${fitCell('Transit', 24)} ${fitCell('Window', 23)} ${fitCell('Peak', 16)} ${fitCell('Focus', 18)}`;
@@ -5566,6 +5795,8 @@ function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, a
       includeFollowUp: false,
       requestedPlanet,
       strictPlanetMatch: Boolean(requestedPlanet),
+      timeframe: options.queryState?.parameters?.timeframe || null,
+      timezone: subjectProfile?.timezone || 'UTC',
       title: requestedPlanet
         ? formatRawLabel(options.locale || 'en', {
             en: `${humanizeRawKey(requestedPlanet)} monthly transits for ${getRawSubjectLabel(options.locale || 'en', subjectProfile?.profileName || 'Chart User')}`,
@@ -5584,7 +5815,9 @@ function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, a
       responseMode: 'interpreted',
       limit: requestedLimit,
       requestedPlanet: options.queryState?.parameters?.planet || parseRequestedMonthlyTransitPlanet(userText),
-      strictPlanetMatch: Boolean(options.queryState?.parameters?.planet || parseRequestedMonthlyTransitPlanet(userText))
+      strictPlanetMatch: Boolean(options.queryState?.parameters?.planet || parseRequestedMonthlyTransitPlanet(userText)),
+      timeframe: options.queryState?.parameters?.timeframe || null,
+      timezone: subjectProfile?.timezone || 'UTC'
     }) || '';
   }
 
@@ -5942,6 +6175,9 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
 
   const answerStyle = plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText);
   const topMonthlyTransitOverview = isMonthlyTransitListingRoute(plannedRoute);
+  const transitTimeframe = options.queryState?.parameters?.timeframe
+    || (/\b(today|aujourd'hui|aujourdhui|du jour|heute|hoy)\b/i.test(String(userText || '')) ? 'current_day' : null)
+    || (/\b(this week|current week|for the week|de la semaine|cette semaine|semaine en cours|diese woche|esta semana)\b/i.test(String(userText || '')) ? 'current_week' : null);
   const requestedListingLimit = topMonthlyTransitOverview
     ? getRequestedListingLimit(userText, requestedMonthlyPlanet ? 'monthly_transits_for_planet' : 'month_ahead_transits', requestedMonthlyPlanet ? 200 : 10)
     : null;
@@ -5979,6 +6215,8 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
               includeFollowUp: !requestedMonthlyPlanet,
               requestedPlanet: requestedMonthlyPlanet,
               strictPlanetMatch: Boolean(requestedMonthlyPlanet),
+              timeframe: transitTimeframe,
+              timezone: subjectProfile?.timezone || 'UTC',
               title: requestedMonthlyPlanet
                 ? formatRawLabel(locale, {
                     en: `${humanizeRawKey(requestedMonthlyPlanet)} monthly transits for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}${factAvailability?.indexedTransitCacheMonth ? ` — ${factAvailability.indexedTransitCacheMonth}` : ''}`,
@@ -6066,7 +6304,9 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
         userText,
         answerStyle,
         requestedPlanet: requestedMonthlyPlanet,
-        strictPlanetMatch: Boolean(requestedMonthlyPlanet)
+        strictPlanetMatch: Boolean(requestedMonthlyPlanet),
+        timeframe: transitTimeframe,
+        timezone: subjectProfile?.timezone || 'UTC'
       })
     : null;
 
@@ -6136,13 +6376,23 @@ async function rewriteGroundedToolAnswer(locale, userText, draftText, toolResult
   }
 
   const systemInstruction = [
-    'You rewrite grounded astrology tool output into a concise user-facing answer.',
+    options.responseMode === 'raw'
+      ? 'You filter and rewrite grounded astrology tool output into a factual user-facing answer.'
+      : 'You rewrite grounded astrology tool output into a concise user-facing answer.',
     `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}.`,
     'Use only the grounded tool data provided below.',
     'Do not invent any dates, placements, aspects, timings, cities, or meanings.',
     `Response perspective: ${options.responsePerspective || 'second_person'}.`,
     `Execution family: ${options.executionFamily || 'unknown'}.`,
-    'Keep the answer readable and concise.'
+    `Response mode: ${options.responseMode || 'interpreted'}.`,
+    `Structured refinements: ${JSON.stringify(options.queryState?.parameters || {})}.`,
+    'First apply the user-requested filters and scope to the grounded data.',
+    'You may omit grounded items that do not match the user request.',
+    'Do not introduce a planet, aspect type, city, timeframe, ranking, or filter that is not present in the user question or in the structured refinements.',
+    'If the user asks a broad question, keep the answer broad. Do not narrow it to one planet or one subtype just because the first grounded rows happen to mention it.',
+    options.responseMode === 'raw'
+      ? 'Stay strictly factual. Do not interpret meaning. Prefer short titled sections or numbered factual lines.'
+      : 'Keep the answer readable and concise.'
   ].join('\n');
 
   const prompt = [
@@ -6171,6 +6421,83 @@ async function rewriteGroundedToolAnswer(locale, userText, draftText, toolResult
     });
     return draftText;
   }
+}
+
+function hasSemanticQueryRefinement(queryState = null) {
+  const parameters = queryState?.parameters;
+  if (!parameters || typeof parameters !== 'object') {
+    return false;
+  }
+
+  return Boolean(
+    parameters.planet ||
+    parameters.transitPlanet ||
+    parameters.natalPoint ||
+    parameters.aspectClass ||
+    parameters.focus ||
+    parameters.body ||
+    parameters.sign ||
+    parameters.timeframe ||
+    parameters.month ||
+    parameters.city ||
+    parameters.limit ||
+    parameters.fullListing ||
+    (Array.isArray(parameters.aspectTypes) && parameters.aspectTypes.length > 0)
+  );
+}
+
+function shouldUseAiGroundedFiltering(responseMode, executionIntent, queryState = null, toolResults = [], route = null) {
+  if (!Array.isArray(toolResults) || toolResults.length === 0) {
+    return false;
+  }
+
+  const family = executionIntent?.family || null;
+  const hasMcpResults = toolResults.some((tool) => mcpService.isMcpTool(tool?.name));
+  const complexIndexedTransitFamily = family === 'indexed_monthly_transits';
+  const exactTransitRoute = queryState?.canonicalRouteId === 'transit_search_exact' || route?.id === 'transit_search_exact';
+
+  if (responseMode === 'raw') {
+    return hasMcpResults || complexIndexedTransitFamily || exactTransitRoute || hasSemanticQueryRefinement(queryState);
+  }
+
+  return hasMcpResults || complexIndexedTransitFamily || exactTransitRoute;
+}
+
+async function maybeApplyAiGroundedFilter(locale, userText, draftText, toolResults, subjectProfile, options = {}) {
+  if (!shouldUseAiGroundedFiltering(
+    options.responseMode || 'interpreted',
+    options.executionIntent || null,
+    options.queryState || null,
+    toolResults,
+    options.route || null
+  )) {
+    return {
+      text: draftText,
+      usedAiFilter: false
+    };
+  }
+
+  const rewritten = await rewriteGroundedToolAnswer(
+    locale,
+    userText,
+    draftText,
+    toolResults,
+    subjectProfile,
+    options
+  );
+
+  const normalized = String(rewritten || '').trim();
+  if (!normalized) {
+    return {
+      text: draftText,
+      usedAiFilter: false
+    };
+  }
+
+  return {
+    text: normalized,
+    usedAiFilter: normalized !== String(draftText || '').trim()
+  };
 }
 
 async function tryFullRawListing(identity, userText, subjectProfile, factAvailability, locale, requestKind, monthlyTransitCache = null, responseMode = 'raw', queryState = null) {
@@ -7204,8 +7531,27 @@ async function answerConversation(identity, userText) {
           includeFollowUp: isTopMonthlyTransitRoute(plannedRoute?.commonRouteId || canonicalRoute?.id)
         })
       : null;
+    const rawDraftText = rawTransitTable || validateRawAnswer(fastPathResult.text, locale);
+    const aiFilteredFastPath = responseMode === 'raw'
+      ? await maybeApplyAiGroundedFilter(
+          locale,
+          effectiveUserQuestion,
+          rawDraftText,
+          fastPathResult.usedTools,
+          subjectProfile,
+          {
+            channel: identity?.channel || null,
+            responsePerspective,
+            responseMode,
+            executionFamily: executionIntent?.family || null,
+            executionIntent,
+            queryState: currentQueryState,
+            route
+          }
+        )
+      : null;
     const finalText = responseMode === 'raw'
-      ? (rawTransitTable || validateRawAnswer(fastPathResult.text, locale))
+      ? validateRawAnswer(aiFilteredFastPath?.text || rawDraftText, locale)
       : validateFinalAnswer(fastPathResult.text, route, locale);
     pushHistory(identity, 'model', finalText);
     setLastToolResults(identity, fastPathResult.usedTools);
@@ -7213,8 +7559,12 @@ async function answerConversation(identity, userText) {
 
     return {
       text: finalText,
-      textParts: rawTransitTable ? undefined : fastPathResult.textParts,
-      renderMode: rawTransitTable ? 'telegram_pre' : (fastPathResult.renderMode || 'plain'),
+      textParts: (responseMode === 'raw' && aiFilteredFastPath?.usedAiFilter)
+        ? undefined
+        : (rawTransitTable ? undefined : fastPathResult.textParts),
+      renderMode: (responseMode === 'raw' && aiFilteredFastPath?.usedAiFilter)
+        ? 'plain'
+        : (rawTransitTable ? 'telegram_pre' : (fastPathResult.renderMode || 'plain')),
       usedTools: fastPathResult.usedTools,
       intent: route.kind
     };
@@ -7236,8 +7586,26 @@ async function answerConversation(identity, userText) {
 
       if (exactTransitResult) {
         pushHistory(identity, 'user', userText);
+        const aiFilteredExactTransit = responseMode === 'raw'
+          ? await maybeApplyAiGroundedFilter(
+              locale,
+              effectiveUserQuestion,
+              exactTransitResult.text,
+              exactTransitResult.usedTools || [],
+              subjectProfile,
+              {
+                channel: identity?.channel || null,
+                responsePerspective,
+                responseMode,
+                executionFamily: executionIntent?.family || null,
+                executionIntent,
+                queryState: currentQueryState,
+                route
+              }
+            )
+          : null;
         const finalText = responseMode === 'raw'
-          ? validateRawAnswer(exactTransitResult.text, locale)
+          ? validateRawAnswer(aiFilteredExactTransit?.text || exactTransitResult.text, locale)
           : validateFinalAnswer(exactTransitResult.text, route, locale);
         pushHistory(identity, 'model', finalText);
         setLastToolResults(identity, exactTransitResult.usedTools || []);
@@ -7245,8 +7613,12 @@ async function answerConversation(identity, userText) {
 
         return {
           text: finalText,
-          textParts: exactTransitResult.textParts,
-          renderMode: exactTransitResult.renderMode || 'plain',
+          textParts: (responseMode === 'raw' && aiFilteredExactTransit?.usedAiFilter)
+            ? undefined
+            : exactTransitResult.textParts,
+          renderMode: (responseMode === 'raw' && aiFilteredExactTransit?.usedAiFilter)
+            ? 'plain'
+            : (exactTransitResult.renderMode || 'plain'),
           usedTools: exactTransitResult.usedTools || [],
           intent: route.kind
         };
@@ -7279,8 +7651,26 @@ async function answerConversation(identity, userText) {
         };
       }
       pushHistory(identity, 'user', userText);
+      const aiFilteredDirectCanonical = responseMode === 'raw'
+        ? await maybeApplyAiGroundedFilter(
+            locale,
+            effectiveUserQuestion,
+            directCanonicalResult.text,
+            directCanonicalResult.usedTools || [],
+            subjectProfile,
+            {
+              channel: identity?.channel || null,
+              responsePerspective,
+              responseMode,
+              executionFamily: executionIntent?.family || null,
+              executionIntent,
+              queryState: currentQueryState,
+              route: canonicalRoute || route
+            }
+          )
+        : null;
       const finalText = responseMode === 'raw'
-        ? validateRawAnswer(directCanonicalResult.text, locale)
+        ? validateRawAnswer(aiFilteredDirectCanonical?.text || directCanonicalResult.text, locale)
         : validateFinalAnswer(directCanonicalResult.text, route, locale);
       pushHistory(identity, 'model', finalText);
       setLastToolResults(identity, directCanonicalResult.usedTools || []);
@@ -7288,8 +7678,12 @@ async function answerConversation(identity, userText) {
 
       return {
         text: finalText,
-        textParts: directCanonicalResult.textParts,
-        renderMode: directCanonicalResult.renderMode || 'plain',
+        textParts: (responseMode === 'raw' && aiFilteredDirectCanonical?.usedAiFilter)
+          ? undefined
+          : directCanonicalResult.textParts,
+        renderMode: (responseMode === 'raw' && aiFilteredDirectCanonical?.usedAiFilter)
+          ? 'plain'
+          : (directCanonicalResult.renderMode || 'plain'),
         usedTools: directCanonicalResult.usedTools || [],
         intent: route.kind
       };
@@ -7354,6 +7748,32 @@ async function answerConversation(identity, userText) {
       textParts: rawToolLoopResponse.textParts,
       renderMode: rawToolLoopResponse.renderMode || result.renderMode || 'plain'
     };
+
+    const aiFilteredRawResult = await maybeApplyAiGroundedFilter(
+      locale,
+      effectiveUserQuestion,
+      result.text,
+      result.toolResults,
+      subjectProfile,
+      {
+        channel: identity?.channel || null,
+        responsePerspective,
+        responseMode,
+        executionFamily: executionIntent?.family || null,
+        executionIntent,
+        queryState: currentQueryState,
+        route
+      }
+    );
+
+    if (aiFilteredRawResult?.usedAiFilter) {
+      result = {
+        ...result,
+        text: aiFilteredRawResult.text,
+        textParts: undefined,
+        renderMode: 'plain'
+      };
+    }
   } else if (Array.isArray(result.toolResults) && result.toolResults.length > 0) {
     const bestTransitSearchPayload = executionIntent?.family === 'mcp_transits'
       ? extractBestTransitSearchPayload(result.toolResults)
