@@ -106,6 +106,39 @@ function getOnboardingIntro(locale, source = 'start') {
     : t(locale, 'prompts.onboardingStart');
 }
 
+function getFlowPersistentActions(locale) {
+  return [
+    {
+      id: 'cancel',
+      title: t(locale, 'buttons.cancel')
+    }
+  ];
+}
+
+async function sendFlowPrompt(event, channelApi, text, options = {}) {
+  const locale = getLocale(event);
+  if (typeof channelApi.showPersistentActions === 'function') {
+    return channelApi.showPersistentActions(
+      event,
+      getFlowPersistentActions(locale),
+      text,
+      options
+    );
+  }
+
+  return channelApi.sendText(event, text, options);
+}
+
+function isCancelFlowText(event, text) {
+  const value = String(text || '').trim().toLowerCase();
+  if (!value) {
+    return false;
+  }
+
+  const localizedCancel = String(t(event, 'buttons.cancel') || '').trim().toLowerCase();
+  return value === '/cancel' || value === localizedCancel || ['cancel', 'annuler', 'abbrechen', 'cancelar'].includes(value);
+}
+
 function formatBillingLinkMessage(event, checkoutUrl) {
   return [
     t(event, 'billing.limitReached', { limit: billing.FREE_QUESTIONS_PER_DAY }),
@@ -319,15 +352,15 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
 
 async function promptForBirthDate(event, channelApi, source = 'start') {
   const locale = getLocale(event);
-  await channelApi.sendText(event, getOnboardingIntro(locale, source));
+  await sendFlowPrompt(event, channelApi, getOnboardingIntro(locale, source));
 }
 
 async function promptForProfileName(event, channelApi) {
-  await channelApi.sendText(event, t(event, 'prompts.profileNamePrompt'));
+  await sendFlowPrompt(event, channelApi, t(event, 'prompts.profileNamePrompt'));
 }
 
 async function promptForCity(event, channelApi) {
-  await channelApi.sendText(event, t(event, 'prompts.birthDateAccepted'));
+  await sendFlowPrompt(event, channelApi, t(event, 'prompts.birthDateAccepted'));
 }
 
 async function promptForCityConfirmation(event, channelApi, candidates) {
@@ -353,7 +386,7 @@ async function promptForBirthTimeKnown(event, channelApi) {
 }
 
 async function promptForBirthTime(event, channelApi) {
-  await channelApi.sendText(event, t(event, 'prompts.birthTimePrompt'));
+  await sendFlowPrompt(event, channelApi, t(event, 'prompts.birthTimePrompt'));
 }
 
 async function maybeSendAstroMap(event, channelApi, userText, conversationResult) {
@@ -563,7 +596,9 @@ async function finishNatalFlow(event, channelApi, session) {
     return true;
   }
 
-  const loadingRef = await channelApi.sendText(event, t(locale, 'prompts.readingChart'));
+  const loadingRef = typeof channelApi.clearPersistentActions === 'function'
+    ? await channelApi.clearPersistentActions(event, t(locale, 'prompts.readingChart'))
+    : await channelApi.sendText(event, t(locale, 'prompts.readingChart'));
 
   try {
     const natalPayload = createNatalPayload(lockedSession, lockedSession.cityMatch);
@@ -693,7 +728,11 @@ async function handleCancel(event, channelApi) {
   setPendingQuestion(event, null);
   setPendingSynastryQuestion(event, null);
   setChoiceMap(event, {});
-  await channelApi.sendText(event, t(event, 'errors.cancelled'));
+  if (typeof channelApi.clearPersistentActions === 'function') {
+    await channelApi.clearPersistentActions(event, t(event, 'errors.cancelled'));
+  } else {
+    await channelApi.sendText(event, t(event, 'errors.cancelled'));
+  }
   return true;
 }
 
@@ -961,6 +1000,10 @@ async function handleActiveFlowText(event, channelApi, text) {
     return false;
   }
 
+  if (isCancelFlowText(event, text)) {
+    return handleCancel(event, channelApi);
+  }
+
   if (session.locked) {
     await channelApi.sendText(event, t(event, 'prompts.stillReading'));
     return true;
@@ -1089,6 +1132,10 @@ async function handleIncomingText(event, channelApi) {
 
   if (text === '/subscribe') {
     return handleSubscribe(event, channelApi);
+  }
+
+  if (getChatState(event).activeFlow && isCancelFlowText(event, text)) {
+    return handleCancel(event, channelApi);
   }
 
   const mappedAction = getChoiceMap(event)[text];

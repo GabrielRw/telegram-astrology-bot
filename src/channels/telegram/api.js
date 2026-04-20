@@ -10,6 +10,15 @@ function toReplyMarkup(choices) {
   );
 }
 
+function toPersistentKeyboard(actions) {
+  const rows = (Array.isArray(actions) ? actions : [])
+    .map((action) => String(action?.title || '').trim())
+    .filter(Boolean)
+    .map((title) => [title]);
+
+  return Markup.keyboard(rows).resize();
+}
+
 function createTelegramMessageRef(ctx, message) {
   return {
     chatId: String(ctx.chat.id),
@@ -26,7 +35,17 @@ function createTelegramChannelApi(ctx) {
       richNatalActions: true
     },
     async sendText(event, text, options = {}) {
-      const message = await ctx.reply(text, options.html ? { parse_mode: 'HTML' } : undefined);
+      const replyOptions = {};
+      if (options.html) {
+        replyOptions.parse_mode = 'HTML';
+      }
+      if (options.removeKeyboard) {
+        replyOptions.reply_markup = Markup.removeKeyboard().reply_markup;
+      } else if (Array.isArray(options.persistentActions) && options.persistentActions.length > 0) {
+        replyOptions.reply_markup = toPersistentKeyboard(options.persistentActions).reply_markup;
+      }
+
+      const message = await ctx.reply(text, Object.keys(replyOptions).length > 0 ? replyOptions : undefined);
       return createTelegramMessageRef(ctx, message);
     },
     async editText(event, messageRef, text, options = {}) {
@@ -67,6 +86,18 @@ function createTelegramChannelApi(ctx) {
         Markup.inlineKeyboard([[Markup.button.url(label, url)]])
       );
       return createTelegramMessageRef(ctx, message);
+    },
+    async showPersistentActions(event, actions, text, options = {}) {
+      return this.sendText(event, text, {
+        ...options,
+        persistentActions: actions
+      });
+    },
+    async clearPersistentActions(event, text, options = {}) {
+      return this.sendText(event, text, {
+        ...options,
+        removeKeyboard: true
+      });
     },
     async ackAction(event, text) {
       if (ctx.answerCbQuery) {

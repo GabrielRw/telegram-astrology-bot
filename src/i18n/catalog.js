@@ -98,6 +98,7 @@ const CATALOG = {
     buttons: {
       yes: 'Yes',
       no: 'No',
+      cancel: 'Cancel',
       showMoreQuestions: 'Show more questions',
       addProfile: 'Add profile',
       update: 'Update',
@@ -252,6 +253,7 @@ const CATALOG = {
     buttons: {
       yes: 'Oui',
       no: 'Non',
+      cancel: 'Annuler',
       showMoreQuestions: 'Voir plus',
       addProfile: 'Ajouter un profil',
       update: 'Modifier',
@@ -402,6 +404,7 @@ const CATALOG = {
     buttons: {
       yes: 'Ja',
       no: 'Nein',
+      cancel: 'Abbrechen',
       showMoreQuestions: 'Mehr Fragen',
       addProfile: 'Profil hinzufügen',
       update: 'Aktualisieren',
@@ -552,6 +555,7 @@ const CATALOG = {
     buttons: {
       yes: 'Sí',
       no: 'No',
+      cancel: 'Cancelar',
       showMoreQuestions: 'Más preguntas',
       addProfile: 'Añadir perfil',
       update: 'Actualizar',
