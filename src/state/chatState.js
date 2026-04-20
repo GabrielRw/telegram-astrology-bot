@@ -67,6 +67,8 @@ function createDefaultState(identity) {
       lastResponseProfileId: null,
       lastResponseRoute: null,
       lastIntentId: null,
+      lastExecutionTarget: null,
+      lastResultFamily: null,
       lastAnswerStyle: null,
       lastResolvedQuestion: null,
       lastCommonRouteId: null,
@@ -101,6 +103,8 @@ function clearNatalProfile(identity) {
     lastResponseProfileId: null,
     lastResponseRoute: null,
     lastIntentId: null,
+    lastExecutionTarget: null,
+    lastResultFamily: null,
     lastAnswerStyle: null,
     lastResolvedQuestion: null,
     lastCommonRouteId: null,
@@ -234,6 +238,12 @@ function setConversationContext(chatId, context = {}, options = {}) {
     lastIntentId: context.lastIntentId !== undefined
       ? (context.lastIntentId ? String(context.lastIntentId) : null)
       : (state.conversationContext?.lastIntentId || null),
+    lastExecutionTarget: context.lastExecutionTarget !== undefined
+      ? (context.lastExecutionTarget ? String(context.lastExecutionTarget) : null)
+      : (state.conversationContext?.lastExecutionTarget || null),
+    lastResultFamily: context.lastResultFamily !== undefined
+      ? (context.lastResultFamily ? String(context.lastResultFamily) : null)
+      : (state.conversationContext?.lastResultFamily || null),
     lastAnswerStyle: context.lastAnswerStyle !== undefined
       ? (context.lastAnswerStyle ? String(context.lastAnswerStyle) : null)
       : (state.conversationContext?.lastAnswerStyle || null),
@@ -262,6 +272,8 @@ function getConversationContext(chatId) {
     lastResponseProfileId: null,
     lastResponseRoute: null,
     lastIntentId: null,
+    lastExecutionTarget: null,
+    lastResultFamily: null,
     lastAnswerStyle: null,
     lastResolvedQuestion: null,
     lastCommonRouteId: null,

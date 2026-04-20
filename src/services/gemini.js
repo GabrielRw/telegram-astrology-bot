@@ -131,6 +131,20 @@ function truncateValue(value, maxLength = 8000) {
   };
 }
 
+function extractFunctionCallParts(response) {
+  const parts = response?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts) || parts.length === 0) {
+    return [];
+  }
+
+  return parts
+    .filter((part) => part?.functionCall)
+    .map((part) => ({
+      rawPart: part,
+      call: part.functionCall
+    }));
+}
+
 function isRetryableGeminiError(error) {
   const message = String(error?.message || '');
   return (
@@ -242,7 +256,10 @@ async function runFunctionCallingLoop({
       throw lastError || new Error('Gemini request failed.');
     }
 
-    const functionCalls = response.functionCalls || [];
+    const functionCallParts = extractFunctionCallParts(response);
+    const functionCalls = functionCallParts.length > 0
+      ? functionCallParts.map((entry) => entry.call)
+      : (response.functionCalls || []);
 
     if (functionCalls.length === 0) {
       return {
@@ -251,7 +268,9 @@ async function runFunctionCallingLoop({
       };
     }
 
-    const modelParts = functionCalls.map((call) => createPartFromFunctionCall(call.name, call.args || {}));
+    const modelParts = functionCallParts.length > 0
+      ? functionCallParts.map((entry) => entry.rawPart)
+      : functionCalls.map((call) => createPartFromFunctionCall(call.name, call.args || {}));
     contents.push(createModelContent(modelParts));
 
     const responseParts = [];
