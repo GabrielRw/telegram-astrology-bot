@@ -222,7 +222,7 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
       await channelApi.editText(
         event,
         loadingRef,
-        'I found several city matches for this relocation question.'
+        buildRelocationCitySelectionNotice(getLocale(event))
       );
 
       if (result.candidates?.length > 0) {
@@ -488,9 +488,25 @@ async function sendRelocationCityChoices(event, channelApi, candidates) {
   await sendChoiceBatches(
     event,
     channelApi,
-    'I found several city matches for this relocation question. Choose one.',
+    t(event, 'prompts.cityConfirm'),
     choices
   );
+}
+
+function buildRelocationCitySelectionNotice(locale) {
+  if (locale === 'fr') {
+    return 'J’ai trouvé plusieurs villes possibles pour cette question de relocalisation.';
+  }
+
+  if (locale === 'de') {
+    return 'Ich habe mehrere mögliche Städte für diese Relokationsfrage gefunden.';
+  }
+
+  if (locale === 'es') {
+    return 'Encontré varias ciudades posibles para esta pregunta de relocalización.';
+  }
+
+  return 'I found several possible cities for this relocation question.';
 }
 
 async function sendCompactChart(event, channelApi) {
