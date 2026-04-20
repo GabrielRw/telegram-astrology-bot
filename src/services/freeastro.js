@@ -212,6 +212,16 @@ async function getTransitInsights(data) {
   });
 }
 
+async function getDailyPersonalHoroscopeV3(data) {
+  return request('/api/v3/horoscope/daily/personal', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(data)
+  });
+}
+
 async function getNatalChart(data) {
   return requestBinary('/api/v1/natal/chart/', {
     method: 'POST',
@@ -227,6 +237,7 @@ module.exports = {
   getNatalChart,
   getNatal,
   getNatalInsights,
+  getDailyPersonalHoroscopeV3,
   getTransitInsights,
   searchCities,
   searchCity

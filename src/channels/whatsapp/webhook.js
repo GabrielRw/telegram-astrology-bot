@@ -59,7 +59,7 @@ async function processWhatsAppEvent(event) {
     await handleIncomingAction(event, channelApi);
   } else if (event.type === 'text' && (text === 'start' || text === '/start')) {
     await handleStart(event, channelApi);
-  } else if (event.type === 'text' && text === '/profile') {
+  } else if (event.type === 'text' && ['/profile', '/reglage', '/settings', '/einstellungen', '/ajustes'].includes(text)) {
     await handleProfile(event, channelApi);
   } else if (event.type === 'text' && text === '/language') {
     await promptForLanguage(event, channelApi);

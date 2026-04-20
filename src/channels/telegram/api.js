@@ -11,10 +11,18 @@ function toReplyMarkup(choices) {
 }
 
 function toPersistentKeyboard(actions) {
-  const rows = (Array.isArray(actions) ? actions : [])
-    .map((action) => String(action?.title || '').trim())
-    .filter(Boolean)
-    .map((title) => [title]);
+  const sourceRows = Array.isArray(actions) ? actions : [];
+  const rows = sourceRows.length > 0 && Array.isArray(sourceRows[0])
+    ? sourceRows
+        .map((row) => (Array.isArray(row) ? row : []))
+        .map((row) => row
+          .map((action) => String(action?.title || '').trim())
+          .filter(Boolean))
+        .filter((row) => row.length > 0)
+    : sourceRows
+        .map((action) => String(action?.title || '').trim())
+        .filter(Boolean)
+        .map((title) => [title]);
 
   const keyboard = Markup.keyboard(rows).resize();
   keyboard.reply_markup = {

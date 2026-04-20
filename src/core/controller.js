@@ -2,8 +2,8 @@ const { answerConversation } = require('../services/conversation');
 const { renderAstrocartographyMap } = require('../services/astroMap');
 const { registerInteractiveAstroMap } = require('../services/interactiveAstroMap');
 const billing = require('../services/billing');
-const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
-const { getGeminiErrorMessage } = require('../services/gemini');
+const { FreeAstroError, getDailyPersonalHoroscopeV3, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
+const { generatePlainText, getFastPathModelName, getGeminiErrorMessage } = require('../services/gemini');
 const profiles = require('../services/profiles');
 const {
   getLanguageName,
@@ -108,11 +108,36 @@ function getOnboardingIntro(locale, source = 'start') {
 
 function getFlowPersistentActions(locale) {
   return [
-    {
-      id: 'cancel',
-      title: t(locale, 'buttons.cancel')
-    }
+    [
+      {
+        id: 'cancel',
+        title: t(locale, 'buttons.cancel')
+      }
+    ],
+    [
+      {
+        id: 'settings',
+        title: t(locale, 'buttons.settings')
+      },
+      {
+        id: 'daily_horoscope',
+        title: t(locale, 'buttons.dailyHoroscope')
+      }
+    ]
   ];
+}
+
+function getGlobalPersistentActions(locale) {
+  return [[
+    {
+      id: 'settings',
+      title: t(locale, 'buttons.settings')
+    },
+    {
+      id: 'daily_horoscope',
+      title: t(locale, 'buttons.dailyHoroscope')
+    }
+  ]];
 }
 
 async function sendFlowPrompt(event, channelApi, text, options = {}) {
@@ -129,6 +154,20 @@ async function sendFlowPrompt(event, channelApi, text, options = {}) {
   return channelApi.sendText(event, text, options);
 }
 
+async function sendGlobalPrompt(event, channelApi, text, options = {}) {
+  const locale = getLocale(event);
+  if (typeof channelApi.showPersistentActions === 'function') {
+    return channelApi.showPersistentActions(
+      event,
+      getGlobalPersistentActions(locale),
+      text,
+      options
+    );
+  }
+
+  return channelApi.sendText(event, text, options);
+}
+
 function isCancelFlowText(event, text) {
   const value = String(text || '').trim().toLowerCase();
   if (!value) {
@@ -137,6 +176,45 @@ function isCancelFlowText(event, text) {
 
   const localizedCancel = String(t(event, 'buttons.cancel') || '').trim().toLowerCase();
   return value === '/cancel' || value === localizedCancel || ['cancel', 'annuler', 'abbrechen', 'cancelar'].includes(value);
+}
+
+function isSettingsIntent(event, text) {
+  const value = String(text || '').trim().toLowerCase();
+  const localized = String(t(event, 'buttons.settings') || '').trim().toLowerCase();
+
+  if (!value) {
+    return false;
+  }
+
+  return value === localized || [
+    '/profile',
+    '/reglage',
+    '/settings',
+    '/einstellungen',
+    '/ajustes',
+    'settings',
+    'reglages',
+    'réglages',
+    'einstellungen',
+    'ajustes'
+  ].includes(value);
+}
+
+function isDailyHoroscopeIntent(event, text) {
+  const value = String(text || '').trim().toLowerCase();
+  const localized = String(t(event, 'buttons.dailyHoroscope') || '').trim().toLowerCase();
+
+  if (!value) {
+    return false;
+  }
+
+  return value === localized || [
+    'my daily horoscope',
+    'mon horoscope du jour',
+    'mein tageshoroskop',
+    'mi horóscopo del día',
+    'mi horoscopo del dia'
+  ].includes(value);
 }
 
 function isAddProfileIntent(event, text) {
@@ -172,6 +250,156 @@ function resetFlowState(identity) {
   setPendingQuestion(identity, null);
   setPendingSynastryQuestion(identity, null);
   setChoiceMap(identity, {});
+}
+
+function buildDailyHoroscopeBirthPayload(profile, timezone) {
+  const natal = profile?.natalRequestPayload || {};
+  return {
+    year: natal.year,
+    month: natal.month,
+    day: natal.day,
+    hour: natal.hour,
+    minute: natal.minute,
+    city: natal.city,
+    lat: natal.lat,
+    lng: natal.lng,
+    tz_str: natal.tz_str || timezone
+  };
+}
+
+function formatIsoDateInTimezone(timezone) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function buildDailyHoroscopeFallback(locale, profile, payload) {
+  const data = payload?.data || {};
+  const scores = data?.scores || {};
+  const labels = {
+    theme: { en: 'Theme', fr: 'Thème', de: 'Thema', es: 'Tema' },
+    scores: { en: 'Scores', fr: 'Scores', de: 'Werte', es: 'Puntuaciones' },
+    topTransits: { en: 'Top personal transits', fr: 'Top transits personnels', de: 'Top-Personaltransite', es: 'Tránsitos personales principales' }
+  };
+  const lines = [
+    t(locale, 'buttons.dailyHoroscope')
+  ];
+
+  if (data?.date) {
+    lines[0] = `${lines[0]} — ${data.date}`;
+  }
+
+  if (data?.content?.theme) {
+    lines.push(`${labels.theme[locale] || labels.theme.en}: ${data.content.theme}`);
+  }
+
+  const scoreParts = [
+    scores.overall !== undefined ? `Overall ${scores.overall}` : null,
+    scores.love !== undefined ? `Love ${scores.love}` : null,
+    scores.career !== undefined ? `Career ${scores.career}` : null,
+    scores.money !== undefined ? `Money ${scores.money}` : null,
+    scores.health !== undefined ? `Health ${scores.health}` : null
+  ].filter(Boolean);
+
+  if (scoreParts.length > 0) {
+    lines.push(`${labels.scores[locale] || labels.scores.en}: ${scoreParts.join(' • ')}`);
+  }
+
+  if (data?.content?.text) {
+    lines.push(String(data.content.text));
+  }
+
+  const topTransits = Array.isArray(data?.personal?.transits_top) ? data.personal.transits_top : [];
+  if (topTransits.length > 0) {
+    lines.push([
+      labels.topTransits[locale] || labels.topTransits.en,
+      ...topTransits.slice(0, 3).map((entry, index) => (
+        `${index + 1}. ${entry?.transit_planet?.label || ''} ${entry?.aspect?.label || ''} ${entry?.natal_planet?.label || ''}`.trim()
+      ))
+    ].join('\n'));
+  }
+
+  return lines.filter(Boolean).join('\n\n');
+}
+
+async function rewriteDailyHoroscope(locale, profile, payload) {
+  const subject = String(profile?.profileName || 'you').trim();
+  const prompt = [
+    `Locale: ${locale}`,
+    `Subject: ${subject}`,
+    'Grounded endpoint: /api/v3/horoscope/daily/personal',
+    '',
+    'Grounded payload JSON:',
+    JSON.stringify(payload || {}).slice(0, 12000),
+    '',
+    'Write a detailed daily horoscope in the user locale.',
+    'Use only the grounded payload above.',
+    'Do not invent dates, transits, scores, timings, meanings, or advice that is not supported by the payload.',
+    'Organize the answer in 3 to 5 short paragraphs covering the main theme, key influences, opportunities, and cautions.'
+  ].join('\n');
+
+  return generatePlainText({
+    systemInstruction: [
+      'You write detailed but grounded daily horoscope answers.',
+      `Write in ${locale}.`,
+      'Stay faithful to the payload only.',
+      'Do not mention missing fields or speculate.'
+    ].join('\n'),
+    userText: prompt,
+    history: [],
+    model: getFastPathModelName()
+  });
+}
+
+async function handleDailyHoroscope(event, channelApi) {
+  const profile = await profiles.getActiveProfile(event);
+
+  if (!profile) {
+    await sendGlobalPrompt(event, channelApi, t(event, 'errors.dailyHoroscopeNeedsProfile'));
+    return true;
+  }
+
+  const locale = getLocale(event);
+  const timezone = profile?.timezone || profile?.natalRequestPayload?.tz_str || 'UTC';
+  const currentDate = formatIsoDateInTimezone(timezone);
+
+  const loadingRef = await sendGlobalPrompt(event, channelApi, t(event, 'prompts.readingChart'));
+
+  try {
+    const payload = await getDailyPersonalHoroscopeV3({
+      birth: buildDailyHoroscopeBirthPayload(profile, timezone),
+      date: currentDate,
+      timezone,
+      tz_str: timezone,
+      locale
+    });
+
+    let text = buildDailyHoroscopeFallback(locale, profile, payload);
+
+    try {
+      const rewritten = await rewriteDailyHoroscope(locale, profile, payload);
+      if (String(rewritten || '').trim()) {
+        text = rewritten.trim();
+      }
+    } catch (error) {
+      // Keep grounded fallback text.
+    }
+
+    await channelApi.editText(event, loadingRef, text);
+  } catch (error) {
+    const message = error instanceof FreeAstroError
+      ? translateUserError(locale, error)
+      : getGeminiErrorMessage(error, locale);
+    await channelApi.editText(event, loadingRef, message);
+  }
+
+  return true;
 }
 
 function formatBillingLinkMessage(event, checkoutUrl) {
@@ -225,7 +453,7 @@ async function sendBillingStatus(event, channelApi) {
     );
   }
 
-  await channelApi.sendText(event, lines.join('\n\n'));
+  await sendGlobalPrompt(event, channelApi, lines.join('\n\n'));
   return true;
 }
 
@@ -259,7 +487,7 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
     return handleQuestionLimit(event, channelApi, options.loadingRef || null);
   }
 
-  const loadingRef = options.loadingRef || await channelApi.sendText(event, t(event, 'prompts.readingChart'));
+  const loadingRef = options.loadingRef || await sendGlobalPrompt(event, channelApi, t(event, 'prompts.readingChart'));
 
   try {
     const result = await answerConversation(event, userText);
@@ -631,9 +859,7 @@ async function finishNatalFlow(event, channelApi, session) {
     return true;
   }
 
-  const loadingRef = typeof channelApi.clearPersistentActions === 'function'
-    ? await channelApi.clearPersistentActions(event, t(locale, 'prompts.readingChart'))
-    : await channelApi.sendText(event, t(locale, 'prompts.readingChart'));
+  const loadingRef = await sendGlobalPrompt(event, channelApi, t(locale, 'prompts.readingChart'));
 
   try {
     const natalPayload = createNatalPayload(lockedSession, lockedSession.cityMatch);
@@ -701,11 +927,7 @@ async function handleStart(event, channelApi) {
   }
 
   if (chatState.natalProfile) {
-    if (hadActiveFlow && typeof channelApi.clearPersistentActions === 'function') {
-      await channelApi.clearPersistentActions(event, getWelcomeBackMessage(getLocale(event)));
-    } else {
-      await channelApi.sendText(event, getWelcomeBackMessage(getLocale(event)));
-    }
+    await sendGlobalPrompt(event, channelApi, getWelcomeBackMessage(getLocale(event)));
     return true;
   }
 
@@ -720,7 +942,7 @@ async function handleProfile(event, channelApi) {
   syncLocaleFromEvent(event);
   const chatState = getChatState(event);
   const access = await billing.getAccessSummary(event);
-  await channelApi.sendText(event, buildProfileMessage(chatState, access));
+  await sendGlobalPrompt(event, channelApi, buildProfileMessage(chatState, access));
 
   if (chatState.natalProfile) {
     await sendProfileActions(event, channelApi, chatState);
@@ -769,11 +991,7 @@ async function handleCancel(event, channelApi) {
   syncLocaleFromEvent(event);
   resetFlowState(event);
   resetConversationContext(event);
-  if (typeof channelApi.clearPersistentActions === 'function') {
-    await channelApi.clearPersistentActions(event, t(event, 'errors.cancelled'));
-  } else {
-    await channelApi.sendText(event, t(event, 'errors.cancelled'));
-  }
+  await sendGlobalPrompt(event, channelApi, t(event, 'errors.cancelled'));
   return true;
 }
 
@@ -1174,6 +1392,20 @@ async function handleIncomingText(event, channelApi) {
 
   if (text === '/subscribe') {
     return handleSubscribe(event, channelApi);
+  }
+
+  if (isSettingsIntent(event, text)) {
+    if (chatState.activeFlow) {
+      resetFlowState(event);
+    }
+    return handleProfile(event, channelApi);
+  }
+
+  if (isDailyHoroscopeIntent(event, text)) {
+    if (chatState.activeFlow) {
+      resetFlowState(event);
+    }
+    return handleDailyHoroscope(event, channelApi);
   }
 
   if (chatState.activeFlow && isCancelFlowText(event, text)) {
