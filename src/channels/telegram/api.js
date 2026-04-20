@@ -16,7 +16,12 @@ function toPersistentKeyboard(actions) {
     .filter(Boolean)
     .map((title) => [title]);
 
-  return Markup.keyboard(rows).resize();
+  const keyboard = Markup.keyboard(rows).resize();
+  keyboard.reply_markup = {
+    ...(keyboard.reply_markup || {}),
+    is_persistent: true
+  };
+  return keyboard;
 }
 
 function createTelegramMessageRef(ctx, message) {

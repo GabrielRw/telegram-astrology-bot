@@ -139,6 +139,41 @@ function isCancelFlowText(event, text) {
   return value === '/cancel' || value === localizedCancel || ['cancel', 'annuler', 'abbrechen', 'cancelar'].includes(value);
 }
 
+function isAddProfileIntent(event, text) {
+  const value = String(text || '').trim().toLowerCase();
+
+  if (!value) {
+    return false;
+  }
+
+  return [
+    'ajoute un nouveau profil',
+    'ajoute un profil',
+    'ajouter un profil',
+    'crée un nouveau profil',
+    'cree un nouveau profil',
+    'crée un profil',
+    'cree un profil',
+    'nouveau profil',
+    'add a new profile',
+    'add profile',
+    'new profile',
+    'neues profil',
+    'profil hinzufügen',
+    'profil hinzufugen',
+    'añadir perfil',
+    'anadir perfil',
+    'nuevo perfil'
+  ].includes(value);
+}
+
+function resetFlowState(identity) {
+  clearSession(identity);
+  setPendingQuestion(identity, null);
+  setPendingSynastryQuestion(identity, null);
+  setChoiceMap(identity, {});
+}
+
 function formatBillingLinkMessage(event, checkoutUrl) {
   return [
     t(event, 'billing.limitReached', { limit: billing.FREE_QUESTIONS_PER_DAY }),
@@ -659,9 +694,18 @@ async function handleStart(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
   const chatState = getChatState(event);
+  const hadActiveFlow = Boolean(chatState.activeFlow);
+
+  if (hadActiveFlow) {
+    resetFlowState(event);
+  }
 
   if (chatState.natalProfile) {
-    await channelApi.sendText(event, getWelcomeBackMessage(getLocale(event)));
+    if (hadActiveFlow && typeof channelApi.clearPersistentActions === 'function') {
+      await channelApi.clearPersistentActions(event, getWelcomeBackMessage(getLocale(event)));
+    } else {
+      await channelApi.sendText(event, getWelcomeBackMessage(getLocale(event)));
+    }
     return true;
   }
 
@@ -723,11 +767,8 @@ async function handleSubscribe(event, channelApi) {
 async function handleCancel(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
-  clearSession(event);
+  resetFlowState(event);
   resetConversationContext(event);
-  setPendingQuestion(event, null);
-  setPendingSynastryQuestion(event, null);
-  setChoiceMap(event, {});
   if (typeof channelApi.clearPersistentActions === 'function') {
     await channelApi.clearPersistentActions(event, t(event, 'errors.cancelled'));
   } else {
@@ -1116,6 +1157,7 @@ async function handleIncomingText(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
   const text = String(event.text || '').trim();
+  const chatState = getChatState(event);
 
   if (!text) {
     return false;
@@ -1134,7 +1176,7 @@ async function handleIncomingText(event, channelApi) {
     return handleSubscribe(event, channelApi);
   }
 
-  if (getChatState(event).activeFlow && isCancelFlowText(event, text)) {
+  if (chatState.activeFlow && isCancelFlowText(event, text)) {
     return handleCancel(event, channelApi);
   }
 
@@ -1147,7 +1189,7 @@ async function handleIncomingText(event, channelApi) {
     return handleIncomingAction({ ...event, actionId: mappedAction, type: 'action' }, channelApi);
   }
 
-  if (getChatState(event).pendingSynastryQuestion) {
+  if (chatState.pendingSynastryQuestion) {
     setPendingSynastryQuestion(event, null);
   }
 
@@ -1156,7 +1198,12 @@ async function handleIncomingText(event, channelApi) {
     return true;
   }
 
-  const chatState = getChatState(event);
+  if (chatState.natalProfile && isAddProfileIntent(event, text)) {
+    setPendingQuestion(event, null);
+    startNatalFlow(event, 'profile', { mode: 'add_secondary' });
+    await promptForProfileName(event, channelApi);
+    return true;
+  }
 
   if (!chatState.natalProfile) {
     setPendingQuestion(event, text);
