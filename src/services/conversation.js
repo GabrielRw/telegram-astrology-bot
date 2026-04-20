@@ -673,10 +673,6 @@ function detectConversationRoute(text, history = []) {
     };
   }
 
-  if (intent.id === 'synastry' || /\b(compare|comparison|compatib|synastry|between\b.+\band\b|compare\b.+\b(et|and)\b)\b/i.test(value)) {
-    return { kind: 'astrology_synastry', intent, answerStyle: 'synastry' };
-  }
-
   if (isExplicitTransitSearchQuestion(value)) {
     return {
       kind: 'astrology_transits',
@@ -687,6 +683,10 @@ function detectConversationRoute(text, history = []) {
       },
       answerStyle: 'personal_transits'
     };
+  }
+
+  if (intent.id === 'synastry' || /\b(compare|comparison|compatib|synastry|between\b.+\band\b|compare\b.+\b(et|and)\b)\b/i.test(value)) {
+    return { kind: 'astrology_synastry', intent, answerStyle: 'synastry' };
   }
 
   if (intent.id === 'transits' || /\b(current sky|sky right now|today|aujourd'hui|right now|ce mois|this month|current energies|du jour)\b/i.test(value)) {
@@ -1203,6 +1203,233 @@ async function resolveFollowUpWithAi(locale, userText, conversationContext, rout
       : (lastQueryState?.baseQuestion || lastResolvedQuestion),
     queryPatch,
     routeKind: conversationContext?.lastResponseRoute || route?.kind || null
+  };
+}
+
+async function extractTransitSearchRefinementWithAi(locale, userText, subjectProfile, currentQueryState = null) {
+  if (currentQueryState?.canonicalRouteId !== 'transit_search_exact') {
+    return {
+      patch: null,
+      confidence: 0,
+      usedAiTransitSearchExtraction: false
+    };
+  }
+
+  const value = String(userText || '').trim();
+  if (!value) {
+    return {
+      patch: null,
+      confidence: 0,
+      usedAiTransitSearchExtraction: false
+    };
+  }
+
+  const timezone = subjectProfile?.timezone || subjectProfile?.birthTimezone || subjectProfile?.rawNatalPayload?.subject?.location?.timezone || 'UTC';
+  const systemInstruction = [
+    'You extract structured parameters for an exact astrology transit-search question.',
+    `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}, but output JSON only.`,
+    'Return one JSON object and nothing else.',
+    'Allowed keys: transitPlanet, natalPoint, aspectTypes, timeframe, month, confidence.',
+    'transitPlanet must be one of: sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune, pluto, chiron.',
+    'natalPoint must be one of: sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune, pluto, chiron, ascendant, descendant, midheaven, ic.',
+    'aspectTypes must contain only: conjunction, square, opposition, trine, sextile.',
+    'timeframe must be one of: since_birth, specific_month, specific_year, current_year, null.',
+    'When the user asks "between X and Y", treat the first body as the transiting body and the second as the natal point unless the wording clearly says otherwise.',
+    'Do not swap Mercury and Sun just because one is more common in astrology examples.',
+    'If the user mentions "since birth" or "depuis ma naissance", timeframe must be since_birth.',
+    'confidence must be a number between 0 and 1.'
+  ].join('\n');
+
+  const prompt = [
+    `User question: ${value}`,
+    `Timezone: ${timezone}`,
+    `Current deterministic parameters: ${JSON.stringify(currentQueryState?.parameters || {})}`,
+    'Examples:',
+    '- "Show exact Saturn transits to my Moon since birth" -> {"transitPlanet":"saturn","natalPoint":"moon","aspectTypes":[],"timeframe":"since_birth","confidence":0.95}',
+    '- "Retourne toutes les oppositions entre mercure et le soleil depuis ma naissance" -> {"transitPlanet":"mercury","natalPoint":"sun","aspectTypes":["opposition"],"timeframe":"since_birth","confidence":0.96}',
+    '- "Return all trines between Jupiter and my Moon in 2027" -> {"transitPlanet":"jupiter","natalPoint":"moon","aspectTypes":["trine"],"timeframe":"specific_year","confidence":0.94}',
+    'Return JSON now.'
+  ].join('\n');
+
+  try {
+    const parsed = extractJsonObject(await generatePlainText({
+      systemInstruction,
+      userText: prompt,
+      history: [],
+      model: getFastPathModelName()
+    }));
+
+    if (!parsed || typeof parsed !== 'object') {
+      return {
+        patch: null,
+        confidence: 0,
+        usedAiTransitSearchExtraction: false
+      };
+    }
+
+    const confidence = Number(parsed.confidence || 0);
+    if (!Number.isFinite(confidence) || confidence < 0.68) {
+      return {
+        patch: null,
+        confidence: Number.isFinite(confidence) ? confidence : 0,
+        usedAiTransitSearchExtraction: false
+      };
+    }
+
+    return {
+      patch: sanitizeStructuredQueryPatch({
+        transitPlanet: parsed.transitPlanet || null,
+        natalPoint: parsed.natalPoint || null,
+        aspectTypes: Array.isArray(parsed.aspectTypes) ? parsed.aspectTypes : [],
+        timeframe: typeof parsed.timeframe === 'string' ? parsed.timeframe : null,
+        month: parsed.month && typeof parsed.month === 'object' ? parsed.month : null
+      }),
+      confidence,
+      usedAiTransitSearchExtraction: true
+    };
+  } catch (_error) {
+    return {
+      patch: null,
+      confidence: 0,
+      usedAiTransitSearchExtraction: false
+    };
+  }
+}
+
+async function maybeRefineStructuredQueryStateWithAi(locale, userText, subjectProfile, currentQueryState = null) {
+  if (!currentQueryState?.canonicalRouteId) {
+    return currentQueryState;
+  }
+
+  if (currentQueryState.canonicalRouteId !== 'transit_search_exact') {
+    return currentQueryState;
+  }
+
+  const aiRefinement = await extractTransitSearchRefinementWithAi(
+    locale,
+    userText,
+    subjectProfile,
+    currentQueryState
+  );
+
+  const refinementPatch = aiRefinement?.patch && typeof aiRefinement.patch === 'object'
+    ? aiRefinement.patch
+    : null;
+  const nextParameters = refinementPatch && Object.keys(refinementPatch).length > 0
+    ? sanitizeStructuredQueryPatch({
+        ...(currentQueryState.parameters || {}),
+        ...refinementPatch
+      })
+    : (currentQueryState.parameters || {});
+
+  return {
+    ...currentQueryState,
+    parameters: nextParameters,
+    transitSearchExtractionMeta: {
+      usedAiTransitSearchExtraction: Boolean(aiRefinement?.usedAiTransitSearchExtraction),
+      aiExtractionConfidence: Number(aiRefinement?.confidence || 0)
+    }
+  };
+}
+
+function buildTransitSearchWindowFromQueryState(queryState, subjectProfile, timezone = 'UTC') {
+  const month = queryState?.parameters?.month;
+  if (month && typeof month === 'object') {
+    const range = buildMonthDateRange(month);
+    if (range) {
+      return {
+        range_start: range.start,
+        range_end: range.end,
+        timeframe: 'specific_month'
+      };
+    }
+  }
+
+  const timeframe = queryState?.parameters?.timeframe || null;
+  if (timeframe === 'since_birth') {
+    const birthDate = buildBirthDateStringFromProfile(subjectProfile);
+    if (!birthDate) {
+      return null;
+    }
+
+    const currentDate = getDateStringInTimezone(timezone);
+    const birthYear = Number(String(birthDate).slice(0, 4));
+    const currentYear = getCurrentLocalDateParts(timezone).year;
+    const ageYears = Math.max(0, currentYear - birthYear);
+
+    if (ageYears <= 50) {
+      return {
+        range_start: birthDate,
+        range_end: currentDate,
+        timeframe
+      };
+    }
+
+    return {
+      age_start_years: 0,
+      age_end_years: 50,
+      timeframe
+    };
+  }
+
+  if (timeframe === 'current_year') {
+    const range = buildCurrentYearRange(timezone);
+    return {
+      range_start: range.start,
+      range_end: range.end,
+      timeframe
+    };
+  }
+
+  return null;
+}
+
+function inferTransitSearchTimeframeFromQuestion(userText, timezone = 'UTC') {
+  const value = String(userText || '').toLowerCase();
+  if (/\b(depuis ma naissance|since birth|since i was born|from birth)\b/i.test(value)) {
+    return 'since_birth';
+  }
+  if (parseMonthFromQuestion(userText, timezone)) {
+    return 'specific_month';
+  }
+  if (/\b(this year|cette annee|cette année)\b/i.test(value)) {
+    return 'current_year';
+  }
+  if (parseYearFromQuestion(userText)) {
+    return 'specific_year';
+  }
+  return null;
+}
+
+function summarizeTransitSearchExtractionMeta(queryState, userText, subjectProfile, timezone = 'UTC') {
+  const aiMeta = queryState?.transitSearchExtractionMeta || {};
+  const queryTransitPlanet = queryState?.parameters?.transitPlanet || null;
+  const queryNatalPoint = queryState?.parameters?.natalPoint || null;
+  const queryAspectTypes = Array.isArray(queryState?.parameters?.aspectTypes)
+    ? queryState.parameters.aspectTypes
+    : [];
+  const queryWindow = buildTransitSearchWindowFromQueryState(queryState, subjectProfile, timezone);
+  const fallbackTransitPlanet = queryTransitPlanet ? null : parseTransitPlanetFromQuestion(userText);
+  const fallbackNatalPoint = queryNatalPoint ? null : parseNatalPointFromTransitSearchQuestion(userText);
+  const fallbackAspectTypes = queryAspectTypes.length > 0 ? [] : parseAspectTypesFromQuestion(userText);
+  const fallbackWindow = queryWindow ? null : buildTransitSearchWindow(userText, subjectProfile, timezone);
+  const finalTimeframe = queryWindow?.timeframe || queryState?.parameters?.timeframe || inferTransitSearchTimeframeFromQuestion(userText, timezone);
+
+  return {
+    transitPlanet: queryTransitPlanet || fallbackTransitPlanet,
+    natalPoint: queryNatalPoint || fallbackNatalPoint,
+    aspectTypes: queryAspectTypes.length > 0 ? queryAspectTypes : fallbackAspectTypes,
+    range: queryWindow || fallbackWindow || buildCurrentYearRange(timezone),
+    timeframe: finalTimeframe || 'current_year',
+    usedAiTransitSearchExtraction: Boolean(aiMeta.usedAiTransitSearchExtraction),
+    aiExtractionConfidence: Number(aiMeta.aiExtractionConfidence || 0),
+    usedDeterministicFallback: Boolean(
+      !aiMeta.usedAiTransitSearchExtraction ||
+      fallbackTransitPlanet ||
+      fallbackNatalPoint ||
+      fallbackAspectTypes.length > 0 ||
+      fallbackWindow
+    )
   };
 }
 
@@ -1790,23 +2017,39 @@ function normalizeMatchingText(text) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
-function parsePlanetFromQuestion(text) {
+function findEarliestMappedToken(text, synonymMap = {}) {
   const value = normalizeMatchingText(text);
-  for (const [needle, planet] of Object.entries(PLANET_SYNONYMS)) {
+  let best = null;
+
+  for (const [needle, mappedValue] of Object.entries(synonymMap)) {
     const normalizedNeedle = normalizeMatchingText(needle);
-    if (new RegExp(`\\b${normalizedNeedle}\\b`, 'i').test(value)) {
-      return planet;
+    const pattern = new RegExp(`\\b${normalizedNeedle.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\b`, 'i');
+    const match = pattern.exec(value);
+    if (!match) {
+      continue;
+    }
+
+    if (!best || match.index < best.index) {
+      best = {
+        index: match.index,
+        value: mappedValue
+      };
     }
   }
 
-  return WESTERN_PLANETS.find((planet) => new RegExp(`\\b${planet}\\b`, 'i').test(value)) || null;
+  return best?.value || null;
+}
+
+function parsePlanetFromQuestion(text) {
+  return findEarliestMappedToken(text, PLANET_SYNONYMS)
+    || WESTERN_PLANETS.find((planet) => new RegExp(`\\b${planet}\\b`, 'i').test(normalizeMatchingText(text))) || null;
 }
 
 function parseTransitPlanetFromQuestion(text) {
-  const value = String(text || '').toLowerCase();
+  const value = normalizeMatchingText(text);
   const pairPatterns = [
-    /\bbetween\s+my\s+([a-zà-ÿ]+)\s+and\s+([a-zà-ÿ]+)\b/i,
-    /\bentre\s+m(?:on|a|es)\s+([a-zà-ÿ]+)\s+et\s+([a-zà-ÿ]+)\b/i
+    /\bbetween\s+(?:my\s+|the\s+)?([a-z]+)\s+and\s+(?:my\s+|the\s+)?([a-z]+)\b/i,
+    /\bentre\s+(?:(?:m(?:on|a|es)|l(?:e|a|es))\s+)?([a-z]+)\s+et\s+(?:(?:m(?:on|a|es)|l(?:e|a|es))\s+)?([a-z]+)\b/i
   ];
   for (const pattern of pairPatterns) {
     const match = value.match(pattern);
@@ -1833,7 +2076,7 @@ function parseTransitPlanetFromQuestion(text) {
     }
   }
 
-  const matches = Array.from(value.matchAll(/\b([a-zà-ÿ]+)\b/ig))
+  const matches = Array.from(value.matchAll(/\b([a-z]+)\b/ig))
     .map((match) => PLANET_SYNONYMS[String(match[1]).toLowerCase()])
     .filter(Boolean);
 
@@ -1841,22 +2084,14 @@ function parseTransitPlanetFromQuestion(text) {
 }
 
 function parseNatalPointFromQuestion(text) {
-  const value = String(text || '').toLowerCase();
-
-  for (const [needle, point] of Object.entries(NATAL_POINT_SYNONYMS)) {
-    if (new RegExp(`\\b${needle}\\b`, 'i').test(value)) {
-      return point;
-    }
-  }
-
-  return null;
+  return findEarliestMappedToken(text, NATAL_POINT_SYNONYMS);
 }
 
 function parseNatalPointFromTransitSearchQuestion(text) {
-  const value = String(text || '').toLowerCase();
+  const value = normalizeMatchingText(text);
   const targetedPatterns = [
-    /\bbetween\s+my\s+([a-zà-ÿ]+)\s+and\s+([a-zà-ÿ]+)\b/i,
-    /\bentre\s+m(?:on|a|es)\s+([a-zà-ÿ]+)\s+et\s+([a-zà-ÿ]+)\b/i,
+    /\bbetween\s+(?:my\s+|the\s+)?([a-z]+)\s+and\s+(?:my\s+|the\s+)?([a-z]+)\b/i,
+    /\bentre\s+(?:(?:m(?:on|a|es)|l(?:e|a|es))\s+)?([a-z]+)\s+et\s+(?:(?:m(?:on|a|es)|l(?:e|a|es))\s+)?([a-z]+)\b/i,
     /\b(?:to|against|vers|sur|à)\s+my\s+([a-z]+)/i,
     /\b(?:to|against|vers|sur|à)\s+(ascendant|rising|asc|descendant|desc|midheaven|mc|ic|sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron)\b/i,
     /\bmy\s+(ascendant|rising|asc|descendant|desc|midheaven|mc|ic|sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron)\b/i
@@ -2587,38 +2822,73 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
       } : { missing: ['profile'] };
     }
     case 'transit_search_exact': {
-      const transitPlanet = queryState?.parameters?.transitPlanet || parseTransitPlanetFromQuestion(userText);
-      const natalPoint = queryState?.parameters?.natalPoint || parseNatalPointFromTransitSearchQuestion(userText);
-      const range = buildTransitSearchWindow(userText, subjectProfile, timezone) || buildCurrentYearRange(timezone);
-      const aspectTypes = Array.isArray(queryState?.parameters?.aspectTypes) && queryState.parameters.aspectTypes.length > 0
-        ? queryState.parameters.aspectTypes
-        : parseAspectTypesFromQuestion(userText);
+      const extractionMeta = summarizeTransitSearchExtractionMeta(queryState, userText, subjectProfile, timezone);
+      const transitPlanet = extractionMeta.transitPlanet;
+      const natalPoint = extractionMeta.natalPoint;
+      const range = extractionMeta.range;
+      const aspectTypes = extractionMeta.aspectTypes;
       if (!transitPlanet) {
+        info('transit search extraction resolved', {
+          canonicalRouteId: route.id,
+          usedAiTransitSearchExtraction: extractionMeta.usedAiTransitSearchExtraction,
+          aiExtractionConfidence: extractionMeta.aiExtractionConfidence,
+          finalTransitPlanet: null,
+          finalNatalPoint: natalPoint,
+          finalAspectTypes: aspectTypes,
+          finalTimeframe: extractionMeta.timeframe,
+          toolArgsFinal: null,
+          usedDeterministicFallback: true,
+          missing: ['transitPlanet']
+        });
         return { missing: ['transitPlanet'] };
       }
       if (!natalPoint) {
+        info('transit search extraction resolved', {
+          canonicalRouteId: route.id,
+          usedAiTransitSearchExtraction: extractionMeta.usedAiTransitSearchExtraction,
+          aiExtractionConfidence: extractionMeta.aiExtractionConfidence,
+          finalTransitPlanet: transitPlanet,
+          finalNatalPoint: null,
+          finalAspectTypes: aspectTypes,
+          finalTimeframe: extractionMeta.timeframe,
+          toolArgsFinal: null,
+          usedDeterministicFallback: true,
+          missing: ['natalPoint']
+        });
         return { missing: ['natalPoint'] };
       }
+      const requestArgs = {
+        natal: flatNatal,
+        transit_planet: transitPlanet,
+        natal_point: natalPoint,
+        ...(range.range_start && range.range_end ? {
+          range_start: range.range_start,
+          range_end: range.range_end
+        } : {
+          range_start: range.start,
+          range_end: range.end
+        }),
+        ...(range.age_start_years !== undefined && range.age_end_years !== undefined ? {
+          age_start_years: range.age_start_years,
+          age_end_years: range.age_end_years
+        } : {}),
+        ...(aspectTypes.length > 0 ? { aspect_types: aspectTypes } : {}),
+        include_context: true
+      };
+      info('transit search extraction resolved', {
+        canonicalRouteId: route.id,
+        usedAiTransitSearchExtraction: extractionMeta.usedAiTransitSearchExtraction,
+        aiExtractionConfidence: extractionMeta.aiExtractionConfidence,
+        finalTransitPlanet: transitPlanet,
+        finalNatalPoint: natalPoint,
+        finalAspectTypes: aspectTypes,
+        finalTimeframe: extractionMeta.timeframe,
+        toolArgsFinal: requestArgs,
+        usedDeterministicFallback: extractionMeta.usedDeterministicFallback
+      });
       return {
         toolName: 'v1_western_transits_search',
-        requestArgs: {
-          natal: flatNatal,
-          transit_planet: transitPlanet,
-          natal_point: natalPoint,
-          ...(range.range_start && range.range_end ? {
-            range_start: range.range_start,
-            range_end: range.range_end
-          } : {
-            range_start: range.start,
-            range_end: range.end
-          }),
-          ...(range.age_start_years !== undefined && range.age_end_years !== undefined ? {
-            age_start_years: range.age_start_years,
-            age_end_years: range.age_end_years
-          } : {}),
-          ...(aspectTypes.length > 0 ? { aspect_types: aspectTypes } : {}),
-          include_context: true
-        },
+        requestArgs,
         cacheMonth: '',
         primaryProfileId: subjectProfile.profileId,
         secondaryProfileId: null
@@ -7639,6 +7909,13 @@ async function answerConversation(identity, userText) {
       };
     }
   }
+
+  currentQueryState = await maybeRefineStructuredQueryStateWithAi(
+    locale,
+    effectiveUserQuestion,
+    subjectProfile,
+    currentQueryState
+  );
 
   if (canonicalRoute?.responseShape === 'full_listing') {
     const fullListingResult = await tryCanonicalFullListing(
