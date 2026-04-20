@@ -357,9 +357,15 @@ function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone 
         aspectTypes: parseAspectTypesFromQuestion(value),
         month: parsedMonth,
         timeframe,
-        limit
+        limit,
+        fullListing: wantsFullListingRequest(value)
       });
     }
+    case 'ephemeris':
+      return sanitizeStructuredQueryPatch({
+        month: parsedMonth,
+        fullListing: wantsFullListingRequest(value)
+      });
     default:
       return {};
   }
@@ -472,6 +478,10 @@ function looksLikeStandaloneAstrologyQuery(text) {
 
 function wantsMinorAspects(text) {
   return /\b(minor(?:\s+\w+)?\s+aspects?|aspects?\s+mineurs?)\b/i.test(String(text || ''));
+}
+
+function wantsFullListingRequest(text) {
+  return /\b(absolutely all|every single|full list|list every|list all|all exact|absolument toutes?|absolument tous|toutes? les|liste compl[eè]te|liste exhaustive)\b/i.test(String(text || ''));
 }
 
 function looksLikeStandaloneCityReply(text) {
@@ -776,6 +786,14 @@ function isLikelyExternalProfileName(candidate) {
     return false;
   }
 
+  if (parseMonthFromQuestion(normalized, 'UTC') || parseYearFromQuestion(normalized)) {
+    return false;
+  }
+
+  if (/\b\d{4}\b/.test(normalized) || /^\d+$/.test(normalized.replace(/\s+/g, ''))) {
+    return false;
+  }
+
   if (tokens.some((token) => NON_PROFILE_NAME_TOKENS.has(token))) {
     return false;
   }
@@ -789,6 +807,10 @@ function isLikelyExternalProfileName(candidate) {
 
 function extractRequestedExternalProfileName(userText, route, activeProfile, savedProfiles = []) {
   if (!EXTERNAL_PROFILE_ROUTE_KINDS.has(route?.kind)) {
+    return null;
+  }
+
+  if (route?.kind === 'astrology_ephemeris') {
     return null;
   }
 
@@ -1229,11 +1251,12 @@ async function extractTransitSearchRefinementWithAi(locale, userText, subjectPro
     'You extract structured parameters for an exact astrology transit-search question.',
     `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}, but output JSON only.`,
     'Return one JSON object and nothing else.',
-    'Allowed keys: transitPlanet, natalPoint, aspectTypes, timeframe, month, confidence.',
+    'Allowed keys: transitPlanet, natalPoint, aspectTypes, timeframe, month, fullListing, confidence.',
     'transitPlanet must be one of: sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune, pluto, chiron.',
     'natalPoint must be one of: sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune, pluto, chiron, ascendant, descendant, midheaven, ic.',
     'aspectTypes must contain only: conjunction, square, opposition, trine, sextile.',
     'timeframe must be one of: since_birth, specific_month, specific_year, current_year, null.',
+    'fullListing must be true when the user explicitly asks for every single hit, absolutely all hits, a full list, or an exhaustive list.',
     'When the user asks "between X and Y", treat the first body as the transiting body and the second as the natal point unless the wording clearly says otherwise.',
     'Do not swap Mercury and Sun just because one is more common in astrology examples.',
     'If the user mentions "since birth" or "depuis ma naissance", timeframe must be since_birth.',
@@ -1246,7 +1269,7 @@ async function extractTransitSearchRefinementWithAi(locale, userText, subjectPro
     `Current deterministic parameters: ${JSON.stringify(currentQueryState?.parameters || {})}`,
     'Examples:',
     '- "Show exact Saturn transits to my Moon since birth" -> {"transitPlanet":"saturn","natalPoint":"moon","aspectTypes":[],"timeframe":"since_birth","confidence":0.95}',
-    '- "Retourne toutes les oppositions entre mercure et le soleil depuis ma naissance" -> {"transitPlanet":"mercury","natalPoint":"sun","aspectTypes":["opposition"],"timeframe":"since_birth","confidence":0.96}',
+    '- "Retourne toutes les oppositions entre mercure et le soleil depuis ma naissance" -> {"transitPlanet":"mercury","natalPoint":"sun","aspectTypes":["opposition"],"timeframe":"since_birth","fullListing":true,"confidence":0.96}',
     '- "Return all trines between Jupiter and my Moon in 2027" -> {"transitPlanet":"jupiter","natalPoint":"moon","aspectTypes":["trine"],"timeframe":"specific_year","confidence":0.94}',
     'Return JSON now.'
   ].join('\n');
@@ -1282,7 +1305,8 @@ async function extractTransitSearchRefinementWithAi(locale, userText, subjectPro
         natalPoint: parsed.natalPoint || null,
         aspectTypes: Array.isArray(parsed.aspectTypes) ? parsed.aspectTypes : [],
         timeframe: typeof parsed.timeframe === 'string' ? parsed.timeframe : null,
-        month: parsed.month && typeof parsed.month === 'object' ? parsed.month : null
+        month: parsed.month && typeof parsed.month === 'object' ? parsed.month : null,
+        fullListing: parsed.fullListing === true
       }),
       confidence,
       usedAiTransitSearchExtraction: true
@@ -1296,40 +1320,137 @@ async function extractTransitSearchRefinementWithAi(locale, userText, subjectPro
   }
 }
 
+async function extractFullListingPreferenceWithAi(locale, userText, currentQueryState = null) {
+  const routeId = currentQueryState?.canonicalRouteId || null;
+  if (!['all_natal_aspects', 'ephemeris'].includes(routeId)) {
+    return {
+      fullListing: null,
+      confidence: 0,
+      usedAiFullListingExtraction: false
+    };
+  }
+
+  const value = String(userText || '').trim();
+  if (!value) {
+    return {
+      fullListing: null,
+      confidence: 0,
+      usedAiFullListingExtraction: false
+    };
+  }
+
+  const systemInstruction = [
+    'You classify whether the user explicitly wants an exhaustive full listing rather than a summary or a top subset.',
+    `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}, but output JSON only.`,
+    'Return one JSON object with exactly these keys: fullListing, confidence.',
+    'fullListing must be true only when the user clearly asks for absolutely all results, a complete list, an exhaustive list, or every single entry.',
+    'If the user asks a normal overview, short answer, top subset, or unspecified default answer, fullListing must be false.',
+    'confidence must be a number between 0 and 1.'
+  ].join('\n');
+
+  const prompt = [
+    `Route: ${routeId}`,
+    `User question: ${value}`,
+    'Examples:',
+    '- "show me all my aspects" -> {"fullListing":true,"confidence":0.96}',
+    '- "donne-moi absolument toutes mes éphémérides pour mai 2027" -> {"fullListing":true,"confidence":0.97}',
+    '- "parle moi de mes aspects" -> {"fullListing":false,"confidence":0.88}',
+    '- "give me the ephemeris for may 2027" -> {"fullListing":false,"confidence":0.82}',
+    'Return JSON now.'
+  ].join('\n');
+
+  try {
+    const parsed = extractJsonObject(await generatePlainText({
+      systemInstruction,
+      userText: prompt,
+      history: [],
+      model: getFastPathModelName()
+    }));
+
+    if (!parsed || typeof parsed !== 'object') {
+      return {
+        fullListing: null,
+        confidence: 0,
+        usedAiFullListingExtraction: false
+      };
+    }
+
+    const confidence = Number(parsed.confidence || 0);
+    if (!Number.isFinite(confidence) || confidence < 0.72 || typeof parsed.fullListing !== 'boolean') {
+      return {
+        fullListing: null,
+        confidence: Number.isFinite(confidence) ? confidence : 0,
+        usedAiFullListingExtraction: false
+      };
+    }
+
+    return {
+      fullListing: parsed.fullListing,
+      confidence,
+      usedAiFullListingExtraction: true
+    };
+  } catch (_error) {
+    return {
+      fullListing: null,
+      confidence: 0,
+      usedAiFullListingExtraction: false
+    };
+  }
+}
+
 async function maybeRefineStructuredQueryStateWithAi(locale, userText, subjectProfile, currentQueryState = null) {
   if (!currentQueryState?.canonicalRouteId) {
     return currentQueryState;
   }
 
-  if (currentQueryState.canonicalRouteId !== 'transit_search_exact') {
-    return currentQueryState;
+  if (currentQueryState.canonicalRouteId === 'transit_search_exact') {
+    const aiRefinement = await extractTransitSearchRefinementWithAi(
+      locale,
+      userText,
+      subjectProfile,
+      currentQueryState
+    );
+
+    const refinementPatch = aiRefinement?.patch && typeof aiRefinement.patch === 'object'
+      ? aiRefinement.patch
+      : null;
+    const nextParameters = refinementPatch && Object.keys(refinementPatch).length > 0
+      ? sanitizeStructuredQueryPatch({
+          ...(currentQueryState.parameters || {}),
+          ...refinementPatch
+        })
+      : (currentQueryState.parameters || {});
+
+    return {
+      ...currentQueryState,
+      parameters: nextParameters,
+      transitSearchExtractionMeta: {
+        usedAiTransitSearchExtraction: Boolean(aiRefinement?.usedAiTransitSearchExtraction),
+        aiExtractionConfidence: Number(aiRefinement?.confidence || 0)
+      }
+    };
   }
 
-  const aiRefinement = await extractTransitSearchRefinementWithAi(
-    locale,
-    userText,
-    subjectProfile,
-    currentQueryState
-  );
-
-  const refinementPatch = aiRefinement?.patch && typeof aiRefinement.patch === 'object'
-    ? aiRefinement.patch
-    : null;
-  const nextParameters = refinementPatch && Object.keys(refinementPatch).length > 0
-    ? sanitizeStructuredQueryPatch({
-        ...(currentQueryState.parameters || {}),
-        ...refinementPatch
-      })
-    : (currentQueryState.parameters || {});
-
-  return {
-    ...currentQueryState,
-    parameters: nextParameters,
-    transitSearchExtractionMeta: {
-      usedAiTransitSearchExtraction: Boolean(aiRefinement?.usedAiTransitSearchExtraction),
-      aiExtractionConfidence: Number(aiRefinement?.confidence || 0)
+  if (['all_natal_aspects', 'ephemeris'].includes(currentQueryState.canonicalRouteId)) {
+    const fullListingPreference = await extractFullListingPreferenceWithAi(locale, userText, currentQueryState);
+    if (typeof fullListingPreference.fullListing !== 'boolean') {
+      return currentQueryState;
     }
-  };
+
+    return {
+      ...currentQueryState,
+      parameters: sanitizeStructuredQueryPatch({
+        ...(currentQueryState.parameters || {}),
+        fullListing: fullListingPreference.fullListing
+      }),
+      fullListingExtractionMeta: {
+        usedAiFullListingExtraction: Boolean(fullListingPreference.usedAiFullListingExtraction),
+        aiFullListingConfidence: Number(fullListingPreference.confidence || 0)
+      }
+    };
+  }
+
+  return currentQueryState;
 }
 
 function buildTransitSearchWindowFromQueryState(queryState, subjectProfile, timezone = 'UTC') {
@@ -1421,6 +1542,7 @@ function summarizeTransitSearchExtractionMeta(queryState, userText, subjectProfi
     aspectTypes: queryAspectTypes.length > 0 ? queryAspectTypes : fallbackAspectTypes,
     range: queryWindow || fallbackWindow || buildCurrentYearRange(timezone),
     timeframe: finalTimeframe || 'current_year',
+    fullListing: queryState?.parameters?.fullListing === true,
     usedAiTransitSearchExtraction: Boolean(aiMeta.usedAiTransitSearchExtraction),
     aiExtractionConfidence: Number(aiMeta.aiExtractionConfidence || 0),
     usedDeterministicFallback: Boolean(
@@ -2605,13 +2727,14 @@ function buildCanonicalToolPrompt(route, userText, subjectProfile, result, local
   return { systemInstruction, userPrompt };
 }
 
-async function presentCanonicalToolResult(locale, route, userText, subjectProfile, toolCallResult, responseMode, channel = null) {
+async function presentCanonicalToolResult(locale, route, userText, subjectProfile, toolCallResult, responseMode, channel = null, queryState = null) {
   const toolResults = [{
     name: route.toolTarget,
     result: toolCallResult
   }];
   const timelinePayload = extractTransitTimelinePayload(toolCallResult);
   const transitSearchPayload = extractTransitSearchPayload(toolCallResult);
+  const structuredPayload = extractStructuredToolPayload(toolCallResult);
   const requestedMonthlyPlanet = parseRequestedMonthlyTransitPlanet(userText);
   const timeframe = route.id === 'current_sky_today' || route.id === 'today_transits_me'
     ? 'current_day'
@@ -2695,13 +2818,19 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
   }
 
   if (route.id === 'transit_search_exact' && transitSearchPayload) {
+    if (queryState?.parameters?.fullListing) {
+      return buildTransitSearchFullListingResponse(locale, transitSearchPayload, subjectProfile, responseMode);
+    }
     if (responseMode === 'raw') {
       return buildTransitSearchRawResponse(locale, transitSearchPayload, subjectProfile);
     }
   }
 
+  if (route.id === 'ephemeris' && structuredPayload && queryState?.parameters?.fullListing) {
+    return buildEphemerisRawResponse(locale, structuredPayload, subjectProfile);
+  }
+
   if (responseMode === 'raw') {
-    const structuredPayload = extractStructuredToolPayload(toolCallResult);
     const synastryPayload = extractSynastryPayload(toolCallResult);
 
     if ((route.id === 'relocation_recommendations' || route.id === 'relocation_city_check') && structuredPayload) {
@@ -2836,6 +2965,7 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
           finalNatalPoint: natalPoint,
           finalAspectTypes: aspectTypes,
           finalTimeframe: extractionMeta.timeframe,
+          fullListing: extractionMeta.fullListing,
           toolArgsFinal: null,
           usedDeterministicFallback: true,
           missing: ['transitPlanet']
@@ -2851,6 +2981,7 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
           finalNatalPoint: null,
           finalAspectTypes: aspectTypes,
           finalTimeframe: extractionMeta.timeframe,
+          fullListing: extractionMeta.fullListing,
           toolArgsFinal: null,
           usedDeterministicFallback: true,
           missing: ['natalPoint']
@@ -2883,6 +3014,7 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
         finalNatalPoint: natalPoint,
         finalAspectTypes: aspectTypes,
         finalTimeframe: extractionMeta.timeframe,
+        fullListing: extractionMeta.fullListing,
         toolArgsFinal: requestArgs,
         usedDeterministicFallback: extractionMeta.usedDeterministicFallback
       });
@@ -3193,7 +3325,8 @@ async function executeCanonicalToolRoute(identity, route, userText, subjectProfi
     subjectProfile,
     resolved.result,
     responseMode,
-    identity?.channel || null
+    identity?.channel || null,
+    queryState
   );
   return {
     text: typeof presented === 'string' ? presented : presented.text,
@@ -4650,6 +4783,93 @@ function buildTransitSearchInterpretiveResponse(locale, payload, subjectProfile)
     de: `Seit der Geburt bildete ${transitPlanet} einen ${aspectType} zum Radix-${natalPoint} für ${subject} in einem Hauptzyklus von ${windowStart} bis ${windowEnd}.${exactText ? ` Der exakte Treffer lag am ${exactText}.` : ''}`,
     es: `Desde el nacimiento, ${transitPlanet} formó un ${aspectType} al ${natalPoint} natal para ${subject} en un ciclo principal de ${windowStart} a ${windowEnd}.${exactText ? ` La exactitud ocurrió el ${exactText}.` : ''}`
   });
+}
+
+function formatTransitPassTypeLabel(locale, value) {
+  const normalized = String(value || '').toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === 'direct') {
+    return formatRawLabel(locale, { en: 'Direct', fr: 'Direct', de: 'Direkt', es: 'Directo' });
+  }
+
+  if (normalized === 'retrograde') {
+    return formatRawLabel(locale, { en: 'Retrograde', fr: 'Rétrograde', de: 'Rückläufig', es: 'Retrógrado' });
+  }
+
+  return humanizeRawKey(normalized);
+}
+
+function buildTransitSearchFullListingResponse(locale, payload, subjectProfile, responseMode = 'interpreted') {
+  const input = payload?.input || {};
+  const passes = asArray(payload?.passes);
+  const transitPlanetKey = formatScalarValue(input.transit_planet) || 'transit';
+  const natalPointKey = formatScalarValue(input.natal_point) || 'point';
+  const aspectTypeKey = formatScalarValue(asArray(input.aspect_types)[0] || input.aspect_types) || 'aspect';
+  const transitPlanet = humanizeRawKey(transitPlanetKey);
+  const natalPoint = humanizeRawKey(natalPointKey);
+  const aspectType = humanizeRawKey(aspectTypeKey);
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const summary = payload?.search_summary || {};
+
+  const exactEntries = passes.flatMap((pass) => {
+    const exacts = asArray(pass?.exact_datetimes);
+    if (exacts.length === 0) {
+      return [];
+    }
+
+    return exacts.map((exactValue, index) => {
+      const ageYears = asArray(pass?.exact_age_years)[index];
+      const bits = [
+        `${formatRawDate(exactValue) || '?'}`,
+        formatScalarValue(pass?.pass_type) ? formatTransitPassTypeLabel(locale, formatScalarValue(pass.pass_type)) : null,
+        Number.isFinite(Number(ageYears))
+          ? formatRawLabel(locale, {
+              en: `Age ${Number(ageYears).toFixed(2)}`,
+              fr: `Âge ${Number(ageYears).toFixed(2)}`,
+              de: `Alter ${Number(ageYears).toFixed(2)}`,
+              es: `Edad ${Number(ageYears).toFixed(2)}`
+            })
+          : null
+      ].filter(Boolean);
+      return bits.join(' • ');
+    });
+  });
+
+  const uniqueEntries = [...new Set(exactEntries)];
+  const totalHits = Number(summary.hit_count || uniqueEntries.length || 0);
+  const title = formatRawLabel(locale, {
+    en: responseMode === 'raw'
+      ? `All exact ${transitPlanet} ${aspectType} hits to the natal ${natalPoint} for ${subject} — ${totalHits}`
+      : `Complete list of exact ${transitPlanet} ${aspectType} hits to the natal ${natalPoint} for ${subject} — ${totalHits}`,
+    fr: responseMode === 'raw'
+      ? `Toutes les ${aspectType.toLowerCase()} exactes de ${transitPlanet} au ${natalPoint} natal pour ${subject} — ${totalHits}`
+      : `Liste complète des ${aspectType.toLowerCase()} exactes de ${transitPlanet} au ${natalPoint} natal pour ${subject} — ${totalHits}`,
+    de: responseMode === 'raw'
+      ? `Alle exakten ${transitPlanet}-${aspectType}-Treffer zum Radix-${natalPoint} für ${subject} — ${totalHits}`
+      : `Vollständige Liste der exakten ${transitPlanet}-${aspectType}-Treffer zum Radix-${natalPoint} für ${subject} — ${totalHits}`,
+    es: responseMode === 'raw'
+      ? `Todas las exactitudes de ${transitPlanet} ${aspectType} al ${natalPoint} natal para ${subject} — ${totalHits}`
+      : `Lista completa de exactitudes de ${transitPlanet} ${aspectType} al ${natalPoint} natal para ${subject} — ${totalHits}`
+  });
+
+  if (uniqueEntries.length === 0) {
+    return {
+      text: buildTransitSearchRawResponse(locale, payload, subjectProfile),
+      textParts: undefined,
+      renderMode: 'plain'
+    };
+  }
+
+  const items = uniqueEntries.map((entry, index) => `${index + 1}. ${entry}`);
+  const textParts = buildRawListingParts(locale, title, items, { itemType: 'line', chunkSize: 20 });
+  return {
+    text: textParts[0] || title,
+    textParts,
+    renderMode: 'plain'
+  };
 }
 
 function extractBestTransitSearchPayload(toolResults = []) {
@@ -8167,7 +8387,7 @@ async function answerConversation(identity, userText) {
 
       if (exactTransitResult) {
         pushHistory(identity, 'user', userText);
-        const aiFilteredExactTransit = responseMode === 'raw'
+        const aiFilteredExactTransit = responseMode === 'raw' && !currentQueryState?.parameters?.fullListing
           ? await maybeApplyAiGroundedFilter(
               locale,
               effectiveUserQuestion,
