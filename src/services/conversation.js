@@ -474,6 +474,24 @@ function wantsMinorAspects(text) {
   return /\b(minor(?:\s+\w+)?\s+aspects?|aspects?\s+mineurs?)\b/i.test(String(text || ''));
 }
 
+function looksLikeStandaloneCityReply(text) {
+  const value = String(text || '').trim();
+  if (!value || value.length > 80) {
+    return false;
+  }
+
+  if (looksLikeStandaloneAstrologyQuery(value)) {
+    return false;
+  }
+
+  if (parsePlanetFromQuestion(value) || parseSignFromQuestion(value) || parseFocusFromQuestion(value)) {
+    return false;
+  }
+
+  const normalized = normalizeMatchingText(value);
+  return /^[a-z'., -]{2,}$/i.test(normalized) && normalized.split(/\s+/).filter(Boolean).length <= 5;
+}
+
 function buildQuantitativeFollowUpQuestion(lastResolvedQuestion, limit, conversationContext) {
   if (!lastResolvedQuestion || !limit) {
     return null;
@@ -563,6 +581,18 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
     return {
       followUpType: 'timing_refinement',
       rewrittenQuestion: `${lastResolvedQuestion}\n\nFocus on today specifically.`,
+      routeKind: lastRouteKind
+    };
+  }
+
+  if (
+    lastResolvedQuestion &&
+    lastRouteKind === 'astrology_relocation' &&
+    looksLikeStandaloneCityReply(value)
+  ) {
+    return {
+      followUpType: 'relocation_city_reply',
+      rewrittenQuestion: `${lastQueryState?.baseQuestion || lastResolvedQuestion}\n\nSelected city: ${value}`,
       routeKind: lastRouteKind
     };
   }
@@ -1987,8 +2017,108 @@ function parseSignFromQuestion(text) {
   return ZODIAC_SIGNS.find((sign) => new RegExp(`\\b${sign}\\b`, 'i').test(value)) || null;
 }
 
+function sanitizeCityQueryCandidate(value) {
+  return String(value || '')
+    .replace(/\bfor\s+(career|love|romance|home|family|wellbeing|well-being|health|creativity|creative|spiritual(?:\s+growth)?)\b.*$/i, '')
+    .replace(/\b(pour|carri[èe]re|amour|foyer|famille|sant[ée]|bien[- ]?[êe]tre|cr[ée]ativit[ée]|spirituel(?:le)?)(?:\b.*)?$/i, '')
+    .replace(/^(?:city|ville)\s*[:\-]\s*/i, '')
+    .replace(/[?!.,\s]+$/g, '')
+    .trim();
+}
+
+async function resolveCityQueryWithSearch(query) {
+  const normalizedQuery = sanitizeCityQueryCandidate(query);
+  if (!normalizedQuery) {
+    return null;
+  }
+
+  try {
+    const results = await searchCities(normalizedQuery, 3);
+    if (!Array.isArray(results) || results.length === 0) {
+      return null;
+    }
+    if (results.length === 1) {
+      const resolved = results[0];
+      return {
+        name: resolved.name,
+        country: resolved.country,
+        lat: resolved.lat,
+        lng: resolved.lng,
+        timezone: resolved.timezone,
+        admin1: resolved.admin1 || resolved.region || null
+      };
+    }
+    return {
+      needsUserChoice: true,
+      query: normalizedQuery,
+      candidates: results.slice(0, 3)
+    };
+  } catch (_error) {
+    return {
+      name: normalizedQuery
+    };
+  }
+}
+
+async function extractRelocationCityWithAi(text) {
+  const value = String(text || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  const systemInstruction = [
+    'You extract the city mentioned in a relocation or city-check astrology question.',
+    'Understand English, French, German, and Spanish.',
+    'Return one JSON object and nothing else.',
+    'Allowed keys: cityQuery, countryHint, confidence, isCityOnlyReply.',
+    'cityQuery must be the literal city or metropolitan place name to resolve with geocoding.',
+    'countryHint is optional and should be a short country code only when clearly implied.',
+    'confidence must be a number between 0 and 1.',
+    'If no city is present, set cityQuery to null.'
+  ].join('\n');
+
+  const prompt = [
+    `User text: ${value}`,
+    'Examples:',
+    '- "Is it a good idea for me to live in Hong Kong?" -> {"cityQuery":"Hong Kong","countryHint":"HK","confidence":0.94}',
+    '- "What about Tokyo for career?" -> {"cityQuery":"Tokyo","countryHint":"JP","confidence":0.9}',
+    '- "Hong kong" -> {"cityQuery":"Hong Kong","countryHint":"HK","confidence":0.9,"isCityOnlyReply":true}',
+    'Return JSON now.'
+  ].join('\n');
+
+  try {
+    const parsed = extractJsonObject(await generatePlainText({
+      systemInstruction,
+      userText: prompt,
+      history: [],
+      model: getFastPathModelName()
+    }));
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    const confidence = Number(parsed.confidence || 0);
+    const cityQuery = sanitizeCityQueryCandidate(parsed.cityQuery || '');
+    const countryHint = parsed.countryHint ? String(parsed.countryHint).trim().toUpperCase() : null;
+    if (!cityQuery || !Number.isFinite(confidence) || confidence < 0.58) {
+      return null;
+    }
+    return {
+      cityQuery,
+      countryHint,
+      confidence,
+      isCityOnlyReply: parsed.isCityOnlyReply === true
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function parseCityFromQuestion(text) {
   const value = String(text || '').trim();
+  const cleanedValue = value
+    .replace(/[?!]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   const selectedCityMatch = value.match(/selected city:\s*([^,\n]+)(?:,\s*([A-Za-z]{2,3}))?(?:\s*\[([\-0-9.]+)\s*,\s*([\-0-9.]+)\])?/i);
   if (selectedCityMatch) {
     return {
@@ -1999,53 +2129,56 @@ async function parseCityFromQuestion(text) {
     };
   }
 
+  const aiExtraction = await extractRelocationCityWithAi(cleanedValue);
+  if (aiExtraction?.cityQuery) {
+    const resolved = await resolveCityQueryWithSearch(
+      aiExtraction.countryHint
+        ? `${aiExtraction.cityQuery}, ${aiExtraction.countryHint}`
+        : aiExtraction.cityQuery
+    );
+    if (resolved) {
+      return resolved;
+    }
+  }
+
   const patterns = [
     /\b(?:check|compare|review|analyse|analyze|test)\s+([A-Za-zÀ-ÿ'., -]{2,}?)(?:\s+for\s+me)?$/i,
     /\b(?:check|compare|living in|live in|move to|relocate to)\s+([A-Za-zÀ-ÿ'., -]{2,})$/i,
+    /\b(?:habiter|vivre)\s+(?:a|à|au|aux|en)?\s*([A-Za-zÀ-ÿ'., -]{2,}?)(?:\s+pour\b.*)?$/i,
     /\b(?:à|a|au|aux|en)\s+([A-Za-zÀ-ÿ'., -]{2,})$/i,
     /\b(?:tokyo|paris|london|new york|berlin|madrid|barcelona|rome|lisbon|montreal|singapore)(?:,\s*[A-Za-z]{2,3})?\b/i
   ];
 
   for (const pattern of patterns) {
-    const match = value.match(pattern);
+    const match = cleanedValue.match(pattern);
     const cityQuery = match ? (match[1] || match[0]) : null;
     if (!cityQuery) {
       continue;
     }
-    let normalizedQuery = cityQuery.trim();
-    normalizedQuery = normalizedQuery
-      .replace(/\bfor\s+(career|love|romance|home|family|wellbeing|well-being|health|creativity|creative|spiritual(?:\s+growth)?)\b.*$/i, '')
-      .replace(/\b(pour|carri[èe]re|amour|foyer|famille|sant[ée]|bien[- ]?[êe]tre|cr[ée]ativit[ée]|spirituel(?:le)?)(?:\b.*)?$/i, '')
-      .replace(/[,\s]+$/g, '')
-      .trim();
+    const normalizedQuery = sanitizeCityQueryCandidate(cityQuery);
     if (!normalizedQuery) {
       continue;
     }
-    try {
-      const results = await searchCities(normalizedQuery, 3);
-      if (!Array.isArray(results) || results.length === 0) {
-        continue;
-      }
-      if (results.length === 1) {
-        const resolved = results[0];
-        return {
-          name: resolved.name,
-          country: resolved.country,
-          lat: resolved.lat,
-          lng: resolved.lng,
-          timezone: resolved.timezone,
-          admin1: resolved.admin1 || resolved.region || null
-        };
-      }
-      return {
-        needsUserChoice: true,
-        query: normalizedQuery,
-        candidates: results.slice(0, 3)
-      };
-    } catch (_error) {
-      return {
-        name: normalizedQuery
-      };
+    const resolved = await resolveCityQueryWithSearch(normalizedQuery);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const standaloneCityCandidate = cleanedValue
+    .replace(/[.,]+$/g, '');
+
+  if (
+    standaloneCityCandidate &&
+    standaloneCityCandidate.length >= 2 &&
+    !/\d/.test(standaloneCityCandidate) &&
+    !looksLikeStandaloneAstrologyQuery(standaloneCityCandidate) &&
+    !parsePlanetFromQuestion(standaloneCityCandidate) &&
+    !parseSignFromQuestion(standaloneCityCandidate)
+  ) {
+    const resolved = await resolveCityQueryWithSearch(standaloneCityCandidate);
+    if (resolved) {
+      return resolved;
     }
   }
 
@@ -7640,6 +7773,10 @@ async function answerConversation(identity, userText) {
 
     if (directCanonicalResult) {
       if (directCanonicalResult.requiresCitySelection) {
+        pushHistory(identity, 'user', userText);
+        pushHistory(identity, 'model', directCanonicalResult.text);
+        setLastToolResults(identity, directCanonicalResult.usedTools || []);
+        updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent);
         return {
           text: directCanonicalResult.text,
           textParts: directCanonicalResult.textParts,

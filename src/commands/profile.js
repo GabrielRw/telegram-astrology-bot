@@ -57,4 +57,11 @@ module.exports = function registerProfileCommand(bot) {
       createTelegramChannelApi(ctx)
     );
   });
+
+  bot.action(/^RELOCATION_CITY_.+$/, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
+      createTelegramChannelApi(ctx)
+    );
+  });
 };
