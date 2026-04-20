@@ -37,11 +37,13 @@ const {
   getChoiceMap,
   getChatState,
   getResponseMode,
+  getUiCache,
   notifyPersistence,
   setChoiceMap,
   setPendingSynastryQuestion,
   setPendingQuestion,
-  setResponseMode
+  setResponseMode,
+  setUiCache
 } = require('../state/chatState');
 const {
   formatNatalMessage,
@@ -59,7 +61,8 @@ const ACTIONS = {
   PROFILE_RESET: 'PROFILE_RESET',
   PROFILE_SHOW_CHART: 'PROFILE_SHOW_CHART',
   PROFILE_TOGGLE_RESPONSE_MODE: 'PROFILE_TOGGLE_RESPONSE_MODE',
-  SYNASTRY_PARTNER_PREFIX: 'SYNASTRY_PARTNER_'
+  SYNASTRY_PARTNER_PREFIX: 'SYNASTRY_PARTNER_',
+  RELOCATION_CITY_PREFIX: 'RELOCATION_CITY_'
 };
 
 function formatCityOption(city) {
@@ -203,6 +206,27 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
 
       if (result.candidates?.length > 0) {
         await sendSynastryPartnerChoices(event, channelApi, result.candidates);
+      }
+
+      return true;
+    }
+
+    if (result?.requiresCitySelection) {
+      setUiCache(event, {
+        ...getUiCache(event),
+        citySelection: {
+          question: userText,
+          candidates: Array.isArray(result.candidates) ? result.candidates : []
+        }
+      });
+      await channelApi.editText(
+        event,
+        loadingRef,
+        'I found several city matches for this relocation question.'
+      );
+
+      if (result.candidates?.length > 0) {
+        await sendRelocationCityChoices(event, channelApi, result.candidates);
       }
 
       return true;
@@ -448,6 +472,25 @@ async function sendSynastryPartnerChoices(event, channelApi, candidates) {
 
   setChoiceMap(event, Object.fromEntries(choices.map((choice, index) => [String(index + 1), choice.id])));
   await sendChoiceBatches(event, channelApi, t(event, 'prompts.synastryPartner'), choices);
+}
+
+async function sendRelocationCityChoices(event, channelApi, candidates) {
+  const choices = candidates.map((candidate, index) => ({
+    id: `${ACTIONS.RELOCATION_CITY_PREFIX}${index}`,
+    title: formatCityOption(candidate)
+  }));
+
+  if (choices.length === 0) {
+    return;
+  }
+
+  setChoiceMap(event, Object.fromEntries(choices.map((choice, index) => [String(index + 1), choice.id])));
+  await sendChoiceBatches(
+    event,
+    channelApi,
+    'I found several city matches for this relocation question. Choose one.',
+    choices
+  );
 }
 
 async function sendCompactChart(event, channelApi) {
@@ -786,6 +829,32 @@ async function handleIncomingAction(event, channelApi) {
       channelApi,
       `Compare me with ${selectedProfile.profileName}`
     );
+  }
+
+  if (actionId.startsWith(ACTIONS.RELOCATION_CITY_PREFIX)) {
+    const cityIndex = Number(actionId.slice(ACTIONS.RELOCATION_CITY_PREFIX.length));
+    const citySelection = getUiCache(event)?.citySelection || null;
+    const selectedCity = Array.isArray(citySelection?.candidates) ? citySelection.candidates[cityIndex] : null;
+
+    if (!selectedCity || !citySelection?.question) {
+      await channelApi.ackAction(event, 'These city choices have expired.');
+      return true;
+    }
+
+    setUiCache(event, {
+      ...getUiCache(event),
+      citySelection: null
+    });
+    setChoiceMap(event, {});
+    await channelApi.ackAction(event, `Using ${formatCityOption(selectedCity)}.`);
+
+    const selectedQuestion = [
+      citySelection.question,
+      '',
+      `Selected city: ${selectedCity.name}${selectedCity.country ? `, ${selectedCity.country}` : ''}${selectedCity.lat !== undefined && selectedCity.lng !== undefined ? ` [${selectedCity.lat}, ${selectedCity.lng}]` : ''}`
+    ].join('\n');
+
+    return answerPaidConversation(event, channelApi, selectedQuestion);
   }
 
   if (actionId === ACTIONS.TIME_YES || actionId === ACTIONS.TIME_NO) {

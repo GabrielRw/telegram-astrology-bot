@@ -77,7 +77,8 @@ function createDefaultState(identity) {
     choiceMap: {},
     uiCache: {
       aspects: [],
-      planets: []
+      planets: [],
+      citySelection: null
     }
   };
 }
@@ -113,7 +114,8 @@ function clearNatalProfile(identity) {
   state.choiceMap = {};
   state.uiCache = {
     aspects: [],
-    planets: []
+    planets: [],
+    citySelection: null
   };
   notifyPersistence(identity);
 }
@@ -176,7 +178,10 @@ function setUiCache(chatId, cache) {
   const state = getChatState(chatId);
   state.uiCache = {
     aspects: Array.isArray(cache?.aspects) ? cache.aspects : [],
-    planets: Array.isArray(cache?.planets) ? cache.planets : []
+    planets: Array.isArray(cache?.planets) ? cache.planets : [],
+    citySelection: cache?.citySelection && typeof cache.citySelection === 'object'
+      ? JSON.parse(JSON.stringify(cache.citySelection))
+      : null
   };
   notifyPersistence(chatId);
 }

@@ -24,6 +24,7 @@ const {
   setLastToolResults
 } = require('../state/chatState');
 const { getLocale } = require('./locale');
+const { searchCities } = require('./freeastro');
 
 const LOCALE_INSTRUCTION = {
   en: 'English',
@@ -839,6 +840,7 @@ function shouldUseDirectCanonicalMcpExecution(executionIntent, canonicalRoute = 
   }
 
   return (
+    executionIntent.family === 'mcp_synastry' ||
     executionIntent.family === 'mcp_relocation' ||
     executionIntent.family === 'mcp_progressions' ||
     executionIntent.family === 'mcp_ephemeris' ||
@@ -870,6 +872,17 @@ function inferDirectCanonicalRouteForExecutionFamily(executionIntent, userText, 
       }
       if (/\bsecondary progress/.test(value) || /\bprogressions? secondaires?\b/.test(value)) {
         return getWesternCanonicalRouteById('secondary_progressions');
+      }
+      return existing?.toolTarget ? existing : null;
+    case 'mcp_synastry':
+      if (/\bcouples?\s+horoscope\b|\brelationship horoscope\b|\bhoroscope de couple\b/.test(value)) {
+        return getWesternCanonicalRouteById('couples_horoscope');
+      }
+      if (/\bdetailed synastry\b|\bfull synastry\b|\bsynastrie detaillee\b|\bsynastrie complete\b/.test(value)) {
+        return getWesternCanonicalRouteById('synastry_detailed');
+      }
+      if (/\bcompare\b|\bcompatibilit(?:y|e)\b|\bsynastr(?:y|ie)\b/.test(value)) {
+        return existing?.toolTarget ? existing : getWesternCanonicalRouteById('synastry_summary');
       }
       return existing?.toolTarget ? existing : null;
     case 'mcp_ephemeris':
@@ -1832,11 +1845,21 @@ function parseSignFromQuestion(text) {
 
 async function parseCityFromQuestion(text) {
   const value = String(text || '').trim();
+  const selectedCityMatch = value.match(/selected city:\s*([^,\n]+)(?:,\s*([A-Za-z]{2,3}))?(?:\s*\[([\-0-9.]+)\s*,\s*([\-0-9.]+)\])?/i);
+  if (selectedCityMatch) {
+    return {
+      name: String(selectedCityMatch[1] || '').trim(),
+      country: selectedCityMatch[2] ? String(selectedCityMatch[2]).trim().toUpperCase() : undefined,
+      lat: selectedCityMatch[3] ? Number(selectedCityMatch[3]) : undefined,
+      lng: selectedCityMatch[4] ? Number(selectedCityMatch[4]) : undefined
+    };
+  }
+
   const patterns = [
-    /\b(?:check|compare|review|analyse|analyze|test)\s+([A-Za-zÀ-ÿ' -]{2,}?)(?:\s+for\s+me)?$/i,
-    /\b(?:check|compare|living in|live in|move to|relocate to)\s+([A-Za-zÀ-ÿ' -]{2,})$/i,
-    /\b(?:à|a|au|aux|en)\s+([A-Za-zÀ-ÿ' -]{2,})$/i,
-    /\b(?:tokyo|paris|london|new york|berlin|madrid|barcelona|rome|lisbon|montreal|singapore)\b/i
+    /\b(?:check|compare|review|analyse|analyze|test)\s+([A-Za-zÀ-ÿ'., -]{2,}?)(?:\s+for\s+me)?$/i,
+    /\b(?:check|compare|living in|live in|move to|relocate to)\s+([A-Za-zÀ-ÿ'., -]{2,})$/i,
+    /\b(?:à|a|au|aux|en)\s+([A-Za-zÀ-ÿ'., -]{2,})$/i,
+    /\b(?:tokyo|paris|london|new york|berlin|madrid|barcelona|rome|lisbon|montreal|singapore)(?:,\s*[A-Za-z]{2,3})?\b/i
   ];
 
   for (const pattern of patterns) {
@@ -1845,9 +1868,41 @@ async function parseCityFromQuestion(text) {
     if (!cityQuery) {
       continue;
     }
-    return {
-      name: cityQuery.trim()
-    };
+    let normalizedQuery = cityQuery.trim();
+    normalizedQuery = normalizedQuery
+      .replace(/\bfor\s+(career|love|romance|home|family|wellbeing|well-being|health|creativity|creative|spiritual(?:\s+growth)?)\b.*$/i, '')
+      .replace(/\b(pour|carri[èe]re|amour|foyer|famille|sant[ée]|bien[- ]?[êe]tre|cr[ée]ativit[ée]|spirituel(?:le)?)(?:\b.*)?$/i, '')
+      .replace(/[,\s]+$/g, '')
+      .trim();
+    if (!normalizedQuery) {
+      continue;
+    }
+    try {
+      const results = await searchCities(normalizedQuery, 3);
+      if (!Array.isArray(results) || results.length === 0) {
+        continue;
+      }
+      if (results.length === 1) {
+        const resolved = results[0];
+        return {
+          name: resolved.name,
+          country: resolved.country,
+          lat: resolved.lat,
+          lng: resolved.lng,
+          timezone: resolved.timezone,
+          admin1: resolved.admin1 || resolved.region || null
+        };
+      }
+      return {
+        needsUserChoice: true,
+        query: normalizedQuery,
+        candidates: results.slice(0, 3)
+      };
+    } catch (_error) {
+      return {
+        name: normalizedQuery
+      };
+    }
   }
 
   return null;
@@ -1989,6 +2044,41 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
   if (route.id === 'transit_search_exact' && transitSearchPayload) {
     if (responseMode === 'raw') {
       return buildTransitSearchRawResponse(locale, transitSearchPayload, subjectProfile);
+    }
+  }
+
+  if (responseMode === 'raw') {
+    const structuredPayload = extractStructuredToolPayload(toolCallResult);
+    const synastryPayload = extractSynastryPayload(toolCallResult);
+
+    if ((route.id === 'relocation_recommendations' || route.id === 'relocation_city_check') && structuredPayload) {
+      return route.id === 'relocation_city_check'
+        ? buildRelocationCityCheckRawResponse(locale, structuredPayload, subjectProfile, userText)
+        : buildRelocationRawResponse(locale, structuredPayload, subjectProfile, userText);
+    }
+
+    if (route.id === 'secondary_progressions' && structuredPayload) {
+      return buildSecondaryProgressionsRawResponse(locale, structuredPayload, subjectProfile);
+    }
+
+    if (route.id === 'annual_profections' && structuredPayload) {
+      return buildAnnualProfectionsRawResponse(locale, structuredPayload, subjectProfile);
+    }
+
+    if (route.id === 'solar_return' && structuredPayload) {
+      return buildSolarReturnRawResponse(locale, structuredPayload, subjectProfile);
+    }
+
+    if (route.id === 'ephemeris' && structuredPayload) {
+      return buildEphemerisRawResponse(locale, structuredPayload, subjectProfile);
+    }
+
+    if ((route.id === 'personal_horoscope' || route.id === 'sign_horoscope') && structuredPayload) {
+      return buildHoroscopeRawResponse(locale, structuredPayload, subjectProfile);
+    }
+
+    if ((route.id === 'synastry_summary' || route.id === 'synastry_detailed' || route.id === 'couples_horoscope') && synastryPayload) {
+      return buildSynastryRawResponse(locale, synastryPayload, subjectProfile);
     }
   }
 
@@ -2171,6 +2261,13 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
       const city = await parseCityFromQuestion(userText);
       if (!city) {
         return { missing: ['city'] };
+      }
+      if (city.needsUserChoice && Array.isArray(city.candidates) && city.candidates.length > 0) {
+        return {
+          requiresCitySelection: true,
+          candidates: city.candidates,
+          cityQuery: city.query || null
+        };
       }
       return {
         toolName: route.toolTarget,
@@ -2372,6 +2469,17 @@ async function executeCanonicalToolRoute(identity, route, userText, subjectProfi
   if (execution.missing) {
     return {
       text: buildCanonicalMissingArgsResponse(locale, route, execution.missing),
+      usedTools: [],
+      renderMode: 'plain'
+    };
+  }
+
+  if (execution.requiresCitySelection) {
+    return {
+      requiresCitySelection: true,
+      candidates: execution.candidates || [],
+      cityQuery: execution.cityQuery || null,
+      text: buildCanonicalMissingArgsResponse(locale, route, ['city']),
       usedTools: [],
       renderMode: 'plain'
     };
@@ -3165,6 +3273,527 @@ function extractTransitSearchPayload(result) {
   }
 
   return null;
+}
+
+function extractStructuredToolPayload(result) {
+  const candidates = [
+    result?.structuredContent,
+    result?.data,
+    result?.structuredContent?.data,
+    result
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      if (candidate.results || candidate.progressed_chart || candidate.profection || candidate.planets || candidate.meta) {
+        return candidate;
+      }
+    }
+
+    const rawText = typeof candidate?.text === 'string'
+      ? candidate.text
+      : (typeof candidate === 'string' ? candidate : null);
+    if (!rawText) {
+      continue;
+    }
+
+    const parsed = extractJsonObject(rawText);
+    if (parsed && typeof parsed === 'object') {
+      return parsed.structuredContent && typeof parsed.structuredContent === 'object'
+        ? parsed.structuredContent
+        : parsed;
+    }
+  }
+
+  return null;
+}
+
+function formatAstroLineLabel(body, angle) {
+  const angleMap = {
+    asc: 'ASC',
+    dsc: 'DSC',
+    mc: 'MC',
+    ic: 'IC'
+  };
+  return [humanizeRawKey(body), angleMap[String(angle || '').toLowerCase()] || humanizeRawKey(angle)].filter(Boolean).join(' ');
+}
+
+function buildRelocationRawResponse(locale, payload, subjectProfile, userText) {
+  const meta = payload?.meta || {};
+  const focus = humanizeRawKey(meta.focus || parseFocusFromQuestion(userText) || 'relocation');
+  const results = asArray(payload?.results);
+  const cityEntry = results[0] || payload?.result || payload;
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const title = formatRawLabel(locale, {
+    en: `Relocation results for ${subject} — ${focus}`,
+    fr: `Résultats de relocalisation pour ${subject} — ${focus}`,
+    de: `Relokations-Ergebnisse für ${subject} — ${focus}`,
+    es: `Resultados de relocalización para ${subject} — ${focus}`
+  });
+  const lines = [title];
+  const metaParts = [
+    meta.signal_strength ? `${formatRawLabel(locale, { en: 'Signal', fr: 'Signal', de: 'Signal', es: 'Señal' })}: ${humanizeRawKey(meta.signal_strength)}` : null,
+    meta.confidence ? `${formatRawLabel(locale, { en: 'Confidence', fr: 'Confiance', de: 'Konfidenz', es: 'Confianza' })}: ${humanizeRawKey(meta.confidence)}` : null,
+    meta.match_tier ? `${formatRawLabel(locale, { en: 'Tier', fr: 'Niveau', de: 'Stufe', es: 'Nivel' })}: ${humanizeRawKey(meta.match_tier)}` : null
+  ].filter(Boolean);
+  if (metaParts.length > 0) {
+    lines.push(metaParts.join(' • '));
+  }
+
+  const renderedResults = (results.length > 0 ? results.slice(0, 5) : [cityEntry]).filter(Boolean).map((entry, index) => {
+    const city = entry.city || entry.location || {};
+    const heading = [
+      `${index + 1}.`,
+      [city.name || entry.name || 'Location', city.country].filter(Boolean).join(', '),
+      entry.score !== undefined ? `• ${formatRawLabel(locale, { en: 'Score', fr: 'Score', de: 'Score', es: 'Puntuación' })}: ${formatScalarValue(entry.score)}` : null
+    ].filter(Boolean).join(' ');
+    const block = [heading];
+    if (entry.summary) {
+      block.push(`${formatRawLabel(locale, { en: 'Summary', fr: 'Résumé', de: 'Zusammenfassung', es: 'Resumen' })}: ${formatScalarValue(entry.summary)}`);
+    }
+    if (entry.distance_from_natal_km !== undefined) {
+      block.push(`${formatRawLabel(locale, { en: 'Distance from natal', fr: 'Distance au natal', de: 'Entfernung zum Radix', es: 'Distancia al natal' })}: ${formatScalarValue(entry.distance_from_natal_km)} km`);
+    }
+    const favorable = entry.nearest_favorable_line;
+    if (favorable?.body || favorable?.angle) {
+      block.push(`${formatRawLabel(locale, { en: 'Best line', fr: 'Meilleure ligne', de: 'Beste Linie', es: 'Mejor línea' })}: ${formatAstroLineLabel(favorable.body, favorable.angle)}${favorable.distance_km !== undefined ? ` • ${formatScalarValue(favorable.distance_km)} km` : ''}`);
+    }
+    const challenging = entry.nearest_challenging_line;
+    if (challenging?.body || challenging?.angle) {
+      block.push(`${formatRawLabel(locale, { en: 'Challenge', fr: 'Défi', de: 'Herausforderung', es: 'Desafío' })}: ${formatAstroLineLabel(challenging.body, challenging.angle)}${challenging.distance_km !== undefined ? ` • ${formatScalarValue(challenging.distance_km)} km` : ''}`);
+    }
+    const themes = normalizeRawList(entry?.relocation_summary?.dominant_themes, humanizeRawKey);
+    if (themes.length > 0) {
+      block.push(`${formatRawLabel(locale, { en: 'Themes', fr: 'Thèmes', de: 'Themen', es: 'Temas' })}: ${themes.join(', ')}`);
+    }
+    if (entry?.relocation_summary?.summary_caution) {
+      block.push(`${formatRawLabel(locale, { en: 'Caution', fr: 'Prudence', de: 'Hinweis', es: 'Precaución' })}: ${formatScalarValue(entry.relocation_summary.summary_caution)}`);
+    }
+    return block.join('\n');
+  });
+
+  if (renderedResults.length > 0) {
+    lines.push(...renderedResults);
+  }
+
+  const warnings = normalizeRawList(payload?.warnings);
+  if (warnings.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Warnings', fr: 'Avertissements', de: 'Hinweise', es: 'Advertencias' })}: ${warnings.slice(0, 2).join(' • ')}`);
+  }
+
+  return normalizeRawPresentationText(lines.join('\n\n'));
+}
+
+function buildRelocationCityCheckRawResponse(locale, payload, subjectProfile, userText) {
+  const detail = payload?.detail || {};
+  if (detail?.error) {
+    return normalizeRawPresentationText([
+      formatRawLabel(locale, {
+        en: `City check for ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+        fr: `Vérification de ville pour ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+        de: `Stadtprüfung für ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`,
+        es: `Verificación de ciudad para ${getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User')}`
+      }),
+      `${humanizeRawKey(detail.error)}: ${formatScalarValue(detail.message) || formatRawLabel(locale, {
+        en: 'The requested city could not be resolved.',
+        fr: 'La ville demandée n’a pas pu être résolue.',
+        de: 'Die angefragte Stadt konnte nicht aufgelöst werden.',
+        es: 'No se pudo resolver la ciudad solicitada.'
+      })}`
+    ].join('\n\n'));
+  }
+
+  const city = payload?.city || {};
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const title = formatRawLabel(locale, {
+    en: `City check for ${subject} — ${[city.name, city.country].filter(Boolean).join(', ') || 'Requested city'}`,
+    fr: `Vérification de ville pour ${subject} — ${[city.name, city.country].filter(Boolean).join(', ') || 'Ville demandée'}`,
+    de: `Stadtprüfung für ${subject} — ${[city.name, city.country].filter(Boolean).join(', ') || 'Angefragte Stadt'}`,
+    es: `Verificación de ciudad para ${subject} — ${[city.name, city.country].filter(Boolean).join(', ') || 'Ciudad solicitada'}`
+  });
+  const lines = [title];
+  if (payload.overall_score !== undefined) {
+    lines.push(`${formatRawLabel(locale, { en: 'Overall score', fr: 'Score global', de: 'Gesamtwertung', es: 'Puntuación general' })}: ${formatScalarValue(payload.overall_score)}`);
+  }
+
+  const focusScores = Object.entries(payload?.focus_scores || {})
+    .map(([focusKey, value]) => ({ focusKey, ...(value || {}) }))
+    .sort((left, right) => Number(right.score || 0) - Number(left.score || 0));
+  if (focusScores.length > 0) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Focus scores', fr: 'Scores par focus', de: 'Fokuswerte', es: 'Puntuaciones por foco' }),
+      ...focusScores.slice(0, 5).map((entry, index) => {
+        const favorable = entry.nearest_favorable_line;
+        const challenge = entry.nearest_challenging_line;
+        const base = [`${index + 1}. ${humanizeRawKey(entry.focusKey)} • ${formatScalarValue(entry.score)}`];
+        if (entry.summary) {
+          base.push(`   ${formatScalarValue(entry.summary)}`);
+        }
+        if (favorable?.body || favorable?.angle) {
+          base.push(`   ${formatRawLabel(locale, { en: 'Best line', fr: 'Meilleure ligne', de: 'Beste Linie', es: 'Mejor línea' })}: ${formatAstroLineLabel(favorable.body, favorable.angle)}${favorable.distance_km !== undefined ? ` • ${formatScalarValue(favorable.distance_km)} km` : ''}`);
+        }
+        if (challenge?.body || challenge?.angle) {
+          base.push(`   ${formatRawLabel(locale, { en: 'Challenge', fr: 'Défi', de: 'Herausforderung', es: 'Desafío' })}: ${formatAstroLineLabel(challenge.body, challenge.angle)}${challenge.distance_km !== undefined ? ` • ${formatScalarValue(challenge.distance_km)} km` : ''}`);
+        }
+        return base.join('\n');
+      })
+    ].join('\n\n'));
+  }
+
+  const relocationSummary = payload?.relocation_summary || {};
+  const themes = normalizeRawList(relocationSummary.dominant_themes, humanizeRawKey);
+  if (themes.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Dominant themes', fr: 'Thèmes dominants', de: 'Dominante Themen', es: 'Temas dominantes' })}: ${themes.join(', ')}`);
+  }
+  if (relocationSummary.summary_short) {
+    lines.push(`${formatRawLabel(locale, { en: 'Chart emphasis', fr: 'Accent du thème', de: 'Chart-Fokus', es: 'Énfasis de la carta' })}: ${formatScalarValue(relocationSummary.summary_short)}`);
+  }
+  if (relocationSummary.summary_caution) {
+    lines.push(`${formatRawLabel(locale, { en: 'Caution', fr: 'Prudence', de: 'Hinweis', es: 'Precaución' })}: ${formatScalarValue(relocationSummary.summary_caution)}`);
+  }
+
+  return normalizeRawPresentationText(lines.join('\n\n'));
+}
+
+function summarizeProgressionPoint(point) {
+  if (!point || typeof point !== 'object') {
+    return null;
+  }
+  const name = point.name || humanizeRawKey(point.id || '');
+  const sign = point.sign?.name || point.sign_id || point.sign || null;
+  const longitude = point.longitude_text || null;
+  const house = formatScalarValue(point.house);
+  return [name, longitude || (sign ? `${humanizeRawKey(sign)}` : null), house ? `House ${house}` : null].filter(Boolean).join(' • ');
+}
+
+function formatProgressionAspectLine(locale, aspect, index) {
+  const left = humanizeRawKey(aspect.progressed_point || aspect.point_1 || aspect.p1_id || aspect.p1_name || '');
+  const right = humanizeRawKey(aspect.natal_point || aspect.point_2 || aspect.p2_id || aspect.p2_name || '');
+  const type = humanizeRawKey(aspect.aspect?.name || aspect.type || '');
+  const parts = [`${index + 1}. ${[left, type, right].filter(Boolean).join(' ')}`];
+  const detail = [
+    aspect.orb_deg !== undefined || aspect.orb !== undefined
+      ? `${formatRawLabel(locale, { en: 'Orb', fr: 'Orbe', de: 'Orbis', es: 'Orbe' })}: ${formatScalarValue(aspect.orb_deg ?? aspect.orb)}`
+      : null,
+    aspect.applying !== undefined
+      ? humanizeRawKey(aspect.applying ? 'applying' : 'separating')
+      : (aspect.is_applying !== undefined ? humanizeRawKey(aspect.is_applying ? 'applying' : 'separating') : null),
+    aspect.exact_date ? `${formatRawLabel(locale, { en: 'Exact', fr: 'Exact', de: 'Exakt', es: 'Exacto' })}: ${formatRawDate(aspect.exact_date)}` : null,
+    aspect.strength !== undefined ? `${formatRawLabel(locale, { en: 'Strength', fr: 'Force', de: 'Stärke', es: 'Fuerza' })}: ${formatScalarValue(aspect.strength)}` : null
+  ].filter(Boolean);
+  if (detail.length > 0) {
+    parts.push(detail.join(' • '));
+  }
+  return parts.join('\n');
+}
+
+function buildSecondaryProgressionsRawResponse(locale, payload, subjectProfile) {
+  const meta = payload?.meta || {};
+  const chart = payload?.progressed_chart || {};
+  const aspects = payload?.aspects || {};
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const lines = [formatRawLabel(locale, {
+    en: `Secondary progressions for ${subject} — ${formatRawDate(meta.target_date || meta.target_datetime) || '?'}`,
+    fr: `Progressions secondaires pour ${subject} — ${formatRawDate(meta.target_date || meta.target_datetime) || '?'}`,
+    de: `Sekundärprogressionen für ${subject} — ${formatRawDate(meta.target_date || meta.target_datetime) || '?'}`,
+    es: `Progresiones secundarias para ${subject} — ${formatRawDate(meta.target_date || meta.target_datetime) || '?'}`
+  })];
+
+  const keyPoints = [
+    chart?.points?.sun,
+    chart?.points?.moon,
+    chart?.points?.mercury,
+    chart?.points?.venus,
+    chart?.points?.mars,
+    chart?.angles?.ascendant ? { name: 'Ascendant', ...chart.angles.ascendant } : null,
+    chart?.angles?.midheaven ? { name: 'Midheaven', ...chart.angles.midheaven } : null
+  ].map(summarizeProgressionPoint).filter(Boolean);
+  if (keyPoints.length > 0) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Key placements', fr: 'Positions clés', de: 'Wichtige Stellungen', es: 'Posiciones clave' }),
+      ...keyPoints.slice(0, 7).map((item) => `- ${item}`)
+    ].join('\n'));
+  }
+
+  const progressedToNatal = asArray(aspects.progressed_to_natal)
+    .slice()
+    .sort((left, right) => Number(left?.orb_deg ?? 999) - Number(right?.orb_deg ?? 999));
+  if (progressedToNatal.length > 0) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Progressed to natal', fr: 'Progressé vers natal', de: 'Progression zu Radix', es: 'Progresado a natal' }),
+      ...progressedToNatal.slice(0, 6).map((aspect, index) => formatProgressionAspectLine(locale, aspect, index))
+    ].join('\n\n'));
+  }
+
+  const progressedToProgressed = asArray(aspects.progressed_to_progressed)
+    .slice()
+    .sort((left, right) => Number(left?.orb_deg ?? 999) - Number(right?.orb_deg ?? 999));
+  if (progressedToProgressed.length > 0) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Progressed to progressed', fr: 'Progressé vers progressé', de: 'Progression zu Progression', es: 'Progresado a progresado' }),
+      ...progressedToProgressed.slice(0, 4).map((aspect, index) => formatProgressionAspectLine(locale, aspect, index))
+    ].join('\n\n'));
+  }
+
+  return normalizeRawPresentationText(lines.join('\n\n'));
+}
+
+function buildAnnualProfectionsRawResponse(locale, payload, subjectProfile) {
+  const annual = payload?.profection?.annual || payload?.structuredContent?.profection?.annual || {};
+  const metaAnnual = payload?.meta?.annual_profection || {};
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const lines = [formatRawLabel(locale, {
+    en: `Annual profection for ${subject} — ${formatScalarValue(metaAnnual.target_year) || '?'}`,
+    fr: `Profection annuelle pour ${subject} — ${formatScalarValue(metaAnnual.target_year) || '?'}`,
+    de: `Jahresprofection für ${subject} — ${formatScalarValue(metaAnnual.target_year) || '?'}`,
+    es: `Profección anual para ${subject} — ${formatScalarValue(metaAnnual.target_year) || '?'}`
+  })];
+  lines.push(`${formatRawLabel(locale, { en: 'Activated house', fr: 'Maison activée', de: 'Aktiviertes Haus', es: 'Casa activada' })}: ${formatScalarValue(annual.activated_house)} • ${humanizeRawKey(annual.activated_sign_name || annual.activated_sign_id)}`);
+  lines.push(`${formatRawLabel(locale, { en: 'Time lord', fr: 'Maître du temps', de: 'Zeitlord', es: 'Señor del tiempo' })}: ${humanizeRawKey(annual.time_lord_name || annual.time_lord_id)}`);
+  const window = formatRawDateWindow(annual?.period?.start || metaAnnual?.period?.start, annual?.period?.end || metaAnnual?.period?.end);
+  if (window) {
+    lines.push(`${formatRawLabel(locale, { en: 'Period', fr: 'Période', de: 'Zeitraum', es: 'Periodo' })}: ${window}`);
+  }
+  return normalizeRawPresentationText(lines.join('\n\n'));
+}
+
+function buildSolarReturnRawResponse(locale, payload, subjectProfile) {
+  const meta = payload?.meta || {};
+  const planets = asArray(payload?.planets);
+  const aspects = asArray(payload?.aspects).filter((item) => item?.is_major !== false);
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const lines = [formatRawLabel(locale, {
+    en: `Solar return for ${subject} — ${formatScalarValue(meta?.solar_return?.target_year) || '?'}`,
+    fr: `Retour solaire pour ${subject} — ${formatScalarValue(meta?.solar_return?.target_year) || '?'}`,
+    de: `Solar Return für ${subject} — ${formatScalarValue(meta?.solar_return?.target_year) || '?'}`,
+    es: `Retorno solar para ${subject} — ${formatScalarValue(meta?.solar_return?.target_year) || '?'}`
+  })];
+  const exactMoment = formatRawDate(meta?.solar_return?.exact_moment_local || meta?.solar_return?.exact_moment_utc);
+  if (exactMoment) {
+    lines.push(`${formatRawLabel(locale, { en: 'Exact moment', fr: 'Moment exact', de: 'Exakter Moment', es: 'Momento exacto' })}: ${exactMoment}`);
+  }
+  const keyPlanets = planets
+    .filter((planet) => ['sun', 'moon', 'mercury', 'venus', 'mars'].includes(String(planet?.id || '').toLowerCase()))
+    .map((planet) => `${planet.name}: ${planet.sign || planet.sign_id} ${formatScalarValue(planet.pos)}${planet.house ? ` • House ${planet.house}` : ''}`);
+  if (keyPlanets.length > 0) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Key placements', fr: 'Positions clés', de: 'Wichtige Stellungen', es: 'Posiciones clave' }),
+      ...keyPlanets.slice(0, 5).map((item) => `- ${item}`)
+    ].join('\n'));
+  }
+  const angles = payload?.angles_details || {};
+  const asc = angles.asc;
+  const mc = angles.mc;
+  if (asc || mc) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Angles', fr: 'Angles', de: 'Winkel', es: 'Ángulos' }),
+      asc ? `- ASC: ${asc.sign || asc.sign_id} ${formatScalarValue(asc.pos)}` : null,
+      mc ? `- MC: ${mc.sign || mc.sign_id} ${formatScalarValue(mc.pos)}` : null
+    ].filter(Boolean).join('\n'));
+  }
+  if (aspects.length > 0) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Major aspects', fr: 'Aspects majeurs', de: 'Wichtige Aspekte', es: 'Aspectos mayores' }),
+      ...aspects.slice(0, 6).map((aspect, index) => `${index + 1}. ${humanizeRawKey(aspect.p1_name || aspect.p1_id)} ${humanizeRawKey(aspect.type)} ${humanizeRawKey(aspect.p2_name || aspect.p2_id)} • ${formatRawLabel(locale, { en: 'Orb', fr: 'Orbe', de: 'Orbis', es: 'Orbe' })}: ${formatScalarValue(aspect.orb)}`)
+    ].join('\n'))
+  }
+  return normalizeRawPresentationText(lines.join('\n\n'));
+}
+
+function buildEphemerisRawResponse(locale, payload, subjectProfile) {
+  const meta = payload?.meta || {};
+  const rows = asArray(payload?.data);
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const title = formatRawLabel(locale, {
+    en: `Ephemeris for ${subject} — ${formatScalarValue(meta.start) || '?'} → ${formatScalarValue(meta.end) || '?'}`,
+    fr: `Éphémérides pour ${subject} — ${formatScalarValue(meta.start) || '?'} → ${formatScalarValue(meta.end) || '?'}`,
+    de: `Ephemeride für ${subject} — ${formatScalarValue(meta.start) || '?'} → ${formatScalarValue(meta.end) || '?'}`,
+    es: `Efemérides para ${subject} — ${formatScalarValue(meta.start) || '?'} → ${formatScalarValue(meta.end) || '?'}`
+  });
+  const header = `${title}\n\n${formatRawLabel(locale, { en: 'Step', fr: 'Pas', de: 'Schritt', es: 'Paso' })}: ${formatScalarValue(meta.step)} • ${formatRawLabel(locale, { en: 'Rows', fr: 'Lignes', de: 'Zeilen', es: 'Filas' })}: ${formatScalarValue(meta.rows)}`;
+  const chunked = chunkRawItems(rows, 10);
+  const textParts = chunked.map((chunk, chunkIndex) => {
+    const lines = [chunkIndex === 0 ? header : `${title} (${chunkIndex + 1}/${chunked.length})`];
+    lines.push(...chunk.map((row, index) => {
+      const bodies = row?.bodies || {};
+      const sun = bodies.Sun || bodies.sun;
+      const moon = bodies.Moon || bodies.moon;
+      const mercury = bodies.Mercury || bodies.mercury;
+      const venus = bodies.Venus || bodies.venus;
+      const mars = bodies.Mars || bodies.mars;
+      const jupiter = bodies.Jupiter || bodies.jupiter;
+      const saturn = bodies.Saturn || bodies.saturn;
+      const date = formatRawDate(row.local_timestamp || row.timestamp) || `Row ${index + 1}`;
+      const bodyLine = [
+        sun ? `Sun ${sun.position_text || `${sun.sign_abbr || sun.sign} ${formatScalarValue(sun.pos)}`}` : null,
+        moon ? `Moon ${moon.position_text || `${moon.sign_abbr || moon.sign} ${formatScalarValue(moon.pos)}`}` : null,
+        mercury ? `Mercury ${mercury.position_text || `${mercury.sign_abbr || mercury.sign} ${formatScalarValue(mercury.pos)}`}` : null,
+        venus ? `Venus ${venus.position_text || `${venus.sign_abbr || venus.sign} ${formatScalarValue(venus.pos)}`}` : null,
+        mars ? `Mars ${mars.position_text || `${mars.sign_abbr || mars.sign} ${formatScalarValue(mars.pos)}`}` : null,
+        jupiter ? `Jupiter ${jupiter.position_text || `${jupiter.sign_abbr || jupiter.sign} ${formatScalarValue(jupiter.pos)}`}` : null,
+        saturn ? `Saturn ${saturn.position_text || `${saturn.sign_abbr || saturn.sign} ${formatScalarValue(saturn.pos)}`}` : null
+      ].filter(Boolean).join(' • ');
+      const notable = [];
+      const retrogradeBodies = normalizeRawList(row?.astrology?.retrograde_bodies);
+      if (retrogradeBodies.length > 0) {
+        notable.push(`${formatRawLabel(locale, { en: 'Retrograde', fr: 'Rétrograde', de: 'Rückläufig', es: 'Retrógrado' })}: ${retrogradeBodies.join(', ')}`);
+      }
+      const moonPhase = row?.astrology?.moon_phase?.label;
+      if (moonPhase) {
+        notable.push(`${formatRawLabel(locale, { en: 'Moon phase', fr: 'Phase lunaire', de: 'Mondphase', es: 'Fase lunar' })}: ${moonPhase}`);
+      }
+      return [
+        `${date}`,
+        bodyLine,
+        notable.length > 0 ? `   ${notable.join(' • ')}` : null
+      ].filter(Boolean).join('\n');
+    }));
+    return normalizeRawPresentationText(lines.join('\n\n'));
+  });
+
+  return {
+    text: textParts[0] || header,
+    textParts,
+    renderMode: 'plain'
+  };
+}
+
+function buildHoroscopeRawResponse(locale, payload, subjectProfile) {
+  const data = payload?.data || {};
+  const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
+  const lines = [formatRawLabel(locale, {
+    en: `Daily horoscope for ${subject} — ${formatScalarValue(data.date) || '?'}`,
+    fr: `Horoscope du jour pour ${subject} — ${formatScalarValue(data.date) || '?'}`,
+    de: `Tageshoroskop für ${subject} — ${formatScalarValue(data.date) || '?'}`,
+    es: `Horóscopo diario para ${subject} — ${formatScalarValue(data.date) || '?'}`
+  })];
+  if (data?.content?.theme) {
+    lines.push(`${formatRawLabel(locale, { en: 'Theme', fr: 'Thème', de: 'Thema', es: 'Tema' })}: ${formatScalarValue(data.content.theme)}`);
+  }
+  const scores = data.scores || {};
+  const scoreLine = [
+    scores.overall !== undefined ? `Overall ${formatScalarValue(scores.overall)}` : null,
+    scores.love !== undefined ? `Love ${formatScalarValue(scores.love)}` : null,
+    scores.career !== undefined ? `Career ${formatScalarValue(scores.career)}` : null,
+    scores.money !== undefined ? `Money ${formatScalarValue(scores.money)}` : null,
+    scores.health !== undefined ? `Health ${formatScalarValue(scores.health)}` : null
+  ].filter(Boolean);
+  if (scoreLine.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Scores', fr: 'Scores', de: 'Werte', es: 'Puntuaciones' })}: ${scoreLine.join(' • ')}`);
+  }
+  const astroHighlights = normalizeRawList(asArray(data?.astro?.highlights).map((item) => item?.label || item?.key));
+  if (astroHighlights.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Sky highlights', fr: 'Temps forts du ciel', de: 'Himmelshighlights', es: 'Aspectos del cielo' })}: ${astroHighlights.join(' • ')}`);
+  }
+  if (data?.content?.text) {
+    lines.push(formatScalarValue(data.content.text));
+  }
+  const lucky = data.lucky || {};
+  const luckyParts = [
+    lucky?.color?.label ? `${formatRawLabel(locale, { en: 'Color', fr: 'Couleur', de: 'Farbe', es: 'Color' })}: ${lucky.color.label}` : null,
+    lucky.number !== undefined ? `${formatRawLabel(locale, { en: 'Number', fr: 'Nombre', de: 'Zahl', es: 'Número' })}: ${formatScalarValue(lucky.number)}` : null,
+    lucky?.time_window?.display ? `${formatRawLabel(locale, { en: 'Time', fr: 'Moment', de: 'Zeit', es: 'Hora' })}: ${lucky.time_window.display}` : null
+  ].filter(Boolean);
+  if (luckyParts.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Lucky', fr: 'Chance', de: 'Glück', es: 'Suerte' })}: ${luckyParts.join(' • ')}`);
+  }
+  const topTransits = asArray(data?.personal?.transits_top);
+  if (topTransits.length > 0) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Top personal transits', fr: 'Top transits personnels', de: 'Top-Personaltransite', es: 'Tránsitos personales principales' }),
+      ...topTransits.slice(0, 5).map((entry, index) => {
+        const line = `${index + 1}. ${entry?.transit_planet?.label || humanizeRawKey(entry?.transit_planet?.key)} ${entry?.aspect?.label || humanizeRawKey(entry?.aspect?.key)} ${entry?.natal_planet?.label || humanizeRawKey(entry?.natal_planet?.key)} • ${formatRawLabel(locale, { en: 'Orb', fr: 'Orbe', de: 'Orbis', es: 'Orbe' })}: ${formatScalarValue(entry.orb_deg)} • ${formatRawLabel(locale, { en: 'Score', fr: 'Score', de: 'Wert', es: 'Puntuación' })}: ${formatScalarValue(entry.score)}`;
+        return entry?.explanation ? `${line}\n   ${formatScalarValue(entry.explanation)}` : line;
+      })
+    ].join('\n\n'));
+  }
+  return normalizeRawPresentationText(lines.join('\n\n'));
+}
+
+function extractSynastryPayload(result) {
+  const payload = extractStructuredToolPayload(result);
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (payload.summary || payload.synastry || payload.natal) {
+    return {
+      ...payload,
+      __personAName: result?.args?.person_a?.name || payload?.natal?.person_a?.subject?.name || null,
+      __personBName: result?.args?.person_b?.name || payload?.natal?.person_b?.subject?.name || null,
+      __userText: result?.userText || null
+    };
+  }
+  return null;
+}
+
+function extractPartnerNameFromQuestion(userText) {
+  const value = String(userText || '').trim();
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/\b(?:with|avec|mit|con)\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,40})$/i);
+  return match ? match[1].trim() : null;
+}
+
+function buildSynastryRawResponse(locale, payload, subjectProfile) {
+  const summary = payload?.summary || payload?.synastry || {};
+  const synastry = payload?.synastry || {};
+  const scores = summary?.scores || synastry?.scores || {};
+  const archetype = summary?.archetype || synastry?.archetype || {};
+  const strengths = asArray(summary?.strengths);
+  const challenges = asArray(summary?.challenges);
+  const aspects = asArray(synastry?.aspects);
+  const personA = payload?.__personAName || payload?.natal?.person_a?.subject?.name || subjectProfile?.profileName || 'Person A';
+  const personB = payload?.__personBName || payload?.natal?.person_b?.subject?.name || extractPartnerNameFromQuestion(payload?.__userText) || 'Person B';
+  const lines = [formatRawLabel(locale, {
+    en: `Synastry for ${personA} and ${personB}`,
+    fr: `Synastrie pour ${personA} et ${personB}`,
+    de: `Synastrie für ${personA} und ${personB}`,
+    es: `Sinastría para ${personA} y ${personB}`
+  })];
+  const scoreLine = [
+    scores.overall !== undefined ? `Overall ${formatScalarValue(scores.overall)}` : null,
+    scores.romance !== undefined ? `Romance ${formatScalarValue(scores.romance)}` : null,
+    scores.communication !== undefined ? `Communication ${formatScalarValue(scores.communication)}` : null,
+    scores.stability !== undefined ? `Stability ${formatScalarValue(scores.stability)}` : null,
+    scores.intimacy !== undefined ? `Intimacy ${formatScalarValue(scores.intimacy)}` : null,
+    scores.growth !== undefined ? `Growth ${formatScalarValue(scores.growth)}` : null,
+    scores.tension !== undefined ? `Tension ${formatScalarValue(scores.tension)}` : null
+  ].filter(Boolean);
+  if (scoreLine.length > 0) {
+    lines.push(`${formatRawLabel(locale, { en: 'Scores', fr: 'Scores', de: 'Werte', es: 'Puntuaciones' })}: ${scoreLine.join(' • ')}`);
+  }
+  if (archetype?.label || archetype?.one_liner) {
+    lines.push([
+      `${formatRawLabel(locale, { en: 'Archetype', fr: 'Archétype', de: 'Archetyp', es: 'Arquetipo' })}: ${formatScalarValue(archetype.label) || humanizeRawKey(archetype.id)}`,
+      archetype.one_liner ? formatScalarValue(archetype.one_liner) : null
+    ].filter(Boolean).join('\n'));
+  }
+  if (strengths.length > 0) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Strengths', fr: 'Forces', de: 'Stärken', es: 'Fortalezas' }),
+      ...strengths.slice(0, 3).map((item, index) => `${index + 1}. ${formatScalarValue(item.summary || item.title)}`)
+    ].join('\n'));
+  }
+  if (challenges.length > 0) {
+    lines.push([
+      formatRawLabel(locale, { en: 'Challenges', fr: 'Défis', de: 'Herausforderungen', es: 'Desafíos' }),
+      ...challenges.slice(0, 3).map((item, index) => `${index + 1}. ${formatScalarValue(item.summary || item.title)}`)
+    ].join('\n'));
+  }
+  if (aspects.length > 0) {
+    const sorted = aspects.slice().sort((left, right) => Number(left?.orb_deg ?? 999) - Number(right?.orb_deg ?? 999));
+    lines.push([
+      formatRawLabel(locale, { en: 'Top contacts', fr: 'Contacts majeurs', de: 'Wichtige Kontakte', es: 'Contactos principales' }),
+      ...sorted.slice(0, 6).map((aspect, index) => {
+        const left = humanizeRawKey(aspect.a_point?.label || aspect.a_point?.id || aspect.a_point);
+        const right = humanizeRawKey(aspect.b_point?.label || aspect.b_point?.id || aspect.b_point);
+        const type = humanizeRawKey(aspect.aspect || aspect.kind);
+        return `${index + 1}. ${left} ${type} ${right} • ${formatRawLabel(locale, { en: 'Orb', fr: 'Orbe', de: 'Orbis', es: 'Orbe' })}: ${formatScalarValue(aspect.orb_deg)}`;
+      })
+    ].join('\n\n'));
+  }
+  return normalizeRawPresentationText(lines.join('\n\n'));
 }
 
 function getRawSubjectLabel(locale, subjectLabel) {
@@ -4586,7 +5215,48 @@ function isTransitSearchToolName(toolName) {
   return /western_transits_search/i.test(String(toolName || ''));
 }
 
-function buildRawToolResultText(locale, toolName, result) {
+function buildRawToolResultText(locale, toolName, result, options = {}) {
+  const subjectProfile = options.subjectProfile || null;
+  const userText = options.userText || '';
+  const toolCallResult = options.toolCallResult || null;
+
+  const structuredPayload = extractStructuredToolPayload(result);
+  if (toolName === 'v1_western_astrocartography_recommendations' && structuredPayload) {
+    return buildRelocationRawResponse(locale, structuredPayload, subjectProfile, userText);
+  }
+  if (toolName === 'v1_western_astrocartography_city_check' && structuredPayload) {
+    return buildRelocationCityCheckRawResponse(locale, structuredPayload, subjectProfile, userText);
+  }
+  if (toolName === 'v1_western_progressions_secondary' && structuredPayload) {
+    return buildSecondaryProgressionsRawResponse(locale, structuredPayload, subjectProfile);
+  }
+  if (toolName === 'v1_western_profections_annual' && structuredPayload) {
+    return buildAnnualProfectionsRawResponse(locale, structuredPayload, subjectProfile);
+  }
+  if (toolName === 'v1_western_solar_calculate' && structuredPayload) {
+    return buildSolarReturnRawResponse(locale, structuredPayload, subjectProfile);
+  }
+  if (toolName === 'v1_ephemeris' && structuredPayload) {
+    return buildEphemerisRawResponse(locale, structuredPayload, subjectProfile);
+  }
+  if ((toolName === 'v1_horoscope_daily_personal' || toolName === 'v2_horoscope_daily_personal' || toolName === 'v1_horoscope_daily_sign') && structuredPayload) {
+    return buildHoroscopeRawResponse(locale, structuredPayload, subjectProfile);
+  }
+  if ((toolName === 'v1_western_synastry_summary' || toolName === 'v1_western_synastry' || toolName === 'v1_western_synastry_horoscope')) {
+    const synastryPayload = extractSynastryPayload({
+      ...(toolCallResult || {}),
+      args: toolCallResult?.args || options.args || null,
+      result,
+      userText
+    });
+    if (synastryPayload) {
+      if (!synastryPayload.__personBName) {
+        synastryPayload.__personBName = extractPartnerNameFromQuestion(userText);
+      }
+      return buildSynastryRawResponse(locale, synastryPayload, subjectProfile);
+    }
+  }
+
   if (toolName === 'get_cached_house_info' && result?.house) {
     const house = result.house;
     const lines = [
@@ -4761,9 +5431,22 @@ function buildRawToolLoopResponse(locale, subjectProfile, toolResults = [], opti
         };
       }
 
+      const rendered = buildRawToolResultText(locale, tool.name, tool.result, {
+        subjectProfile,
+        userText: options.userText || tool.result?.questionText || '',
+        toolCallResult: tool,
+        args: tool.args || null
+      });
+      if (rendered && typeof rendered === 'object') {
+        return {
+          kind: rendered.renderMode === 'telegram_html' ? 'telegram_html' : 'plain',
+          text: rendered.text || '',
+          textParts: Array.isArray(rendered.textParts) ? rendered.textParts : undefined
+        };
+      }
       return {
         kind: 'plain',
-        text: buildRawToolResultText(locale, tool.name, tool.result)
+        text: rendered
       };
     })
     .filter(Boolean);
@@ -4790,6 +5473,15 @@ function buildRawToolLoopResponse(locale, subjectProfile, toolResults = [], opti
       text: telegramHtmlSection.text,
       textParts: telegramHtmlSection.textParts,
       renderMode: 'telegram_html'
+    };
+  }
+
+  const multipartSection = sections.find((section) => Array.isArray(section?.textParts) && section.textParts.length > 1);
+  if (multipartSection) {
+    return {
+      text: multipartSection.text,
+      textParts: multipartSection.textParts,
+      renderMode: 'plain'
     };
   }
 
@@ -6212,6 +6904,7 @@ async function answerConversation(identity, userText) {
     executionIntent?.target === 'indexed_facts' ||
     (
       executionIntent?.target === 'mcp' && (
+        executionIntent.family === 'mcp_synastry' ||
         executionIntent.family === 'mcp_relocation' ||
         executionIntent.family === 'mcp_progressions' ||
         executionIntent.family === 'mcp_ephemeris' ||
@@ -6574,6 +7267,17 @@ async function answerConversation(identity, userText) {
     );
 
     if (directCanonicalResult) {
+      if (directCanonicalResult.requiresCitySelection) {
+        return {
+          text: directCanonicalResult.text,
+          textParts: directCanonicalResult.textParts,
+          renderMode: directCanonicalResult.renderMode || 'plain',
+          usedTools: directCanonicalResult.usedTools || [],
+          intent: route.kind,
+          requiresCitySelection: true,
+          candidates: directCanonicalResult.candidates || []
+        };
+      }
       pushHistory(identity, 'user', userText);
       const finalText = responseMode === 'raw'
         ? validateRawAnswer(directCanonicalResult.text, locale)
