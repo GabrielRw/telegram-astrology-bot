@@ -57,7 +57,7 @@ function clearSession(chatId) {
 
 function startNatalFlow(chatId, source = 'command', options = {}) {
   const session = {
-    step: options.mode === 'add_secondary' ? 'name' : 'date',
+    step: options.mode === 'add_secondary' && !options.profileName ? 'name' : 'date',
     source,
     mode: options.mode || 'create_primary',
     targetProfileId: options.targetProfileId || null,

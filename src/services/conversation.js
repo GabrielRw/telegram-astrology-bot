@@ -730,6 +730,110 @@ function detectThirdPartyPronoun(text) {
   return /\b(son|sa|ses|lui|elle|leur|leurs|his|her|hers|him|their|them)\b/i.test(String(text || ''));
 }
 
+const EXTERNAL_PROFILE_ROUTE_KINDS = new Set([
+  'astrology_natal',
+  'astrology_transits',
+  'astrology_synastry',
+  'astrology_relocation',
+  'astrology_progressions',
+  'astrology_profections',
+  'astrology_returns',
+  'astrology_ephemeris',
+  'astrology_horoscope'
+]);
+
+const NON_PROFILE_NAME_TOKENS = new Set([
+  'mon', 'ma', 'mes', 'moi', 'me', 'my', 'mine', 'meu', 'pour', 'for', 'about', 'avec', 'with',
+  'theme', 'thème', 'astro', 'astral', 'natal', 'chart', 'birth', 'carte', 'profil', 'profile',
+  'horoscope', 'transit', 'transits', 'progression', 'progressions', 'profection', 'profections',
+  'solar', 'return', 'returns', 'ephemeris', 'ephemerides', 'éphémérides', 'synastrie', 'synastry',
+  'relocation', 'relocalisation', 'relocalisation', 'astrocartography', 'astrocartographie',
+  'day', 'week', 'month', 'jour', 'semaine', 'mois', 'today', 'today?', 'tomorrow', 'hier', 'demain',
+  'sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'saturne', 'uranus', 'neptune',
+  'pluto', 'pluton', 'node', 'north', 'south', 'ascendant', 'mc', 'ic', 'descendant'
+]);
+
+function normalizeExternalProfileCandidate(candidate) {
+  return String(candidate || '')
+    .trim()
+    .replace(/^[\s"'`“”‘’]+|[\s"'`“”‘’?!.,:;]+$/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+function isLikelyExternalProfileName(candidate) {
+  const normalized = normalizeExternalProfileCandidate(candidate);
+
+  if (!normalized || normalized.length < 2 || normalized.length > 60) {
+    return false;
+  }
+
+  const tokens = normalized
+    .split(/[\s'-]+/)
+    .map((token) => token.toLowerCase())
+    .filter(Boolean);
+
+  if (tokens.length === 0 || tokens.length > 4) {
+    return false;
+  }
+
+  if (tokens.some((token) => NON_PROFILE_NAME_TOKENS.has(token))) {
+    return false;
+  }
+
+  if (tokens.every((token) => token.length === 1)) {
+    return false;
+  }
+
+  return true;
+}
+
+function extractRequestedExternalProfileName(userText, route, activeProfile, savedProfiles = []) {
+  if (!EXTERNAL_PROFILE_ROUTE_KINDS.has(route?.kind)) {
+    return null;
+  }
+
+  const value = String(userText || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  const normalizedValue = value.replace(/[?!.,:;]+$/g, '').trim();
+  const activeName = String(activeProfile?.profileName || '').trim().toLowerCase();
+  const savedNames = new Set(
+    savedProfiles
+      .map((profile) => String(profile?.profileName || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const patterns = [
+    /\b(?:theme|thème|chart|profil|profile|horoscope|transits?|progressions?|profections?|solar return|return|returns?|synastr(?:y|ie)|relocali(?:sation|zation)|astro(?:cartography|cartographie)?|ephemeris|éphémérides?)\b(?:\s+\w+){0,5}?\s+(?:de|d'|du profil de|du thème de|for|about)\s+(.+)$/iu,
+    /\b(?:parle(?:\s+moi)?|talk(?:\s+to\s+me)?|tell\s+me|show\s+me|fais|faites|do|give)\b(?:\s+\w+){0,5}?\s+(?:de|d'|for|about)\s+(.+)$/iu,
+    /\b(?:pour|for)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' -]{1,60})$/u
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalizedValue.match(pattern);
+    const candidate = normalizeExternalProfileCandidate(match?.[1]);
+
+    if (!candidate || !isLikelyExternalProfileName(candidate)) {
+      continue;
+    }
+
+    const loweredCandidate = candidate.toLowerCase();
+    if (loweredCandidate === activeName) {
+      return null;
+    }
+
+    if (savedNames.has(loweredCandidate)) {
+      return null;
+    }
+
+    return candidate;
+  }
+
+  return null;
+}
+
 function buildSystemMetaResponse(locale, chatState, activeProfile) {
   const profiles = Array.isArray(chatState.profileDirectory) ? chatState.profileDirectory : [];
   const activeName = activeProfile?.profileName || profiles.find((profile) => profile.isActive)?.profileName || null;
@@ -761,6 +865,30 @@ function buildProfileManagementResponse(locale) {
   return locale === 'fr'
     ? 'Je peux gérer les profils, mais il faut préciser l’action: ajouter un profil, changer le profil actif, ou afficher les profils sauvegardés.'
     : 'I can manage profiles, but I need the exact action: add a profile, switch the active profile, or list saved profiles.';
+}
+
+function buildMissingExternalProfileResponse(locale, profileName = null) {
+  if (locale === 'fr') {
+    return profileName
+      ? `Je n’ai pas encore de profil enregistré pour ${profileName}. J’ai besoin de son nom et de ses données de naissance pour le créer.`
+      : 'Je n’ai pas encore ce profil enregistré. J’ai besoin du nom et des données de naissance de cette personne pour le créer.';
+  }
+
+  if (locale === 'de') {
+    return profileName
+      ? `Ich habe noch kein gespeichertes Profil für ${profileName}. Ich brauche den Namen und die Geburtsdaten, um es anzulegen.`
+      : 'Ich habe dieses Profil noch nicht gespeichert. Ich brauche den Namen und die Geburtsdaten dieser Person, um es anzulegen.';
+  }
+
+  if (locale === 'es') {
+    return profileName
+      ? `Todavía no tengo un perfil guardado para ${profileName}. Necesito su nombre y sus datos de nacimiento para crearlo.`
+      : 'Todavía no tengo este perfil guardado. Necesito el nombre y los datos de nacimiento de esa persona para crearlo.';
+  }
+
+  return profileName
+    ? `I do not have a saved profile for ${profileName} yet. I need their name and birth details to create it.`
+    : 'I do not have this profile saved yet. I need this person’s name and birth details to create it.';
 }
 
 function buildClarificationResponse(locale, activeProfile, referencedProfile, conversationContext) {
@@ -2819,6 +2947,7 @@ async function resolveConversationTargets(identity, userText, route, activeProfi
   ));
   const nonActiveProfiles = allProfiles.filter((profile) => profile.profileId !== active?.profileId);
   const pronounRefersToOther = detectThirdPartyPronoun(userText);
+  const requestedExternalProfileName = extractRequestedExternalProfileName(userText, route, active, allProfiles);
 
   if (route.kind === 'astrology_synastry') {
     const comparedProfiles = distinctMentionedProfiles.filter((profile) => profile.profileId !== active?.profileId);
@@ -2872,7 +3001,20 @@ async function resolveConversationTargets(identity, userText, route, activeProfi
       activeProfile: active,
       subjectProfile: distinctMentionedProfiles[0],
       secondaryProfile: null,
-      needsClarification: false
+      needsClarification: false,
+      requestedProfileName: null,
+      needsProfileCreation: false
+    };
+  }
+
+  if (requestedExternalProfileName) {
+    return {
+      activeProfile: active,
+      subjectProfile: null,
+      secondaryProfile: null,
+      needsClarification: false,
+      requestedProfileName: requestedExternalProfileName,
+      needsProfileCreation: true
     };
   }
 
@@ -2883,16 +3025,31 @@ async function resolveConversationTargets(identity, userText, route, activeProfi
         activeProfile: active,
         subjectProfile: referencedProfile,
         secondaryProfile: null,
-        needsClarification: false
+        needsClarification: false,
+        requestedProfileName: null,
+        needsProfileCreation: false
       };
     }
+  }
+
+  if (pronounRefersToOther) {
+    return {
+      activeProfile: active,
+      subjectProfile: null,
+      secondaryProfile: null,
+      needsClarification: false,
+      requestedProfileName: null,
+      needsProfileCreation: true
+    };
   }
 
   return {
     activeProfile: active,
     subjectProfile: active,
     secondaryProfile: null,
-    needsClarification: false
+    needsClarification: false,
+    requestedProfileName: null,
+    needsProfileCreation: false
   };
 }
 
@@ -7277,6 +7434,20 @@ async function answerConversation(identity, userText) {
       text,
       usedTools: [],
       intent: route.kind
+    };
+  }
+
+  if (targetContext.needsProfileCreation) {
+    const text = buildMissingExternalProfileResponse(locale, targetContext.requestedProfileName || null);
+    pushHistory(identity, 'user', userText);
+    pushHistory(identity, 'model', text);
+    setLastToolResults(identity, []);
+    return {
+      text,
+      usedTools: [],
+      intent: route.kind,
+      needsProfileCreation: true,
+      requestedProfileName: targetContext.requestedProfileName || null
     };
   }
 

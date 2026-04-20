@@ -232,6 +232,28 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
       return true;
     }
 
+    if (result?.needsProfileCreation) {
+      setPendingQuestion(event, userText);
+      startNatalFlow(event, 'chat', {
+        mode: 'add_secondary',
+        profileName: result.requestedProfileName || null
+      });
+
+      await channelApi.editText(
+        event,
+        loadingRef,
+        result.text
+      );
+
+      if (result.requestedProfileName) {
+        await promptForBirthDate(event, channelApi, 'chat');
+      } else {
+        await promptForProfileName(event, channelApi);
+      }
+
+      return true;
+    }
+
     if (result?.renderMode === 'telegram_pre' && event.channel === 'telegram') {
       await channelApi.editText(event, loadingRef, result.text, { html: true });
       await billing.recordAnsweredQuestion(event);
