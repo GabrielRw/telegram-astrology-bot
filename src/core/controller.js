@@ -168,6 +168,10 @@ async function sendGlobalPrompt(event, channelApi, text, options = {}) {
   return channelApi.sendText(event, text, options);
 }
 
+async function sendEditablePrompt(event, channelApi, text, options = {}) {
+  return channelApi.sendText(event, text, options);
+}
+
 function isCancelFlowText(event, text) {
   const value = String(text || '').trim().toLowerCase();
   if (!value) {
@@ -369,7 +373,7 @@ async function handleDailyHoroscope(event, channelApi) {
   const timezone = profile?.timezone || profile?.natalRequestPayload?.tz_str || 'UTC';
   const currentDate = formatIsoDateInTimezone(timezone);
 
-  const loadingRef = await sendGlobalPrompt(event, channelApi, t(event, 'prompts.readingChart'));
+  const loadingRef = await sendEditablePrompt(event, channelApi, t(event, 'prompts.readingChart'));
 
   try {
     const payload = await getDailyPersonalHoroscopeV3({
@@ -487,7 +491,7 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
     return handleQuestionLimit(event, channelApi, options.loadingRef || null);
   }
 
-  const loadingRef = options.loadingRef || await sendGlobalPrompt(event, channelApi, t(event, 'prompts.readingChart'));
+  const loadingRef = options.loadingRef || await sendEditablePrompt(event, channelApi, t(event, 'prompts.readingChart'));
 
   try {
     const result = await answerConversation(event, userText);
@@ -859,7 +863,7 @@ async function finishNatalFlow(event, channelApi, session) {
     return true;
   }
 
-  const loadingRef = await sendGlobalPrompt(event, channelApi, t(locale, 'prompts.readingChart'));
+  const loadingRef = await sendEditablePrompt(event, channelApi, t(locale, 'prompts.readingChart'));
 
   try {
     const natalPayload = createNatalPayload(lockedSession, lockedSession.cityMatch);
