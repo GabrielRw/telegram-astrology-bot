@@ -749,24 +749,27 @@ async function sendProfileActions(event, channelApi, chatState) {
     { id: ACTIONS.PROFILE_ADD, title: t(event, 'buttons.addProfile') },
     { id: ACTIONS.PROFILE_SWITCH, title: t(event, 'buttons.switchProfile') },
     { id: ACTIONS.PROFILE_UPDATE, title: t(event, 'buttons.update') },
-    { id: ACTIONS.PROFILE_RESET, title: t(event, 'buttons.reset') },
-    { id: ACTIONS.PROFILE_SHOW_CHART, title: t(event, 'buttons.showChart') }
+    { id: ACTIONS.PROFILE_RESET, title: t(event, 'buttons.reset') }
   ];
 
   await channelApi.sendChoices(event, t(event, 'prompts.profileActions'), choices);
 }
 
 async function sendProfileSwitchChoices(event, channelApi, chatState) {
-  const otherProfiles = (chatState.profileDirectory || []).filter((entry) => entry.profileId !== chatState.activeProfileId);
+  const availableProfiles = chatState.profileDirectory || [];
 
-  if (otherProfiles.length === 0) {
+  if (availableProfiles.length === 0) {
     await channelApi.sendText(event, t(event, 'profile.noOtherProfiles'));
     return;
   }
 
-  const switchChoices = otherProfiles.map((entry) => ({
+  const switchChoices = availableProfiles.map((entry) => ({
     id: `${ACTIONS.PROFILE_SWITCH_PREFIX}${entry.profileId}`,
-    title: entry.profileName.slice(0, 60)
+    title: (
+      entry.profileId === chatState.activeProfileId
+        ? `${entry.profileName} ${t(event, 'profile.activeSuffix')}`
+        : entry.profileName
+    ).slice(0, 60)
   }));
 
   setChoiceMap(event, Object.fromEntries(switchChoices.map((choice, index) => [String(index + 1), choice.id])));
@@ -1084,6 +1087,15 @@ async function handleIncomingAction(event, channelApi) {
 
     if (!profileId) {
       await channelApi.ackAction(event, t(event, 'errors.profileUnavailable'));
+      return true;
+    }
+
+    const currentState = getChatState(event);
+
+    if (profileId === currentState.activeProfileId) {
+      await channelApi.ackAction(event);
+      const activeProfile = await profiles.getActiveProfile(event);
+      await channelApi.sendText(event, t(event, 'profile.alreadyActive', { value: activeProfile?.profileName || 'Profile' }));
       return true;
     }
 
