@@ -527,13 +527,13 @@ function replaceChatState(identity, snapshot) {
 
 function setResponseMode(identity, responseMode) {
   const state = getChatState(identity);
-  state.responseMode = responseMode === 'raw' ? 'raw' : 'interpreted';
+  state.responseMode = 'interpreted';
   notifyPersistence(identity);
   return state.responseMode;
 }
 
 function getResponseMode(identity) {
-  return getChatState(identity).responseMode === 'raw' ? 'raw' : 'interpreted';
+  return 'interpreted';
 }
 
 function setPersistenceHook(nextHook) {

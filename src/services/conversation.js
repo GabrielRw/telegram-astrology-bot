@@ -714,6 +714,21 @@ function detectConversationRoute(text, history = []) {
   };
 }
 
+function isExplicitDailyTransitQuestion(text) {
+  const value = String(text || '').toLowerCase();
+
+  if (!value) {
+    return false;
+  }
+
+  const mentionsTransit = /\btransits?\b|\btr[áa]nsitos?\b/.test(value);
+  const mentionsDay = /\btoday\b|\baujourd'hui\b|\baujourdhui\b|\bdu jour\b|\bheute\b|\bhoy\b/.test(value);
+  const mentionsHoroscope = /\bhoroscope\b/.test(value);
+  const mentionsSky = /\bcurrent sky\b|\bsky\b|\bciel du jour\b|\bciel actuel\b/.test(value);
+
+  return mentionsTransit && mentionsDay && !mentionsHoroscope && !mentionsSky;
+}
+
 function deriveDefaultAnswerStyle(intent, userText) {
   const value = String(userText || '').toLowerCase();
 
@@ -7829,7 +7844,7 @@ function updateConversationState(identity, route, subjectProfile, secondaryProfi
 async function answerConversation(identity, userText) {
   const chatState = getChatState(identity);
   const locale = getLocale(chatState);
-  const responseMode = chatState.responseMode === 'raw' ? 'raw' : 'interpreted';
+  const responseMode = 'interpreted';
   const conversationContext = getConversationContext(identity);
   let explicitFollowUp = detectExplicitFollowUp(userText, conversationContext, chatState.history);
   if (!explicitFollowUp) {
@@ -8033,12 +8048,18 @@ async function answerConversation(identity, userText) {
       )
     )
   ) {
+    if (route.kind === 'astrology_transits' && isExplicitDailyTransitQuestion(effectiveUserQuestion)) {
+      canonicalRoute = getWesternCanonicalRouteById('today_transits_me');
+    }
+
     const canonicalHintRoute = buildCanonicalHintRouteForExecutionFamily(route, executionIntent?.family);
-    try {
-      canonicalRoute = await resolveCanonicalCommonRouteWithAi(locale, plannerQuestionText, canonicalHintRoute);
-    } catch (error) {
-      if (error?.code !== 'CANONICAL_ROUTE_AI_UNAVAILABLE') {
-        throw error;
+    if (!canonicalRoute) {
+      try {
+        canonicalRoute = await resolveCanonicalCommonRouteWithAi(locale, plannerQuestionText, canonicalHintRoute);
+      } catch (error) {
+        if (error?.code !== 'CANONICAL_ROUTE_AI_UNAVAILABLE') {
+          throw error;
+        }
       }
     }
 

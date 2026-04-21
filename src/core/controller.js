@@ -36,7 +36,6 @@ const {
   consumePendingQuestion,
   getChoiceMap,
   getChatState,
-  getResponseMode,
   getUiCache,
   notifyPersistence,
   setChoiceMap,
@@ -56,6 +55,7 @@ const ACTIONS = {
   CITY_PREFIX: 'NATAL_CITY_',
   LANGUAGE_PREFIX: 'LANGUAGE_',
   PROFILE_ADD: 'PROFILE_ADD',
+  PROFILE_SWITCH: 'PROFILE_SWITCH',
   PROFILE_SWITCH_PREFIX: 'PROFILE_SWITCH_',
   PROFILE_UPDATE: 'PROFILE_UPDATE',
   PROFILE_RESET: 'PROFILE_RESET',
@@ -726,9 +726,6 @@ function buildProfileMessage(chatState, access) {
   const timeLine = profile.timeKnown
     ? t(locale, 'profile.birthTimeSaved', { value: String(profile.birthDatetime).slice(11, 16) || 'Saved' })
     : t(locale, 'profile.birthTimeMissing');
-  const responseMode = getResponseMode(chatState);
-  const responseModeLabel = t(locale, `responseModes.${responseMode}`);
-
   return [
     t(locale, 'profile.title'),
     '',
@@ -738,7 +735,6 @@ function buildProfileMessage(chatState, access) {
     t(locale, 'profile.city', { value: city }),
     timeLine,
     t(locale, 'profile.language', { value: getLanguageName(chatState.locale, locale) }),
-    t(locale, 'profile.responseMode', { value: responseModeLabel }),
     t(locale, 'profile.billing', {
       value: billing.getBillingStatusLabel(access, (path, args) => t(locale, path, args))
     }),
@@ -749,36 +745,32 @@ function buildProfileMessage(chatState, access) {
 }
 
 async function sendProfileActions(event, channelApi, chatState) {
-  const responseMode = getResponseMode(chatState);
   const choices = [
     { id: ACTIONS.PROFILE_ADD, title: t(event, 'buttons.addProfile') },
+    { id: ACTIONS.PROFILE_SWITCH, title: t(event, 'buttons.switchProfile') },
     { id: ACTIONS.PROFILE_UPDATE, title: t(event, 'buttons.update') },
     { id: ACTIONS.PROFILE_RESET, title: t(event, 'buttons.reset') },
-    { id: ACTIONS.PROFILE_SHOW_CHART, title: t(event, 'buttons.showChart') },
-    {
-      id: ACTIONS.PROFILE_TOGGLE_RESPONSE_MODE,
-      title: t(event, responseMode === 'raw' ? 'buttons.enableInterpretedMode' : 'buttons.enableRawMode')
-    }
+    { id: ACTIONS.PROFILE_SHOW_CHART, title: t(event, 'buttons.showChart') }
   ];
 
-  const otherProfiles = (chatState.profileDirectory || []).filter((entry) => entry.profileId !== chatState.activeProfileId);
-  if (otherProfiles.length > 0) {
-    choices.splice(1, 0, {
-      id: `${ACTIONS.PROFILE_SWITCH_PREFIX}${otherProfiles[0].profileId}`,
-      title: `${t(event, 'buttons.switchProfile')}: ${otherProfiles[0].profileName}`.slice(0, 60)
-    });
-  }
-
   await channelApi.sendChoices(event, t(event, 'prompts.profileActions'), choices);
+}
 
-  if (otherProfiles.length > 1) {
-    const switchChoices = otherProfiles.slice(1).map((entry) => ({
-      id: `${ACTIONS.PROFILE_SWITCH_PREFIX}${entry.profileId}`,
-      title: entry.profileName.slice(0, 60)
-    }));
+async function sendProfileSwitchChoices(event, channelApi, chatState) {
+  const otherProfiles = (chatState.profileDirectory || []).filter((entry) => entry.profileId !== chatState.activeProfileId);
 
-    await sendChoiceBatches(event, channelApi, t(event, 'prompts.profileSwitch'), switchChoices);
+  if (otherProfiles.length === 0) {
+    await channelApi.sendText(event, t(event, 'profile.noOtherProfiles'));
+    return;
   }
+
+  const switchChoices = otherProfiles.map((entry) => ({
+    id: `${ACTIONS.PROFILE_SWITCH_PREFIX}${entry.profileId}`,
+    title: entry.profileName.slice(0, 60)
+  }));
+
+  setChoiceMap(event, Object.fromEntries(switchChoices.map((choice, index) => [String(index + 1), choice.id])));
+  await sendChoiceBatches(event, channelApi, t(event, 'prompts.profileSwitch'), switchChoices);
 }
 
 async function sendSynastryPartnerChoices(event, channelApi, candidates) {
@@ -1081,6 +1073,12 @@ async function handleIncomingAction(event, channelApi) {
     return true;
   }
 
+  if (actionId === ACTIONS.PROFILE_SWITCH) {
+    await channelApi.ackAction(event);
+    await sendProfileSwitchChoices(event, channelApi, getChatState(event));
+    return true;
+  }
+
   if (actionId.startsWith(ACTIONS.PROFILE_SWITCH_PREFIX)) {
     const profileId = actionId.slice(ACTIONS.PROFILE_SWITCH_PREFIX.length);
 
@@ -1142,8 +1140,7 @@ async function handleIncomingAction(event, channelApi) {
   }
 
   if (actionId === ACTIONS.PROFILE_TOGGLE_RESPONSE_MODE) {
-    const nextMode = getResponseMode(event) === 'raw' ? 'interpreted' : 'raw';
-    setResponseMode(event, nextMode);
+    setResponseMode(event, 'interpreted');
     await channelApi.ackAction(event);
     const refreshedState = getChatState(event);
     const access = await billing.getAccessSummary(event);

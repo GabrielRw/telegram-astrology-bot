@@ -25,6 +25,13 @@ module.exports = function registerProfileCommand(bot) {
     );
   });
 
+  bot.action(ACTIONS.PROFILE_SWITCH, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.PROFILE_SWITCH }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
   bot.action(ACTIONS.PROFILE_RESET, async (ctx) => {
     await handleIncomingAction(
       createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.PROFILE_RESET }),
