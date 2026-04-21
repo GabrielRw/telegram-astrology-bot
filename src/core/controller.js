@@ -283,13 +283,19 @@ function formatIsoDateInTimezone(timezone) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function formatDailyHoroscopeTransit(entry) {
+  const transitPlanet = entry?.transit_planet?.label || entry?.transit_planet || null;
+  const aspect = entry?.aspect?.label || entry?.aspect_type || null;
+  const natalTarget = entry?.natal_planet?.label || entry?.natal_point?.label || entry?.natal_point || null;
+  const parts = [transitPlanet, aspect, natalTarget].filter(Boolean).map((value) => String(value).trim());
+  return parts.length >= 3 ? parts.join(' ') : null;
+}
+
 function buildDailyHoroscopeFallback(locale, profile, payload) {
   const data = payload?.data || {};
-  const scores = data?.scores || {};
   const labels = {
     theme: { en: 'Theme', fr: 'Thème', de: 'Thema', es: 'Tema' },
-    scores: { en: 'Scores', fr: 'Scores', de: 'Werte', es: 'Puntuaciones' },
-    topTransits: { en: 'Top personal transits', fr: 'Top transits personnels', de: 'Top-Personaltransite', es: 'Tránsitos personales principales' }
+    topTransits: { en: 'Key transits today', fr: 'Transits clés du jour', de: 'Wichtige Transite heute', es: 'Tránsitos clave de hoy' }
   };
   const lines = [
     t(locale, 'buttons.dailyHoroscope')
@@ -303,29 +309,23 @@ function buildDailyHoroscopeFallback(locale, profile, payload) {
     lines.push(`${labels.theme[locale] || labels.theme.en}: ${data.content.theme}`);
   }
 
-  const scoreParts = [
-    scores.overall !== undefined ? `Overall ${scores.overall}` : null,
-    scores.love !== undefined ? `Love ${scores.love}` : null,
-    scores.career !== undefined ? `Career ${scores.career}` : null,
-    scores.money !== undefined ? `Money ${scores.money}` : null,
-    scores.health !== undefined ? `Health ${scores.health}` : null
-  ].filter(Boolean);
-
-  if (scoreParts.length > 0) {
-    lines.push(`${labels.scores[locale] || labels.scores.en}: ${scoreParts.join(' • ')}`);
-  }
-
   if (data?.content?.text) {
     lines.push(String(data.content.text));
   }
 
   const topTransits = Array.isArray(data?.personal?.transits_top) ? data.personal.transits_top : [];
-  if (topTransits.length > 0) {
+  const transitLines = topTransits
+    .slice(0, 3)
+    .map((entry, index) => {
+      const label = formatDailyHoroscopeTransit(entry);
+      return label ? `${index + 1}. ${label}` : null;
+    })
+    .filter(Boolean);
+
+  if (transitLines.length > 0) {
     lines.push([
       labels.topTransits[locale] || labels.topTransits.en,
-      ...topTransits.slice(0, 3).map((entry, index) => (
-        `${index + 1}. ${entry?.transit_planet?.label || ''} ${entry?.aspect?.label || ''} ${entry?.natal_planet?.label || ''}`.trim()
-      ))
+      ...transitLines
     ].join('\n'));
   }
 
@@ -344,7 +344,10 @@ async function rewriteDailyHoroscope(locale, profile, payload) {
     '',
     'Write a detailed daily horoscope in the user locale.',
     'Use only the grounded payload above.',
-    'Do not invent dates, transits, scores, timings, meanings, or advice that is not supported by the payload.',
+    'Do not invent dates, transits, timings, meanings, or advice that is not supported by the payload.',
+    'Do not mention or restate numerical scores.',
+    'If you mention a transit, name it explicitly as transit planet + aspect type + natal target.',
+    'Do not refer to unnamed or generic transits.',
     'Organize the answer in 3 to 5 short paragraphs covering the main theme, key influences, opportunities, and cautions.'
   ].join('\n');
 
@@ -353,7 +356,9 @@ async function rewriteDailyHoroscope(locale, profile, payload) {
       'You write detailed but grounded daily horoscope answers.',
       `Write in ${locale}.`,
       'Stay faithful to the payload only.',
-      'Do not mention missing fields or speculate.'
+      'Do not mention missing fields or speculate.',
+      'Never include numeric scores in the final answer.',
+      'If you cite a transit, always include its explicit aspect type.'
     ].join('\n'),
     userText: prompt,
     history: [],
