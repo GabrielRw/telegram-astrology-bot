@@ -36,10 +36,12 @@ const {
   consumePendingQuestion,
   getChoiceMap,
   getChatState,
+  getPendingWeddingSelection,
   getUiCache,
   notifyPersistence,
   setChoiceMap,
   setPendingSynastryQuestion,
+  setPendingWeddingSelection,
   setPendingQuestion,
   setResponseMode,
   setUiCache
@@ -62,6 +64,9 @@ const ACTIONS = {
   PROFILE_SHOW_CHART: 'PROFILE_SHOW_CHART',
   PROFILE_TOGGLE_RESPONSE_MODE: 'PROFILE_TOGGLE_RESPONSE_MODE',
   SYNASTRY_PARTNER_PREFIX: 'SYNASTRY_PARTNER_',
+  WEDDING_SPOUSE_A_PREFIX: 'WEDDING_SPOUSE_A_',
+  WEDDING_SPOUSE_B_PREFIX: 'WEDDING_SPOUSE_B_',
+  WEDDING_SPOUSE_B_NEW: 'WEDDING_SPOUSE_B_NEW',
   RELOCATION_CITY_PREFIX: 'RELOCATION_CITY_'
 };
 
@@ -92,12 +97,16 @@ function resetConversationContext(identity) {
   state.lastToolResults = [];
   state.pendingQuestion = null;
   state.pendingSynastryQuestion = null;
+  state.pendingWeddingSelection = null;
   state.choiceMap = {};
   notifyPersistence(identity);
 }
 
-function getWelcomeBackMessage(locale) {
-  return t(locale, 'prompts.welcomeBack');
+function getWelcomeBackMessage(locale, activeProfileName = null) {
+  const profileName = String(activeProfileName || '').trim();
+  return profileName
+    ? t(locale, 'prompts.welcomeBackWithProfile', { profileName })
+    : t(locale, 'prompts.welcomeBack');
 }
 
 function getOnboardingIntro(locale, source = 'start') {
@@ -253,7 +262,17 @@ function resetFlowState(identity) {
   clearSession(identity);
   setPendingQuestion(identity, null);
   setPendingSynastryQuestion(identity, null);
+  setPendingWeddingSelection(identity, null);
   setChoiceMap(identity, {});
+}
+
+function buildWeddingReplayQuestion(question, spouseAName, spouseBName) {
+  return [
+    String(question || '').trim(),
+    '',
+    `Partner A: ${spouseAName}`,
+    `Partner B: ${spouseBName}`
+  ].join('\n');
 }
 
 function buildWarmableActiveProfile(chatState) {
@@ -424,6 +443,24 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
 
       if (result.candidates?.length > 0) {
         await sendSynastryPartnerChoices(event, channelApi, result.candidates);
+      }
+
+      return true;
+    }
+
+    if (result?.requiresWeddingProfileSelection) {
+      setPendingWeddingSelection(event, {
+        question: userText,
+        spouseAProfileId: null
+      });
+      await channelApi.editText(
+        event,
+        loadingRef,
+        t(event, 'prompts.weddingFirstSpouse')
+      );
+
+      if (result.candidates?.length > 0) {
+        await sendWeddingSpouseAChoices(event, channelApi, result.candidates);
       }
 
       return true;
@@ -709,6 +746,43 @@ async function sendSynastryPartnerChoices(event, channelApi, candidates) {
   await sendChoiceBatches(event, channelApi, t(event, 'prompts.synastryPartner'), choices);
 }
 
+async function sendWeddingSpouseAChoices(event, channelApi, candidates) {
+  const choices = candidates.map((candidate) => ({
+    id: `${ACTIONS.WEDDING_SPOUSE_A_PREFIX}${candidate.profileId}`,
+    title: `${candidate.profileName}${candidate.cityLabel ? ` • ${candidate.cityLabel}` : ''}`.slice(0, 60)
+  }));
+
+  if (choices.length === 0) {
+    await channelApi.sendText(event, t(event, 'profile.noOtherProfiles'));
+    return;
+  }
+
+  setChoiceMap(event, Object.fromEntries(choices.map((choice, index) => [String(index + 1), choice.id])));
+  await sendChoiceBatches(event, channelApi, t(event, 'prompts.weddingFirstSpouse'), choices);
+}
+
+async function sendWeddingSpouseBChoices(event, channelApi, spouseA, candidates) {
+  const profileChoices = candidates.map((candidate) => ({
+    id: `${ACTIONS.WEDDING_SPOUSE_B_PREFIX}${candidate.profileId}`,
+    title: `${candidate.profileName}${candidate.cityLabel ? ` • ${candidate.cityLabel}` : ''}`.slice(0, 60)
+  }));
+  const choices = [
+    ...profileChoices,
+    {
+      id: ACTIONS.WEDDING_SPOUSE_B_NEW,
+      title: t(event, 'buttons.addNewUser').slice(0, 60)
+    }
+  ];
+
+  setChoiceMap(event, Object.fromEntries(choices.map((choice, index) => [String(index + 1), choice.id])));
+  await sendChoiceBatches(
+    event,
+    channelApi,
+    t(event, 'prompts.weddingSecondSpouse', { value: spouseA?.profileName || 'the first spouse' }),
+    choices
+  );
+}
+
 async function sendRelocationCityChoices(event, channelApi, candidates) {
   const choices = candidates.map((candidate, index) => ({
     id: `${ACTIONS.RELOCATION_CITY_PREFIX}${index}`,
@@ -805,6 +879,26 @@ async function finishNatalFlow(event, channelApi, session) {
     setChoiceMap(event, {});
 
     const pendingQuestion = consumePendingQuestion(event);
+    const pendingWeddingSelection = getPendingWeddingSelection(event);
+
+    if (
+      lockedSession.mode === 'add_secondary' &&
+      pendingQuestion &&
+      pendingWeddingSelection?.question &&
+      pendingWeddingSelection?.spouseAProfileId
+    ) {
+      const spouseA = await profiles.getProfileById(event, pendingWeddingSelection.spouseAProfileId);
+
+      if (spouseA && spouseA.profileId !== savedProfile.profileId) {
+        setPendingWeddingSelection(event, null);
+        return answerPaidConversation(
+          event,
+          channelApi,
+          buildWeddingReplayQuestion(pendingQuestion, spouseA.profileName, savedProfile.profileName),
+          { loadingRef }
+        );
+      }
+    }
 
     if (lockedSession.mode === 'add_secondary' && !pendingQuestion) {
       await channelApi.editText(
@@ -846,7 +940,14 @@ async function handleStart(event, channelApi) {
   }
 
   if (chatState.natalProfile) {
-    await sendGlobalPrompt(event, channelApi, getWelcomeBackMessage(getLocale(event)));
+    const activeProfileName = Array.isArray(chatState.profileDirectory)
+      ? chatState.profileDirectory.find((entry) => entry.profileId === chatState.activeProfileId)?.profileName
+      : null;
+    await sendGlobalPrompt(
+      event,
+      channelApi,
+      getWelcomeBackMessage(getLocale(event), activeProfileName || chatState.natalProfile?.name)
+    );
     return true;
   }
 
@@ -1106,6 +1207,67 @@ async function handleIncomingAction(event, channelApi) {
     );
   }
 
+  if (actionId.startsWith(ACTIONS.WEDDING_SPOUSE_A_PREFIX)) {
+    const selection = getPendingWeddingSelection(event);
+    const profileId = actionId.slice(ACTIONS.WEDDING_SPOUSE_A_PREFIX.length);
+    const selectedProfile = await profiles.getProfileById(event, profileId);
+
+    if (!selection?.question || !selectedProfile) {
+      await channelApi.ackAction(event, t(event, 'errors.weddingSelectionExpired'));
+      return true;
+    }
+
+    const candidates = (await profiles.listProfiles(event))
+      .filter((profile) => profile.profileId !== selectedProfile.profileId);
+
+    setPendingWeddingSelection(event, {
+      ...selection,
+      spouseAProfileId: selectedProfile.profileId
+    });
+    await channelApi.ackAction(event);
+    await channelApi.sendText(event, t(event, 'prompts.weddingSecondSpouse', { value: selectedProfile.profileName }));
+    await sendWeddingSpouseBChoices(event, channelApi, selectedProfile, candidates);
+    return true;
+  }
+
+  if (actionId === ACTIONS.WEDDING_SPOUSE_B_NEW) {
+    const selection = getPendingWeddingSelection(event);
+
+    if (!selection?.question || !selection?.spouseAProfileId) {
+      await channelApi.ackAction(event, t(event, 'errors.weddingSelectionExpired'));
+      return true;
+    }
+
+    await channelApi.ackAction(event);
+    setPendingQuestion(event, selection.question);
+    setChoiceMap(event, {});
+    startNatalFlow(event, 'chat', { mode: 'add_secondary' });
+    await channelApi.sendText(event, t(event, 'prompts.weddingAddPartner'));
+    await promptForProfileName(event, channelApi);
+    return true;
+  }
+
+  if (actionId.startsWith(ACTIONS.WEDDING_SPOUSE_B_PREFIX)) {
+    const selection = getPendingWeddingSelection(event);
+    const spouseBProfileId = actionId.slice(ACTIONS.WEDDING_SPOUSE_B_PREFIX.length);
+    const spouseA = selection?.spouseAProfileId ? await profiles.getProfileById(event, selection.spouseAProfileId) : null;
+    const spouseB = await profiles.getProfileById(event, spouseBProfileId);
+
+    if (!selection?.question || !spouseA || !spouseB || spouseA.profileId === spouseB.profileId) {
+      await channelApi.ackAction(event, t(event, 'errors.weddingSelectionExpired'));
+      return true;
+    }
+
+    setPendingWeddingSelection(event, null);
+    setChoiceMap(event, {});
+    await channelApi.ackAction(event);
+    return answerPaidConversation(
+      event,
+      channelApi,
+      buildWeddingReplayQuestion(selection.question, spouseA.profileName, spouseB.profileName)
+    );
+  }
+
   if (actionId.startsWith(ACTIONS.RELOCATION_CITY_PREFIX)) {
     const cityIndex = Number(actionId.slice(ACTIONS.RELOCATION_CITY_PREFIX.length));
     const citySelection = getUiCache(event)?.citySelection || null;
@@ -1355,6 +1517,9 @@ async function handleIncomingText(event, channelApi) {
   const mappedAction = getChoiceMap(event)[text];
   if (mappedAction && (
     mappedAction.startsWith(ACTIONS.SYNASTRY_PARTNER_PREFIX) ||
+    mappedAction.startsWith(ACTIONS.WEDDING_SPOUSE_A_PREFIX) ||
+    mappedAction.startsWith(ACTIONS.WEDDING_SPOUSE_B_PREFIX) ||
+    mappedAction === ACTIONS.WEDDING_SPOUSE_B_NEW ||
     mappedAction.startsWith(ACTIONS.PROFILE_SWITCH_PREFIX) ||
     mappedAction.startsWith(ACTIONS.CITY_PREFIX)
   )) {
@@ -1363,6 +1528,10 @@ async function handleIncomingText(event, channelApi) {
 
   if (chatState.pendingSynastryQuestion) {
     setPendingSynastryQuestion(event, null);
+  }
+
+  if (chatState.pendingWeddingSelection && !chatState.activeFlow) {
+    setPendingWeddingSelection(event, null);
   }
 
   const handledFlow = await handleActiveFlowText(event, channelApi, text);

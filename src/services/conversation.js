@@ -3974,6 +3974,58 @@ async function resolveConversationTargets(identity, userText, route, activeProfi
   const nonActiveProfiles = allProfiles.filter((profile) => profile.profileId !== active?.profileId);
   const pronounRefersToOther = detectThirdPartyPronoun(userText);
   const requestedExternalProfileName = extractRequestedExternalProfileName(userText, route, active, allProfiles);
+  const inferredElectionalRoute = inferElectionalRouteConfigFromQuestion(userText);
+  const isExplicitWeddingQuestion = inferredElectionalRoute?.id === 'wedding_election_search';
+  const canReusePreviousWeddingPair = (
+    !isExplicitWeddingQuestion &&
+    route.kind === 'astrology_transits' &&
+    conversationContext.lastCommonRouteId === 'wedding_election_search'
+  );
+
+  if (isExplicitWeddingQuestion || canReusePreviousWeddingPair) {
+    if (distinctMentionedProfiles.length >= 2) {
+      return {
+        activeProfile: active,
+        subjectProfile: distinctMentionedProfiles[0],
+        secondaryProfile: distinctMentionedProfiles[1],
+        needsClarification: false,
+        requestedProfileName: null,
+        needsProfileCreation: false
+      };
+    }
+
+    if (
+      canReusePreviousWeddingPair &&
+      distinctMentionedProfiles.length === 0 &&
+      conversationContext.lastReferencedProfileId &&
+      conversationContext.lastComparedProfileId
+    ) {
+      const spouseA = await profiles.getProfileById(identity, conversationContext.lastReferencedProfileId);
+      const spouseB = await profiles.getProfileById(identity, conversationContext.lastComparedProfileId);
+
+      if (spouseA && spouseB && spouseA.profileId !== spouseB.profileId) {
+        return {
+          activeProfile: active,
+          subjectProfile: spouseA,
+          secondaryProfile: spouseB,
+          needsClarification: false,
+          requestedProfileName: null,
+          needsProfileCreation: false
+        };
+      }
+    }
+
+    if (isExplicitWeddingQuestion) {
+      return {
+        activeProfile: active,
+        subjectProfile: null,
+        secondaryProfile: null,
+        needsClarification: false,
+        needsWeddingProfileSelection: true,
+        candidates: allProfiles
+      };
+    }
+  }
 
   if (route.kind === 'astrology_synastry') {
     const comparedProfiles = distinctMentionedProfiles.filter((profile) => profile.profileId !== active?.profileId);
@@ -8559,6 +8611,16 @@ async function answerConversation(identity, userText) {
       text,
       usedTools: [],
       intent: route.kind
+    };
+  }
+
+  if (targetContext.needsWeddingProfileSelection) {
+    return {
+      text: '',
+      usedTools: [],
+      intent: route.kind,
+      requiresWeddingProfileSelection: true,
+      candidates: targetContext.candidates || []
     };
   }
 

@@ -61,6 +61,7 @@ function createDefaultState(identity) {
     lastToolResults: [],
     pendingQuestion: null,
     pendingSynastryQuestion: null,
+    pendingWeddingSelection: null,
     conversationContext: {
       lastReferencedProfileId: null,
       lastComparedProfileId: null,
@@ -98,6 +99,7 @@ function clearNatalProfile(identity) {
   state.lastToolResults = [];
   state.pendingQuestion = null;
   state.pendingSynastryQuestion = null;
+  state.pendingWeddingSelection = null;
   state.conversationContext = {
     lastReferencedProfileId: null,
     lastComparedProfileId: null,
@@ -216,6 +218,18 @@ function consumePendingSynastryQuestion(chatId) {
   state.pendingSynastryQuestion = null;
   notifyPersistence(chatId);
   return question;
+}
+
+function setPendingWeddingSelection(chatId, selection) {
+  const state = getChatState(chatId);
+  state.pendingWeddingSelection = selection && typeof selection === 'object'
+    ? JSON.parse(JSON.stringify(selection))
+    : null;
+  notifyPersistence(chatId);
+}
+
+function getPendingWeddingSelection(chatId) {
+  return getChatState(chatId).pendingWeddingSelection || null;
 }
 
 function setChoiceMap(chatId, choiceMap) {
@@ -507,6 +521,7 @@ function getChatStateSnapshot(identity) {
     lastToolResults: state.lastToolResults,
     pendingQuestion: state.pendingQuestion,
     pendingSynastryQuestion: state.pendingSynastryQuestion,
+    pendingWeddingSelection: state.pendingWeddingSelection,
     conversationContext: state.conversationContext,
     choiceMap: state.choiceMap,
     uiCache: state.uiCache
@@ -559,6 +574,7 @@ module.exports = {
   getChatState,
   getConversationContext,
   getChatStateSnapshot,
+  getPendingWeddingSelection,
   getProfileDirectory,
   getResponseMode,
   getUiCache,
@@ -576,6 +592,7 @@ module.exports = {
   setNatalProfile,
   notifyPersistence,
   setPendingSynastryQuestion,
+  setPendingWeddingSelection,
   setPendingQuestion,
   setPersistenceHook,
   setProfileDirectory,
