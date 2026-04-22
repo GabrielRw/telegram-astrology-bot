@@ -61,8 +61,107 @@ const EXECUTION_FAMILIES = new Set([
   'mcp_relocation',
   'mcp_progressions',
   'mcp_ephemeris',
-  'mcp_horoscope'
+  'mcp_horoscope',
+  'mcp_electional'
 ]);
+
+const ELECTIONAL_ROUTE_CONFIGS = [
+  {
+    id: 'wedding_election_search',
+    toolTarget: 'v2_western_electional_wedding_search',
+    primaryNatalKey: 'partner_a_natal',
+    secondaryNatalKey: 'partner_b_natal',
+    topicPatterns: [
+      /\b(wedding|marriage|marry|mariage|marier|marrier|epouser)\b/
+    ]
+  },
+  {
+    id: 'making_contracts_election_search',
+    toolTarget: 'v2_western_electional_making_contracts_search',
+    primaryNatalKey: 'principal_natal',
+    topicPatterns: [
+      /\b(contract|contracts|agreement|agreements|contrat|contrats|accord)\b/
+    ]
+  },
+  {
+    id: 'job_audition_election_search',
+    toolTarget: 'v2_western_electional_job_audition_search',
+    primaryNatalKey: 'candidate_natal',
+    topicPatterns: [
+      /\b(audition|casting)\b/,
+      /\b(job|emploi|embauche|career)\b.*\b(interview|entretien|audition)\b/,
+      /\b(interview|entretien)\b.*\b(job|emploi|embauche|career)\b/
+    ]
+  },
+  {
+    id: 'purchase_property_election_search',
+    toolTarget: 'v2_western_electional_purchase_property_search',
+    primaryNatalKey: 'buyer_natal',
+    topicPatterns: [
+      /\b(buy|purchase|acheter|achat)\b.*\b(property|real estate|house|home|apartment|immobilier|maison|appartement|bien immobilier)\b/,
+      /\b(property|real estate|immobilier|bien immobilier)\b.*\b(buy|purchase|acheter|achat)\b/
+    ]
+  },
+  {
+    id: 'purchase_car_election_search',
+    toolTarget: 'v2_western_electional_purchase_car_search',
+    primaryNatalKey: 'buyer_natal',
+    topicPatterns: [
+      /\b(buy|purchase|acheter|achat)\b.*\b(car|vehicle|auto|voiture|vehicule)\b/,
+      /\b(car|vehicle|auto|voiture|vehicule)\b.*\b(buy|purchase|acheter|achat)\b/
+    ]
+  },
+  {
+    id: 'move_into_new_home_election_search',
+    toolTarget: 'v2_western_electional_move_into_new_home_search',
+    primaryNatalKey: 'resident_natal',
+    topicPatterns: [
+      /\b(move into|moving into|move in|new home|new house|new apartment|nouveau logement|nouvelle maison|emmenag|demenag)\b/
+    ]
+  },
+  {
+    id: 'starting_journey_election_search',
+    toolTarget: 'v2_western_electional_starting_journey_search',
+    primaryNatalKey: 'traveler_natal',
+    topicPatterns: [
+      /\b(journey|trip|travel|voyage|departure|depart|partir)\b/
+    ]
+  },
+  {
+    id: 'legal_proceedings_election_search',
+    toolTarget: 'v2_western_electional_legal_proceedings_search',
+    primaryNatalKey: 'plaintiff_natal',
+    topicPatterns: [
+      /\b(legal proceedings|lawsuit|court case|legal action|hearing|tribunal|proces|procedure judiciaire|justice)\b/
+    ]
+  },
+  {
+    id: 'physical_examination_election_search',
+    toolTarget: 'v2_western_electional_physical_examination_search',
+    primaryNatalKey: 'patient_natal',
+    topicPatterns: [
+      /\b(physical examination|medical examination|medical exam|checkup|check-up|doctor appointment|medical appointment|medical test|examen medical|examen physique|visite medicale|bilan de sante)\b/
+    ]
+  },
+  {
+    id: 'invest_money_election_search',
+    toolTarget: 'v2_western_electional_invest_money_search',
+    primaryNatalKey: 'investor_natal',
+    topicPatterns: [
+      /\b(invest|investment|investir|investissement|placement|portfolio|bourse)\b/
+    ]
+  }
+];
+
+const ELECTIONAL_ROUTE_CONFIG_BY_ID = new Map(
+  ELECTIONAL_ROUTE_CONFIGS.map((config) => [config.id, config])
+);
+
+const ELECTIONAL_ROUTE_IDS = new Set(
+  ELECTIONAL_ROUTE_CONFIGS.map((config) => config.id)
+);
+
+const ELECTIONAL_TIMING_CUE_PATTERN = /\b(best|better|good|when|quand|date|day|jour|moment|timing|election|electional|favorable|favourable|auspicious|ideal|optimal|meilleur(?:e)?|bonne?\s+date|bon\s+moment|this year|this month|cette annee|cette annee|cette année|ce mois|should i|devrais[- ]?je)\b/;
 
 const RAW_INTERPRETIVE_PATTERNS = [
   /\bthis means\b/i,
@@ -326,6 +425,27 @@ function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone 
   const parsedMonth = parseMonthFromQuestion(value, timezone);
   const wantsToday = /\b(today|aujourd'hui|aujourdhui|du jour|heute|hoy)\b/i.test(value);
   const wantsWeek = /\b(this week|current week|for the week|de la semaine|cette semaine|semaine en cours|diese woche|esta semana)\b/i.test(value);
+  const explicitYear = parseYearFromQuestion(value);
+
+  if (ELECTIONAL_ROUTE_IDS.has(routeId)) {
+    const wantsCurrentMonth = /\b(this month|ce mois|ce mois ci|dieser monat|este mes)\b/i.test(value);
+    const wantsCurrentYear = /\b(this year|cette annee|cette année|dieses jahr|este ano|este año)\b/i.test(value);
+    return sanitizeStructuredQueryPatch({
+      month: parsedMonth,
+      timeframe: parsedMonth
+        ? 'specific_month'
+        : wantsToday
+        ? 'current_day'
+        : wantsWeek
+        ? 'current_week'
+        : wantsCurrentMonth
+        ? 'current_month'
+        : (explicitYear || wantsCurrentYear)
+        ? 'current_year'
+        : null,
+      limit
+    });
+  }
 
   switch (routeId) {
     case 'all_natal_aspects':
@@ -421,7 +541,7 @@ function buildStructuredQueryState({
             : null
         )
     );
-  const routeId = inferredRouteId || previousState?.canonicalRouteId || null;
+  const routeId = inferredRouteId || (explicitFollowUp ? previousState?.canonicalRouteId : null) || null;
   const reusesPreviousState = Boolean(explicitFollowUp && previousState && previousState.canonicalRouteId === routeId);
   const baseQuestion = reusesPreviousState
     ? (previousState.baseQuestion || plannerQuestionText || userText)
@@ -484,6 +604,10 @@ function wantsStrongestSubset(text) {
 }
 
 function looksLikeStandaloneAstrologyQuery(text) {
+  if (inferElectionalRouteConfigFromQuestion(text)) {
+    return true;
+  }
+
   const value = String(text || '').toLowerCase();
   const hasCoreTopic = /(transits?|aspects?|theme|thème|chart|ephemerides|éphémérides|solar return|retour solaire|relocation|synastr)/.test(value);
   const hasSpecificScope = (
@@ -841,6 +965,15 @@ const NON_PROFILE_NAME_TOKENS = new Set([
   'day', 'week', 'month', 'jour', 'semaine', 'mois', 'today', 'today?', 'tomorrow', 'hier', 'demain',
   'career', 'work', 'love', 'home', 'family', 'wellbeing', 'health', 'creativity', 'spiritual',
   'carrière', 'amour', 'foyer', 'famille', 'bien-être', 'santé', 'créativité', 'spirituel',
+  'wedding', 'marriage', 'marry', 'mariage', 'marier', 'marrier', 'epouser',
+  'contract', 'contracts', 'agreement', 'agreements', 'contrat', 'contrats', 'accord',
+  'audition', 'interview', 'entretien', 'embauche', 'emploi', 'casting',
+  'property', 'real', 'estate', 'house', 'apartment', 'immobilier', 'maison', 'appartement', 'bien',
+  'car', 'vehicle', 'auto', 'voiture', 'vehicule',
+  'journey', 'trip', 'travel', 'voyage', 'departure', 'depart', 'partir',
+  'legal', 'proceedings', 'lawsuit', 'court', 'hearing', 'tribunal', 'proces', 'justice',
+  'physical', 'examination', 'medical', 'exam', 'checkup', 'check-up', 'doctor', 'bilan',
+  'invest', 'investment', 'investir', 'investissement', 'placement', 'money', 'argent', 'portfolio', 'bourse',
   'sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'saturne', 'uranus', 'neptune',
   'pluto', 'pluton', 'node', 'north', 'south', 'ascendant', 'mc', 'ic', 'descendant'
 ]);
@@ -889,6 +1022,10 @@ function isLikelyExternalProfileName(candidate) {
 
 function extractRequestedExternalProfileName(userText, route, activeProfile, savedProfiles = []) {
   if (!EXTERNAL_PROFILE_ROUTE_KINDS.has(route?.kind)) {
+    return null;
+  }
+
+  if (inferElectionalRouteConfigFromQuestion(userText)) {
     return null;
   }
 
@@ -1094,6 +1231,7 @@ function buildCanonicalHintRouteForExecutionFamily(route, family = null) {
     case 'mcp_progressions':
     case 'mcp_ephemeris':
     case 'mcp_horoscope':
+    case 'mcp_electional':
       return { ...route, kind: 'astrology_transits' };
     case 'indexed_natal':
       return { ...route, kind: 'astrology_natal' };
@@ -1120,8 +1258,26 @@ function shouldUseDirectCanonicalMcpExecution(executionIntent, canonicalRoute = 
     executionIntent.family === 'mcp_relocation' ||
     executionIntent.family === 'mcp_progressions' ||
     executionIntent.family === 'mcp_ephemeris' ||
-    executionIntent.family === 'mcp_horoscope'
+    executionIntent.family === 'mcp_horoscope' ||
+    executionIntent.family === 'mcp_electional'
   );
+}
+
+function getElectionalRouteConfig(routeId = null) {
+  return routeId ? (ELECTIONAL_ROUTE_CONFIG_BY_ID.get(routeId) || null) : null;
+}
+
+function inferElectionalRouteConfigFromQuestion(text) {
+  const value = normalizeMatchingText(text);
+  if (!value) {
+    return null;
+  }
+
+  if (!ELECTIONAL_TIMING_CUE_PATTERN.test(value)) {
+    return null;
+  }
+
+  return ELECTIONAL_ROUTE_CONFIGS.find((config) => config.topicPatterns.some((pattern) => pattern.test(value))) || null;
 }
 
 function inferDirectCanonicalRouteForExecutionFamily(executionIntent, userText, queryState = null) {
@@ -1177,6 +1333,13 @@ function inferDirectCanonicalRouteForExecutionFamily(executionIntent, userText, 
       return /\bhoroscope\b/.test(value)
         ? getWesternCanonicalRouteById('personal_horoscope')
         : (existing?.toolTarget ? existing : null);
+    case 'mcp_electional': {
+      const electionalConfig = inferElectionalRouteConfigFromQuestion(value);
+      if (electionalConfig) {
+        return getWesternCanonicalRouteById(electionalConfig.id);
+      }
+      return ELECTIONAL_ROUTE_IDS.has(existing?.id) ? existing : null;
+    }
     default:
       return existing?.toolTarget ? existing : null;
   }
@@ -1702,6 +1865,16 @@ function normalizeExecutionFamily(value, routeKind = null) {
 }
 
 async function routeConversationExecutionWithAi(locale, userText, route, subjectProfile, factAvailability, conversationContext, queryState = null) {
+  const electionalConfig = inferElectionalRouteConfigFromQuestion(userText);
+  if (electionalConfig) {
+    return {
+      target: 'mcp',
+      family: 'mcp_electional',
+      confidence: 0.99,
+      reason: `Electional timing question matched ${electionalConfig.id}.`
+    };
+  }
+
   const currentMonthAvailable = Boolean(factAvailability?.indexedTransitCacheMonth);
   const systemInstruction = [
     'You decide whether an astrology question should be answered from indexed local facts or through the FreeAstro MCP tool family.',
@@ -1709,7 +1882,7 @@ async function routeConversationExecutionWithAi(locale, userText, route, subject
     'Return one JSON object and nothing else.',
     'Allowed keys: target, family, confidence, reason.',
     'target must be indexed_facts or mcp.',
-    'family must be one of: indexed_natal, indexed_monthly_transits, mcp_transits, mcp_synastry, mcp_relocation, mcp_progressions, mcp_ephemeris, mcp_horoscope.',
+    'family must be one of: indexed_natal, indexed_monthly_transits, mcp_transits, mcp_synastry, mcp_relocation, mcp_progressions, mcp_ephemeris, mcp_horoscope, mcp_electional.',
     'Use indexed_natal only for obvious natal/chart/theme/aspect/house/sign questions that local natal facts or cached natal data can answer well.',
     'Use indexed_monthly_transits only for current-month transit questions that the indexed current month can answer well, including filtered current-month follow-ups.',
     'Use mcp_transits for exact transit searches, date ranges, since-birth searches, non-current-month transit requests, or whenever the local index is too rigid.',
@@ -1718,6 +1891,7 @@ async function routeConversationExecutionWithAi(locale, userText, route, subject
     'Use mcp_progressions for progressions, profections, solar returns, or planet returns.',
     'Use mcp_ephemeris for ephemeris requests.',
     'Use mcp_horoscope for horoscope requests.',
+    'Use mcp_electional for electional timing requests such as the best date or moment to marry, wedding timing, signing contracts, or moving into a new home when the MCP exposes a dedicated electional search.',
     'Prefer MCP when there is any real doubt that indexed facts are sufficient.',
     'Confidence must be a number between 0 and 1.'
   ].join('\n');
@@ -1962,6 +2136,8 @@ function matchesMcpFamilyTool(toolName, family) {
       return value.includes('ephemeris');
     case 'mcp_horoscope':
       return value.includes('horoscope');
+    case 'mcp_electional':
+      return value.includes('electional_');
     default:
       return true;
   }
@@ -2014,6 +2190,9 @@ function classifyToolBudgetFamily(name) {
   }
   if (/horoscope/i.test(value)) {
     return 'horoscope';
+  }
+  if (/electional/i.test(value)) {
+    return 'electional';
   }
   return null;
 }
@@ -2758,6 +2937,124 @@ function buildTransitSearchWindow(userText, subjectProfile, timezone = 'UTC') {
   return null;
 }
 
+function buildElectionalSearchWindow(userText, queryState = null, timezone = 'UTC') {
+  const value = String(userText || '').toLowerCase();
+  const timeframe = String(queryState?.parameters?.timeframe || '').toLowerCase();
+  const requestedMonth = queryState?.parameters?.month || parseMonthFromQuestion(userText, timezone);
+
+  if (requestedMonth) {
+    const range = buildMonthDateRange(requestedMonth);
+    if (range) {
+      return {
+        searchWindow: range,
+        searchTuning: { mode: 'direct' }
+      };
+    }
+  }
+
+  if (timeframe === 'current_day' || /\b(today|aujourd'hui|aujourdhui|du jour|heute|hoy)\b/i.test(value)) {
+    return {
+      searchWindow: buildCurrentDayRange(timezone),
+      searchTuning: { mode: 'direct' }
+    };
+  }
+
+  if (timeframe === 'current_week' || /\b(this week|current week|de la semaine|cette semaine|semaine en cours|diese woche|esta semana)\b/i.test(value)) {
+    return {
+      searchWindow: buildCurrentWeekRange(timezone),
+      searchTuning: { mode: 'direct' }
+    };
+  }
+
+  if (timeframe === 'current_month' || /\b(this month|ce mois|ce mois ci|dieser monat|este mes)\b/i.test(value)) {
+    const currentMonth = toolCache.getCurrentMonthWindow(timezone);
+    if (currentMonth) {
+      return {
+        searchWindow: {
+          start: currentMonth.rangeStart,
+          end: currentMonth.rangeEnd
+        },
+        searchTuning: { mode: 'direct' }
+      };
+    }
+  }
+
+  const explicitYear = parseYearFromQuestion(userText);
+  if (explicitYear) {
+    return {
+      searchWindow: buildCurrentYearRange(timezone, explicitYear),
+      searchTuning: {
+        mode: 'year',
+        coarse_step_minutes: 720
+      }
+    };
+  }
+
+  if (timeframe === 'current_year' || /\b(this year|cette annee|cette année|dieses jahr|este ano|este año)\b/i.test(value)) {
+    return {
+      searchWindow: buildCurrentYearRange(timezone),
+      searchTuning: {
+        mode: 'year',
+        coarse_step_minutes: 720
+      }
+    };
+  }
+
+  return null;
+}
+
+function buildElectionalNatalRequestFromProfile(profile, defaultName = 'Partner') {
+  const natal = profile?.natalRequestPayload;
+  const rawLocation = profile?.rawNatalPayload?.subject?.location || {};
+  if (!natal?.year || !natal?.month || !natal?.day) {
+    return null;
+  }
+
+  const lat = Number.isFinite(Number(natal.lat))
+    ? Number(natal.lat)
+    : (Number.isFinite(Number(profile?.lat)) ? Number(profile.lat) : (Number.isFinite(Number(rawLocation.lat)) ? Number(rawLocation.lat) : null));
+  const lng = Number.isFinite(Number(natal.lng))
+    ? Number(natal.lng)
+    : (Number.isFinite(Number(profile?.lng)) ? Number(profile.lng) : (Number.isFinite(Number(rawLocation.lng)) ? Number(rawLocation.lng) : null));
+
+  return {
+    name: profile?.profileName || defaultName,
+    year: natal.year,
+    month: natal.month,
+    day: natal.day,
+    hour: Number.isFinite(Number(natal.hour)) ? Number(natal.hour) : null,
+    minute: Number.isFinite(Number(natal.minute)) ? Number(natal.minute) : null,
+    time_known: natal.time_known !== false,
+    city: natal.city || profile?.cityName || rawLocation.city || rawLocation.name || null,
+    lat,
+    lng,
+    tz_str: natal.tz_str || profile?.timezone || rawLocation.timezone || 'AUTO'
+  };
+}
+
+function buildElectionalLocationFromProfile(profile, timezone = 'UTC') {
+  const natal = profile?.natalRequestPayload || {};
+  const rawLocation = profile?.rawNatalPayload?.subject?.location || {};
+  const lat = Number.isFinite(Number(natal.lat))
+    ? Number(natal.lat)
+    : (Number.isFinite(Number(profile?.lat)) ? Number(profile.lat) : (Number.isFinite(Number(rawLocation.lat)) ? Number(rawLocation.lat) : null));
+  const lng = Number.isFinite(Number(natal.lng))
+    ? Number(natal.lng)
+    : (Number.isFinite(Number(profile?.lng)) ? Number(profile.lng) : (Number.isFinite(Number(rawLocation.lng)) ? Number(rawLocation.lng) : null));
+  const city = natal.city || profile?.cityName || rawLocation.city || rawLocation.name || null;
+
+  if (!city && lat === null && lng === null) {
+    return null;
+  }
+
+  return {
+    city,
+    lat,
+    lng,
+    tz_str: natal.tz_str || profile?.timezone || rawLocation.timezone || timezone || 'AUTO'
+  };
+}
+
 function parseSignFromQuestion(text) {
   const value = String(text || '').toLowerCase();
   return ZODIAC_SIGNS.find((sign) => new RegExp(`\\b${sign}\\b`, 'i').test(value)) || null;
@@ -2937,6 +3234,7 @@ function buildCanonicalMissingArgsResponse(locale, route, missing) {
   const fr = {
     focus: 'Je peux répondre à cette question, mais il me faut d’abord votre objectif principal: carrière, amour, foyer, bien-être, créativité ou croissance spirituelle.',
     city: 'Je peux répondre à cette question, mais il me faut d’abord une ville précise.',
+    searchWindow: 'Je peux répondre à cette question, mais il me faut d’abord une fenêtre de temps précise, par exemple cette semaine, ce mois-ci ou entre deux dates.',
     transitPlanet: 'Je peux répondre à cette question, mais il me faut d’abord la planète en transit visée.',
     natalPoint: 'Je peux répondre à cette question, mais il me faut d’abord le point natal visé.',
     year: 'Je peux répondre à cette question, mais il me faut d’abord une année précise.',
@@ -2950,6 +3248,7 @@ function buildCanonicalMissingArgsResponse(locale, route, missing) {
   const en = {
     focus: 'I can answer that question, but I first need your main goal: career, love, home, health, creativity, or spiritual growth.',
     city: 'I can answer that question, but I first need a specific city.',
+    searchWindow: 'I can answer that question, but I first need a specific time window, for example this week, this month, or between two dates.',
     transitPlanet: 'I can answer that question, but I first need the transit planet.',
     natalPoint: 'I can answer that question, but I first need the natal point.',
     year: 'I can answer that question, but I first need a specific year.',
@@ -3176,6 +3475,36 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
   const timezone = subjectProfile?.timezone || flatNatal?.tz_str || 'UTC';
   const currentMonthWindow = toolCache.getCurrentMonthWindow(timezone);
   const currentDate = getDateStringInTimezone(timezone);
+  const electionalConfig = getElectionalRouteConfig(route?.id);
+
+  if (electionalConfig) {
+    const search = buildElectionalSearchWindow(userText, queryState, timezone);
+    const location = buildElectionalLocationFromProfile(subjectProfile, timezone);
+    const primaryNatal = buildElectionalNatalRequestFromProfile(subjectProfile, subjectProfile.profileName || 'Chart User');
+    const secondaryNatal = electionalConfig.secondaryNatalKey && secondaryProfile
+      ? buildElectionalNatalRequestFromProfile(secondaryProfile, secondaryProfile.profileName || 'Partner B')
+      : null;
+    if (!search) {
+      return { missing: ['searchWindow'] };
+    }
+    if (!location) {
+      return { missing: ['location'] };
+    }
+    return {
+      toolName: electionalConfig.toolTarget,
+      requestArgs: {
+        search_window: search.searchWindow,
+        location,
+        search_tuning: search.searchTuning,
+        ...(primaryNatal ? { [electionalConfig.primaryNatalKey]: primaryNatal } : {}),
+        ...(secondaryNatal ? { [electionalConfig.secondaryNatalKey]: secondaryNatal } : {}),
+        max_results: Math.max(1, Math.min(Number(queryState?.parameters?.limit || 5), 10))
+      },
+      cacheMonth: '',
+      primaryProfileId: subjectProfile.profileId,
+      secondaryProfileId: secondaryNatal ? (secondaryProfile?.profileId || null) : null
+    };
+  }
 
   switch (route.id) {
     case 'natal_overview':
@@ -8335,12 +8664,24 @@ async function answerConversation(identity, userText) {
         executionIntent.family === 'mcp_relocation' ||
         executionIntent.family === 'mcp_progressions' ||
         executionIntent.family === 'mcp_ephemeris' ||
-        executionIntent.family === 'mcp_horoscope'
+        executionIntent.family === 'mcp_horoscope' ||
+        executionIntent.family === 'mcp_electional'
       )
     )
   ) {
     if (route.kind === 'astrology_transits' && isExplicitDailyTransitQuestion(effectiveUserQuestion)) {
       canonicalRoute = getWesternCanonicalRouteById('today_transits_me');
+    }
+
+    const inferredDirectRoute = executionIntent?.target === 'mcp'
+      ? inferDirectCanonicalRouteForExecutionFamily(executionIntent, plannerQuestionText, currentQueryState)
+      : null;
+    if (
+      !canonicalRoute &&
+      executionIntent?.family === 'mcp_electional' &&
+      ELECTIONAL_ROUTE_IDS.has(inferredDirectRoute?.id)
+    ) {
+      canonicalRoute = inferredDirectRoute;
     }
 
     const canonicalHintRoute = buildCanonicalHintRouteForExecutionFamily(route, executionIntent?.family);
@@ -8355,7 +8696,6 @@ async function answerConversation(identity, userText) {
     }
 
     if (executionIntent?.target === 'mcp') {
-      const inferredDirectRoute = inferDirectCanonicalRouteForExecutionFamily(executionIntent, plannerQuestionText, currentQueryState);
       const shouldOverrideWithInferredRoute = inferredDirectRoute && (
         !canonicalRoute ||
         (
@@ -8365,6 +8705,10 @@ async function answerConversation(identity, userText) {
         (
           executionIntent.family === 'mcp_progressions' &&
           inferredDirectRoute.id === 'secondary_progressions_exact_aspects'
+        ) ||
+        (
+          executionIntent.family === 'mcp_electional' &&
+          ELECTIONAL_ROUTE_IDS.has(inferredDirectRoute.id)
         )
       );
       if (shouldOverrideWithInferredRoute) {
@@ -8536,7 +8880,8 @@ async function answerConversation(identity, userText) {
     ['relocation', 1],
     ['progressions', 1],
     ['ephemeris', 1],
-    ['horoscope', 1]
+    ['horoscope', 1],
+    ['electional', 1]
   ]);
 
   const executeFunction = async (name, args) => {

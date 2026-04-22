@@ -26,6 +26,202 @@ function buildCanonicalRoute(input) {
   };
 }
 
+function buildElectionalCanonicalRoute(input) {
+  return buildCanonicalRoute({
+    family: 'electional',
+    routeKind: 'astrology_transits',
+    answerStyle: 'system_answer',
+    requiredArgs: ['profile', 'searchWindow', 'location'],
+    cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    ...input
+  });
+}
+
+const ELECTIONAL_CANONICAL_ROUTES = [
+  buildElectionalCanonicalRoute({
+    id: 'wedding_election_search',
+    toolTarget: 'v2_western_electional_wedding_search',
+    optionalArgs: ['secondaryProfile'],
+    scope: 'wedding_election',
+    intentSample: 'what is the best wedding date for me this year',
+    localized: {
+      en: [
+        'what is the best wedding date for me this year',
+        'what is the best time to get married this year',
+        'when is the best time to marry this year'
+      ],
+      fr: [
+        'quel est le meilleur moment pour me marier cette année',
+        'quelle est la meilleure date pour mon mariage cette année',
+        'quel est le meilleur moment pour me marrier cette année'
+      ]
+    }
+  }),
+  buildElectionalCanonicalRoute({
+    id: 'making_contracts_election_search',
+    toolTarget: 'v2_western_electional_making_contracts_search',
+    scope: 'making_contracts_election',
+    intentSample: 'what is the best date to sign a contract',
+    localized: {
+      en: [
+        'what is the best date to sign a contract',
+        'when should i make a contract',
+        'best timing for signing an agreement'
+      ],
+      fr: [
+        'quelle est la meilleure date pour signer un contrat',
+        'quel est le meilleur moment pour faire un contrat',
+        'quel est le meilleur moment pour signer un accord'
+      ]
+    }
+  }),
+  buildElectionalCanonicalRoute({
+    id: 'job_audition_election_search',
+    toolTarget: 'v2_western_electional_job_audition_search',
+    scope: 'job_audition_election',
+    intentSample: 'what is the best time for a job audition',
+    localized: {
+      en: [
+        'what is the best time for a job audition',
+        'best date for a job interview',
+        'when should i do my audition'
+      ],
+      fr: [
+        'quel est le meilleur moment pour un entretien d embauche',
+        'quelle est la meilleure date pour une audition',
+        'quel est le meilleur moment pour un entretien'
+      ]
+    }
+  }),
+  buildElectionalCanonicalRoute({
+    id: 'purchase_property_election_search',
+    toolTarget: 'v2_western_electional_purchase_property_search',
+    scope: 'purchase_property_election',
+    intentSample: 'what is the best time to buy property',
+    localized: {
+      en: [
+        'what is the best time to buy property',
+        'best date to purchase a house',
+        'when should i buy real estate'
+      ],
+      fr: [
+        'quel est le meilleur moment pour acheter un bien immobilier',
+        'quelle est la meilleure date pour acheter une maison',
+        'quel est le meilleur moment pour acheter un appartement'
+      ]
+    }
+  }),
+  buildElectionalCanonicalRoute({
+    id: 'purchase_car_election_search',
+    toolTarget: 'v2_western_electional_purchase_car_search',
+    scope: 'purchase_car_election',
+    intentSample: 'what is the best time to buy a car',
+    localized: {
+      en: [
+        'what is the best time to buy a car',
+        'best date to purchase a car',
+        'when should i buy a vehicle'
+      ],
+      fr: [
+        'quel est le meilleur moment pour acheter une voiture',
+        'quelle est la meilleure date pour acheter une voiture',
+        'quel est le meilleur moment pour acheter un vehicule'
+      ]
+    }
+  }),
+  buildElectionalCanonicalRoute({
+    id: 'move_into_new_home_election_search',
+    toolTarget: 'v2_western_electional_move_into_new_home_search',
+    scope: 'move_into_new_home_election',
+    intentSample: 'what is the best date to move into my new home',
+    localized: {
+      en: [
+        'what is the best date to move into my new home',
+        'best timing for moving into a new house',
+        'when should i move into my new apartment'
+      ],
+      fr: [
+        'quelle est la meilleure date pour emmenager dans mon nouveau logement',
+        'quel est le meilleur moment pour emmenager dans ma nouvelle maison',
+        'quel est le meilleur moment pour mon demenagement'
+      ]
+    }
+  }),
+  buildElectionalCanonicalRoute({
+    id: 'starting_journey_election_search',
+    toolTarget: 'v2_western_electional_starting_journey_search',
+    scope: 'starting_journey_election',
+    intentSample: 'what is the best time to start my journey',
+    localized: {
+      en: [
+        'what is the best time to start my journey',
+        'best date to begin a trip',
+        'when should i start traveling'
+      ],
+      fr: [
+        'quel est le meilleur moment pour commencer mon voyage',
+        'quelle est la meilleure date pour partir en voyage',
+        'quel est le meilleur moment pour prendre la route'
+      ]
+    }
+  }),
+  buildElectionalCanonicalRoute({
+    id: 'legal_proceedings_election_search',
+    toolTarget: 'v2_western_electional_legal_proceedings_search',
+    scope: 'legal_proceedings_election',
+    intentSample: 'what is the best time for legal proceedings',
+    localized: {
+      en: [
+        'what is the best time for legal proceedings',
+        'best date for a court case',
+        'when should i start legal action'
+      ],
+      fr: [
+        'quel est le meilleur moment pour une procedure judiciaire',
+        'quelle est la meilleure date pour aller au tribunal',
+        'quel est le meilleur moment pour un proces'
+      ]
+    }
+  }),
+  buildElectionalCanonicalRoute({
+    id: 'physical_examination_election_search',
+    toolTarget: 'v2_western_electional_physical_examination_search',
+    scope: 'physical_examination_election',
+    intentSample: 'what is the best time for a physical examination',
+    localized: {
+      en: [
+        'what is the best time for a physical examination',
+        'best date for a medical checkup',
+        'when should i schedule a medical exam'
+      ],
+      fr: [
+        'quel est le meilleur moment pour un examen medical',
+        'quelle est la meilleure date pour un bilan de sante',
+        'quel est le meilleur moment pour une visite medicale'
+      ]
+    }
+  }),
+  buildElectionalCanonicalRoute({
+    id: 'invest_money_election_search',
+    toolTarget: 'v2_western_electional_invest_money_search',
+    scope: 'invest_money_election',
+    intentSample: 'what is the best time to invest money',
+    localized: {
+      en: [
+        'what is the best time to invest money',
+        'best date for an investment',
+        'when should i invest my money'
+      ],
+      fr: [
+        'quel est le meilleur moment pour investir mon argent',
+        'quelle est la meilleure date pour un investissement',
+        'quel est le meilleur moment pour faire un placement'
+      ]
+    }
+  })
+];
+
 const WESTERN_CANONICAL_ROUTES = [
   buildCanonicalRoute({
     id: 'natal_overview',
@@ -514,6 +710,7 @@ const WESTERN_CANONICAL_ROUTES = [
       es: ['horoscopo de pareja con']
     }
   }),
+  ...ELECTIONAL_CANONICAL_ROUTES,
   buildCanonicalRoute({
     id: 'relocation_recommendations',
     family: 'relocation',
