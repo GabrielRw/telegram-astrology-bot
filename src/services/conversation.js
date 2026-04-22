@@ -490,7 +490,7 @@ function looksLikeStandaloneAstrologyQuery(text) {
     /(ce mois|ce mois ci|ce mois-ci|this month|since birth|depuis ma naissance|from birth|soleil|sun|lune|moon|mercure|mercury|venus|mars|jupiter|saturne|saturn|uranus|neptune|pluton|pluto|chiron)/.test(value) ||
     parseAspectTypesFromQuestion(value).length > 0
   );
-  return hasCoreTopic && hasSpecificScope;
+  return (hasCoreTopic && hasSpecificScope) || isBroadRelocationRecommendationQuestion(value);
 }
 
 function wantsMinorAspects(text) {
@@ -517,6 +517,37 @@ function looksLikeStandaloneCityReply(text) {
 
   const normalized = normalizeMatchingText(value);
   return /^[a-z'., -]{2,}$/i.test(normalized) && normalized.split(/\s+/).filter(Boolean).length <= 5;
+}
+
+function looksLikeStandaloneRelocationFocusReply(text) {
+  const value = String(text || '').trim();
+  if (!value || value.length > 40) {
+    return false;
+  }
+
+  if (looksLikeStandaloneAstrologyQuery(value)) {
+    return false;
+  }
+
+  const focus = parseFocusFromQuestion(value);
+  if (!focus) {
+    return false;
+  }
+
+  const normalized = normalizeMatchingText(value)
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  if (/\b(where|best|live|relocate|move|vivre|habiter|meilleur|meilleure|meilleures|endroit|ville|lieu|monde|world|dans|pour moi)\b/.test(normalized)) {
+    return false;
+  }
+
+  return normalized.split(/\s+/).filter(Boolean).length <= 3;
 }
 
 function buildQuantitativeFollowUpQuestion(lastResolvedQuestion, limit, conversationContext) {
@@ -617,7 +648,7 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
     lastResolvedQuestion &&
     lastRouteKind === 'astrology_relocation' &&
     relocationFocus &&
-    !looksLikeStandaloneAstrologyQuery(value)
+    looksLikeStandaloneRelocationFocusReply(value)
   ) {
     return {
       followUpType: 'relocation_focus_refinement',
@@ -1100,7 +1131,9 @@ function inferDirectCanonicalRouteForExecutionFamily(executionIntent, userText, 
   const value = normalizeMatchingText(userText);
   switch (executionIntent?.family) {
     case 'mcp_relocation': {
-      if (/\bwhere should i (?:relocate|live|move)\b|\bo[uù]\b.*\b(?:habiter|vivre|d[ée]m[ée]nager|relocaliser)\b/.test(value)) {
+      if (
+        /\bwhere should i (?:relocate|live|move)\b|\bbest places? to live\b|\bwhere is the best place .* live\b|\bo[uù]\b.*\b(?:habiter|vivre|d[ée]m[ée]nager|relocaliser)\b|\bmeilleur(?:e)?(?:s)? (?:endroit|ville|lieu|places?) .*vivre\b/.test(value)
+      ) {
         return getWesternCanonicalRouteById('relocation_recommendations');
       }
       if (/selected city:/i.test(String(userText || ''))) {
@@ -8101,8 +8134,11 @@ async function answerConversation(identity, userText) {
   const locale = getLocale(chatState);
   const responseMode = 'interpreted';
   const conversationContext = getConversationContext(identity);
-  let explicitFollowUp = detectExplicitFollowUp(userText, conversationContext, chatState.history);
-  if (!explicitFollowUp) {
+  const shouldBypassFollowUpInheritance = isBroadRelocationRecommendationQuestion(userText) || looksLikeStandaloneAstrologyQuery(userText);
+  let explicitFollowUp = shouldBypassFollowUpInheritance
+    ? null
+    : detectExplicitFollowUp(userText, conversationContext, chatState.history);
+  if (!explicitFollowUp && !shouldBypassFollowUpInheritance) {
     explicitFollowUp = await resolveFollowUpWithAi(locale, userText, conversationContext, null);
   }
   const routeSeedText = explicitFollowUp?.rewrittenQuestion || userText;
