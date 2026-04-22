@@ -2,8 +2,8 @@ const { answerConversation } = require('../services/conversation');
 const { renderAstrocartographyMap } = require('../services/astroMap');
 const { registerInteractiveAstroMap } = require('../services/interactiveAstroMap');
 const billing = require('../services/billing');
-const { FreeAstroError, getDailyPersonalHoroscopeV3, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
-const { generatePlainText, getFastPathModelName, getGeminiErrorMessage } = require('../services/gemini');
+const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
+const { getGeminiErrorMessage } = require('../services/gemini');
 const profiles = require('../services/profiles');
 const {
   getLanguageName,
@@ -256,113 +256,33 @@ function resetFlowState(identity) {
   setChoiceMap(identity, {});
 }
 
-function buildDailyHoroscopeBirthPayload(profile, timezone) {
-  const natal = profile?.natalRequestPayload || {};
+function buildWarmableActiveProfile(chatState) {
+  if (!chatState?.activeProfileId || !chatState?.rawNatalPayload || !chatState?.natalRequestPayload) {
+    return null;
+  }
+
   return {
-    year: natal.year,
-    month: natal.month,
-    day: natal.day,
-    hour: natal.hour,
-    minute: natal.minute,
-    city: natal.city,
-    lat: natal.lat,
-    lng: natal.lng,
-    tz_str: natal.tz_str || timezone
+    profileId: chatState.activeProfileId,
+    profileName: chatState.natalProfile?.name || 'Chart User',
+    rawNatalPayload: chatState.rawNatalPayload,
+    natalRequestPayload: chatState.natalRequestPayload,
+    chartRequestPayload: chatState.chartRequestPayload,
+    cityLabel: chatState.natalProfile?.city || null,
+    timezone: chatState.rawNatalPayload?.subject?.location?.timezone || chatState.natalRequestPayload?.tz_str || null,
+    timeKnown: chatState.natalProfile?.timeKnown !== false,
+    natalProfile: chatState.natalProfile || null
   };
 }
 
-function formatIsoDateInTimezone(timezone) {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
-  const parts = formatter.formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
+function scheduleDailyHoroscopePrewarm(event, chatState = getChatState(event)) {
+  const profile = buildWarmableActiveProfile(chatState);
 
-function formatDailyHoroscopeTransit(entry) {
-  const transitPlanet = entry?.transit_planet?.label || entry?.transit_planet || null;
-  const aspect = entry?.aspect?.label || entry?.aspect_type || null;
-  const natalTarget = entry?.natal_planet?.label || entry?.natal_point?.label || entry?.natal_point || null;
-  const parts = [transitPlanet, aspect, natalTarget].filter(Boolean).map((value) => String(value).trim());
-  return parts.length >= 3 ? parts.join(' ') : null;
-}
-
-function buildDailyHoroscopeFallback(locale, profile, payload) {
-  const data = payload?.data || {};
-  const labels = {
-    theme: { en: 'Theme', fr: 'Thème', de: 'Thema', es: 'Tema' },
-    topTransits: { en: 'Key transits today', fr: 'Transits clés du jour', de: 'Wichtige Transite heute', es: 'Tránsitos clave de hoy' }
-  };
-  const lines = [
-    t(locale, 'buttons.dailyHoroscope')
-  ];
-
-  if (data?.date) {
-    lines[0] = `${lines[0]} — ${data.date}`;
+  if (!profile) {
+    return;
   }
 
-  if (data?.content?.theme) {
-    lines.push(`${labels.theme[locale] || labels.theme.en}: ${data.content.theme}`);
-  }
-
-  if (data?.content?.text) {
-    lines.push(String(data.content.text));
-  }
-
-  const topTransits = Array.isArray(data?.personal?.transits_top) ? data.personal.transits_top : [];
-  const transitLines = topTransits
-    .slice(0, 3)
-    .map((entry, index) => {
-      const label = formatDailyHoroscopeTransit(entry);
-      return label ? `${index + 1}. ${label}` : null;
-    })
-    .filter(Boolean);
-
-  if (transitLines.length > 0) {
-    lines.push([
-      labels.topTransits[locale] || labels.topTransits.en,
-      ...transitLines
-    ].join('\n'));
-  }
-
-  return lines.filter(Boolean).join('\n\n');
-}
-
-async function rewriteDailyHoroscope(locale, profile, payload) {
-  const subject = String(profile?.profileName || 'you').trim();
-  const prompt = [
-    `Locale: ${locale}`,
-    `Subject: ${subject}`,
-    'Grounded endpoint: /api/v3/horoscope/daily/personal',
-    '',
-    'Grounded payload JSON:',
-    JSON.stringify(payload || {}).slice(0, 12000),
-    '',
-    'Write a detailed daily horoscope in the user locale.',
-    'Use only the grounded payload above.',
-    'Do not invent dates, transits, timings, meanings, or advice that is not supported by the payload.',
-    'Do not mention or restate numerical scores.',
-    'If you mention a transit, name it explicitly as transit planet + aspect type + natal target.',
-    'Do not refer to unnamed or generic transits.',
-    'Organize the answer in 3 to 5 short paragraphs covering the main theme, key influences, opportunities, and cautions.'
-  ].join('\n');
-
-  return generatePlainText({
-    systemInstruction: [
-      'You write detailed but grounded daily horoscope answers.',
-      `Write in ${locale}.`,
-      'Stay faithful to the payload only.',
-      'Do not mention missing fields or speculate.',
-      'Never include numeric scores in the final answer.',
-      'If you cite a transit, always include its explicit aspect type.'
-    ].join('\n'),
-    userText: prompt,
-    history: [],
-    model: getFastPathModelName()
+  toolCache.prewarmDailyHoroscope(event, profile, {
+    locale: getLocale(event)
   });
 }
 
@@ -375,31 +295,24 @@ async function handleDailyHoroscope(event, channelApi) {
   }
 
   const locale = getLocale(event);
-  const timezone = profile?.timezone || profile?.natalRequestPayload?.tz_str || 'UTC';
-  const currentDate = formatIsoDateInTimezone(timezone);
+  const cached = await toolCache.getCachedDailyHoroscope(event, profile, {
+    locale,
+    questionText: t(event, 'buttons.dailyHoroscope')
+  });
+
+  if (String(cached?.result?.text || '').trim()) {
+    await sendGlobalPrompt(event, channelApi, cached.result.text.trim());
+    return true;
+  }
 
   const loadingRef = await sendEditablePrompt(event, channelApi, t(event, 'prompts.readingChart'));
 
   try {
-    const payload = await getDailyPersonalHoroscopeV3({
-      birth: buildDailyHoroscopeBirthPayload(profile, timezone),
-      date: currentDate,
-      timezone,
-      tz_str: timezone,
-      locale
+    const resolved = await toolCache.ensureDailyHoroscope(event, profile, {
+      locale,
+      questionText: t(event, 'buttons.dailyHoroscope')
     });
-
-    let text = buildDailyHoroscopeFallback(locale, profile, payload);
-
-    try {
-      const rewritten = await rewriteDailyHoroscope(locale, profile, payload);
-      if (String(rewritten || '').trim()) {
-        text = rewritten.trim();
-      }
-    } catch (error) {
-      // Keep grounded fallback text.
-    }
-
+    const text = String(resolved?.result?.text || '').trim() || t(event, 'errors.noGroundedAnswer');
     await channelApi.editText(event, loadingRef, text);
   } catch (error) {
     const message = error instanceof FreeAstroError
@@ -888,6 +801,7 @@ async function finishNatalFlow(event, channelApi, session) {
 
     toolCache.prewarmMonthlyTransitTimeline(event, savedProfile);
     refreshLocaleFromProfile(event);
+    scheduleDailyHoroscopePrewarm(event);
     setChoiceMap(event, {});
 
     const pendingQuestion = consumePendingQuestion(event);
@@ -924,6 +838,7 @@ async function handleStart(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
   const chatState = getChatState(event);
+  scheduleDailyHoroscopePrewarm(event, chatState);
   const hadActiveFlow = Boolean(chatState.activeFlow);
 
   if (hadActiveFlow) {
@@ -945,6 +860,7 @@ async function handleProfile(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
   const chatState = getChatState(event);
+  scheduleDailyHoroscopePrewarm(event, chatState);
   const access = await billing.getAccessSummary(event);
   await sendGlobalPrompt(event, channelApi, buildProfileMessage(chatState, access));
 
@@ -958,12 +874,14 @@ async function handleProfile(event, channelApi) {
 async function handleBilling(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
+  scheduleDailyHoroscopePrewarm(event);
   return sendBillingStatus(event, channelApi);
 }
 
 async function handleSubscribe(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
+  scheduleDailyHoroscopePrewarm(event);
 
   const access = await billing.getAccessSummary(event);
 
@@ -1050,6 +968,7 @@ async function repromptCurrentStep(event, channelApi) {
 async function handleIncomingAction(event, channelApi) {
   await persistence.ensureHydrated(event);
   syncLocaleFromEvent(event);
+  scheduleDailyHoroscopePrewarm(event);
   const actionId = String(event.actionId || '');
 
   if (!actionId) {
@@ -1066,6 +985,7 @@ async function handleIncomingAction(event, channelApi) {
 
     await channelApi.ackAction(event);
     const selectedLocale = setManualLocale(event, locale);
+    scheduleDailyHoroscopePrewarm(event);
     await channelApi.sendText(event, t(selectedLocale, 'prompts.languageUpdated', {
       language: getLanguageName(selectedLocale, selectedLocale)
     }));
@@ -1114,6 +1034,7 @@ async function handleIncomingAction(event, channelApi) {
     clearSession(event);
     resetConversationContext(event);
     refreshLocaleFromProfile(event);
+    scheduleDailyHoroscopePrewarm(event);
     await channelApi.ackAction(event);
     await channelApi.sendText(event, t(event, 'profile.switched', { value: nextProfile.profileName }));
     return true;
@@ -1394,6 +1315,7 @@ async function handleIncomingText(event, channelApi) {
   syncLocaleFromEvent(event);
   const text = String(event.text || '').trim();
   const chatState = getChatState(event);
+  scheduleDailyHoroscopePrewarm(event, chatState);
 
   if (!text) {
     return false;

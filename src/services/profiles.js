@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { getSupabaseClient, isSupabaseConfigured } = require('./supabase');
 const factIndex = require('./factIndex');
+const { getLocale } = require('./locale');
 const toolCache = require('./toolCache');
 const { info, reportError, warn } = require('./logger');
 const {
@@ -310,6 +311,7 @@ async function saveProfile(identity, input) {
     const storedProfile = await getProfileById(identity, payload.profile_id);
     await toolCache.ensureNatalInsights(identity, storedProfile, { source: 'prewarm', force: true });
     if (storedProfile?.isActive) {
+      toolCache.prewarmDailyHoroscope(identity, storedProfile, { locale: getLocale(identity) });
       await factIndex.syncActiveProfileFactAvailability(identity, storedProfile, { notify: false });
     }
     return storedProfile;
@@ -332,6 +334,7 @@ async function saveProfile(identity, input) {
   const storedProfile = await getProfileById(identity, payload.profile_id);
   await toolCache.ensureNatalInsights(identity, storedProfile, { source: 'prewarm', force: true });
   if (storedProfile?.isActive) {
+    toolCache.prewarmDailyHoroscope(identity, storedProfile, { locale: getLocale(identity) });
     await factIndex.syncActiveProfileFactAvailability(identity, storedProfile, { notify: false });
   }
   return storedProfile;
@@ -369,6 +372,7 @@ async function setActiveProfile(identity, profileId) {
   await refreshProfiles(identity, { log: false });
   const activeProfile = await getProfileById(identity, target.profileId);
   await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'prewarm' });
+  toolCache.prewarmDailyHoroscope(identity, activeProfile, { locale: getLocale(identity) });
   await factIndex.syncActiveProfileFactAvailability(identity, activeProfile, { notify: false });
   return activeProfile;
 }
@@ -446,6 +450,7 @@ async function ensureHydrated(identity) {
     await applyProfilesToState(identity, profiles, { log: false, notify: false });
     const activeProfile = profiles.find((profile) => profile.isActive) || profiles[0] || null;
     await toolCache.ensureNatalInsights(identity, activeProfile, { source: 'prewarm' });
+    toolCache.prewarmDailyHoroscope(identity, activeProfile, { locale: getLocale(identity) });
     await factIndex.syncActiveProfileFactAvailability(identity, activeProfile, { notify: false });
     return profiles;
   }

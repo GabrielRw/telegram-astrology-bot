@@ -1,7 +1,9 @@
 const { randomUUID, createHash } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
+const { buildDailyHoroscopeRequest, buildDailyHoroscopeResult } = require('./dailyHoroscope');
 const factIndex = require('./factIndex');
 const { getNatalInsights, getTransitInsights } = require('./freeastro');
+const { getLocale } = require('./locale');
 const { getSupabaseClient, isSupabaseConfigured } = require('./supabase');
 const { info, reportError } = require('./logger');
 const mcpService = require('./freeastroMcp');
@@ -12,9 +14,12 @@ const LOG_TABLE = 'bot_tool_call_logs';
 const TRANSIT_TOOL = 'v1_western_transits_timeline';
 const NATAL_INSIGHTS_TOOL = 'rest_western_natal_insights';
 const TRANSIT_INSIGHTS_TOOL = 'rest_western_transits_insights';
+const DAILY_HOROSCOPE_TOOL = 'rest_horoscope_daily_personal_text';
 
 const memoryEntries = new Map();
 const memoryLogs = [];
+const dailyHoroscopeInFlight = new Map();
+const dailyHoroscopeReady = new Set();
 
 function scheduleAsync(label, meta, task) {
   Promise.resolve()
@@ -129,6 +134,14 @@ function buildMemoryKey(identity, toolName, requestHash, primaryProfileId, secon
     String(toolName || ''),
     String(requestHash || ''),
     String(cacheMonth || '')
+  ].join('::');
+}
+
+function buildDailyHoroscopeRunKey(identity, profileId, requestHash) {
+  return [
+    resolveStateKey(identity),
+    String(profileId || ''),
+    String(requestHash || '')
   ].join('::');
 }
 
@@ -678,6 +691,153 @@ async function getCurrentMonthTransitCache(identity, profile) {
   });
 }
 
+async function getCachedDailyHoroscope(identity, profile, options = {}) {
+  if (!profile) {
+    return null;
+  }
+
+  const locale = options.locale || getLocale(identity);
+  const requestArgs = buildDailyHoroscopeRequest(profile, locale);
+
+  if (!requestArgs) {
+    return null;
+  }
+
+  const cacheDay = requestArgs.date;
+  const canonicalArgs = canonicalizeArgs(requestArgs);
+  const requestHash = buildRequestHash(canonicalArgs);
+  const cached = await findCacheEntry(identity, {
+    toolName: DAILY_HOROSCOPE_TOOL,
+    requestHash,
+    primaryProfileId: profile.profileId,
+    secondaryProfileId: null,
+    cacheMonth: cacheDay
+  });
+
+  if (!cached) {
+    return null;
+  }
+
+  await markCacheEntryUsed(identity, cached);
+  await logToolCall(identity, {
+    toolName: DAILY_HOROSCOPE_TOOL,
+    primaryProfileId: profile.profileId,
+    secondaryProfileId: null,
+    requestArgs: canonicalArgs,
+    requestHash,
+    cacheHit: true,
+    cacheEntryId: cached.cacheEntryId,
+    cacheMonth: cacheDay,
+    questionText: options.questionText || null,
+    source: options.source || 'runtime'
+  });
+
+  dailyHoroscopeReady.add(buildDailyHoroscopeRunKey(identity, profile.profileId, requestHash));
+
+  return {
+    result: clone(cached.response),
+    cacheHit: true,
+    cacheEntry: cached,
+    cacheDay
+  };
+}
+
+async function ensureDailyHoroscope(identity, profile, options = {}) {
+  if (!profile) {
+    return null;
+  }
+
+  const locale = options.locale || getLocale(identity);
+  const requestArgs = buildDailyHoroscopeRequest(profile, locale);
+
+  if (!requestArgs) {
+    return null;
+  }
+
+  const cacheDay = requestArgs.date;
+  const requestHash = buildRequestHash(canonicalizeArgs(requestArgs));
+  const runKey = buildDailyHoroscopeRunKey(identity, profile.profileId, requestHash);
+
+  if (dailyHoroscopeInFlight.has(runKey)) {
+    return dailyHoroscopeInFlight.get(runKey);
+  }
+
+  const task = resolveCachedToolCall(identity, {
+    toolName: DAILY_HOROSCOPE_TOOL,
+    requestArgs,
+    profile,
+    primaryProfileId: profile.profileId,
+    secondaryProfileId: null,
+    cacheMonth: cacheDay,
+    questionText: options.questionText || null,
+    source: options.source || 'runtime',
+    executor: (args) => buildDailyHoroscopeResult(profile, locale, args)
+  })
+    .then((resolved) => {
+      dailyHoroscopeReady.add(runKey);
+      return {
+        ...resolved,
+        cacheDay
+      };
+    })
+    .finally(() => {
+      dailyHoroscopeInFlight.delete(runKey);
+    });
+
+  dailyHoroscopeInFlight.set(runKey, task);
+  return task;
+}
+
+function prewarmDailyHoroscope(identity, profile, options = {}) {
+  if (!profile) {
+    return;
+  }
+
+  const locale = options.locale || getLocale(identity);
+  const requestArgs = buildDailyHoroscopeRequest(profile, locale);
+
+  if (!requestArgs) {
+    return;
+  }
+
+  const runKey = buildDailyHoroscopeRunKey(
+    identity,
+    profile.profileId,
+    buildRequestHash(canonicalizeArgs(requestArgs))
+  );
+
+  if (dailyHoroscopeReady.has(runKey) || dailyHoroscopeInFlight.has(runKey)) {
+    return;
+  }
+
+  ensureDailyHoroscope(identity, profile, {
+    ...options,
+    locale,
+    source: options.source || 'prewarm'
+  })
+    .then((resolved) => {
+      if (!resolved) {
+        return;
+      }
+
+      info('daily horoscope prewarm ready', {
+        stateKey: resolveStateKey(identity),
+        profileId: profile.profileId,
+        locale,
+        cacheDay: resolved.cacheDay,
+        cacheHit: resolved.cacheHit
+      });
+    })
+    .catch((error) => {
+      reportError('tool-cache.prewarm-daily-horoscope', error, {
+        stateKey: resolveStateKey(identity),
+        profileId: profile.profileId,
+        locale,
+        cacheDay: requestArgs.date
+      });
+    });
+}
+
 function prewarmMonthlyTransitTimeline(identity, profile) {
   if (!profile) {
     return;
@@ -714,14 +874,18 @@ module.exports = {
   NATAL_INSIGHTS_TOOL,
   TRANSIT_INSIGHTS_TOOL,
   TRANSIT_TOOL,
+  DAILY_HOROSCOPE_TOOL,
   buildRequestHash,
   canonicalizeArgs,
+  ensureDailyHoroscope,
   ensureNatalInsights,
   ensureMonthlyTransitInsights,
   ensureMonthlyTransitTimeline,
+  getCachedDailyHoroscope,
   getCurrentMonthTransitCache,
   getCurrentMonthWindow,
   inferCacheMonth,
+  prewarmDailyHoroscope,
   prewarmMonthlyTransitTimeline,
   resolveCachedToolCall
 };
