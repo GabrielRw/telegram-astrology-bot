@@ -8087,6 +8087,15 @@ function updateConversationState(identity, route, subjectProfile, secondaryProfi
   }, { notify: false });
 }
 
+function summarizeIdentityForLogs(identity) {
+  return {
+    stateKey: `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`,
+    channel: identity?.channel || null,
+    userId: identity?.userId || null,
+    chatId: identity?.chatId || null
+  };
+}
+
 async function answerConversation(identity, userText) {
   const chatState = getChatState(identity);
   const locale = getLocale(chatState);
@@ -8348,6 +8357,23 @@ async function answerConversation(identity, userText) {
       });
     }
   }
+
+  info('conversation route resolved', {
+    ...summarizeIdentityForLogs(identity),
+    locale,
+    userText,
+    routeKind: route?.kind || null,
+    commonRouteId: route?.commonRouteId || null,
+    canonicalRouteId: canonicalRoute?.id || currentQueryState?.canonicalRouteId || null,
+    executionTarget: executionIntent?.target || null,
+    executionFamily: executionIntent?.family || null,
+    subjectProfileId: subjectProfile?.profileId || null,
+    subjectProfileName: subjectProfile?.profileName || null,
+    secondaryProfileId: secondaryProfile?.profileId || null,
+    explicitFollowUpType: explicitFollowUp?.followUpType || null,
+    rewrittenQuestion: explicitFollowUp?.rewrittenQuestion || null,
+    queryState: currentQueryState || null
+  });
 
   if (
     explicitFollowUp?.followUpType === 'aspect_scope_refinement' &&
@@ -8696,6 +8722,14 @@ async function answerConversation(identity, userText) {
 
   if (shouldUseDirectCanonicalMcpExecution(executionIntent, canonicalRoute)) {
     const canonicalExecutionQuestion = explicitFollowUp?.rewrittenQuestion || effectiveUserQuestion;
+    info('conversation canonical execution starting', {
+      ...summarizeIdentityForLogs(identity),
+      userText,
+      canonicalRouteId: canonicalRoute?.id || null,
+      canonicalExecutionQuestion,
+      executionFamily: executionIntent?.family || null,
+      queryState: currentQueryState || null
+    });
     const directCanonicalResult = await executeCanonicalToolRoute(
       identity,
       canonicalRoute,
@@ -8709,6 +8743,14 @@ async function answerConversation(identity, userText) {
 
     if (directCanonicalResult) {
       if (directCanonicalResult.requiresCitySelection) {
+        info('conversation canonical execution requires city selection', {
+          ...summarizeIdentityForLogs(identity),
+          userText,
+          canonicalRouteId: canonicalRoute?.id || null,
+          executionFamily: executionIntent?.family || null,
+          replayQuestion: directCanonicalResult.replayQuestion || null,
+          candidateCount: Array.isArray(directCanonicalResult.candidates) ? directCanonicalResult.candidates.length : 0
+        });
         pushHistory(identity, 'user', userText);
         pushHistory(identity, 'model', directCanonicalResult.text);
         setLastToolResults(identity, directCanonicalResult.usedTools || []);
@@ -8724,6 +8766,14 @@ async function answerConversation(identity, userText) {
           replayQuestion: directCanonicalResult.replayQuestion || null
         };
       }
+      info('conversation canonical execution complete', {
+        ...summarizeIdentityForLogs(identity),
+        userText,
+        canonicalRouteId: canonicalRoute?.id || null,
+        executionFamily: executionIntent?.family || null,
+        toolName: directCanonicalResult.usedTools?.[0]?.name || null,
+        toolArgs: directCanonicalResult.usedTools?.[0]?.args || null
+      });
       pushHistory(identity, 'user', userText);
       const aiFilteredDirectCanonical = responseMode === 'raw'
         ? await maybeApplyAiGroundedFilter(
