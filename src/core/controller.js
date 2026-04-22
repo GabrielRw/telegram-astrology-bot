@@ -520,7 +520,7 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
       setUiCache(event, {
         ...getUiCache(event),
         citySelection: {
-          question: userText,
+          question: result.replayQuestion || userText,
           candidates: Array.isArray(result.candidates) ? result.candidates : []
         }
       });

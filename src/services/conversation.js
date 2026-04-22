@@ -222,6 +222,15 @@ function sanitizeStructuredQueryPatch(patch = {}) {
   const normalizedPlanet = patch.planet ? parsePlanetFromQuestion(String(patch.planet)) : null;
   const normalizedTransitPlanet = patch.transitPlanet ? parseTransitPlanetFromQuestion(String(patch.transitPlanet)) : null;
   const normalizedNatalPoint = patch.natalPoint ? parseNatalPointFromQuestion(String(patch.natalPoint)) : null;
+  const normalizedFocus = patch.focus ? parseFocusFromQuestion(String(patch.focus)) : null;
+  const normalizedCountryScope = typeof patch.countryScope === 'string'
+    ? String(patch.countryScope).trim().toLowerCase()
+    : null;
+  const normalizedCountries = Array.isArray(patch.countries)
+    ? patch.countries
+      .map((value) => sanitizeCountryCode(value))
+      .filter(Boolean)
+    : [];
   const normalizedAspectTypes = Array.isArray(patch.aspectTypes)
     ? patch.aspectTypes
       .map((value) => parseAspectTypesFromQuestion(String(value)))
@@ -257,8 +266,16 @@ function sanitizeStructuredQueryPatch(patch = {}) {
     next.timeframe = patch.timeframe.trim();
   }
 
-  if (typeof patch.focus === 'string' && patch.focus.trim()) {
-    next.focus = patch.focus.trim();
+  if (normalizedFocus) {
+    next.focus = normalizedFocus;
+  }
+
+  if (['own_country', 'selected_countries', 'all'].includes(normalizedCountryScope || '')) {
+    next.countryScope = normalizedCountryScope;
+  }
+
+  if (normalizedCountries.length > 0) {
+    next.countries = normalizedCountries;
   }
 
   if (typeof patch.body === 'string' && patch.body.trim()) {
@@ -595,6 +612,23 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
     };
   }
 
+  const relocationFocus = parseFocusFromQuestion(value);
+  if (
+    lastResolvedQuestion &&
+    lastRouteKind === 'astrology_relocation' &&
+    relocationFocus &&
+    !looksLikeStandaloneAstrologyQuery(value)
+  ) {
+    return {
+      followUpType: 'relocation_focus_refinement',
+      rewrittenQuestion: `${lastQueryState?.baseQuestion || lastResolvedQuestion}\n\nFocus on ${relocationFocus}.`,
+      routeKind: lastRouteKind,
+      queryPatch: {
+        focus: relocationFocus
+      }
+    };
+  }
+
   if (
     lastResolvedQuestion &&
     lastRouteKind === 'astrology_relocation' &&
@@ -774,6 +808,8 @@ const NON_PROFILE_NAME_TOKENS = new Set([
   'solar', 'return', 'returns', 'ephemeris', 'ephemerides', 'éphémérides', 'synastrie', 'synastry',
   'relocation', 'relocalisation', 'relocalisation', 'astrocartography', 'astrocartographie',
   'day', 'week', 'month', 'jour', 'semaine', 'mois', 'today', 'today?', 'tomorrow', 'hier', 'demain',
+  'career', 'work', 'love', 'home', 'family', 'wellbeing', 'health', 'creativity', 'spiritual',
+  'carrière', 'amour', 'foyer', 'famille', 'bien-être', 'santé', 'créativité', 'spirituel',
   'sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'saturne', 'uranus', 'neptune',
   'pluto', 'pluton', 'node', 'north', 'south', 'ascendant', 'mc', 'ic', 'descendant'
 ]);
@@ -825,7 +861,7 @@ function extractRequestedExternalProfileName(userText, route, activeProfile, sav
     return null;
   }
 
-  if (route?.kind === 'astrology_ephemeris') {
+  if (route?.kind === 'astrology_ephemeris' || route?.kind === 'astrology_relocation') {
     return null;
   }
 
@@ -1064,6 +1100,12 @@ function inferDirectCanonicalRouteForExecutionFamily(executionIntent, userText, 
   const value = normalizeMatchingText(userText);
   switch (executionIntent?.family) {
     case 'mcp_relocation': {
+      if (/\bwhere should i (?:relocate|live|move)\b|\bo[uù]\b.*\b(?:habiter|vivre|d[ée]m[ée]nager|relocaliser)\b/.test(value)) {
+        return getWesternCanonicalRouteById('relocation_recommendations');
+      }
+      if (/selected city:/i.test(String(userText || ''))) {
+        return getWesternCanonicalRouteById('relocation_city_check');
+      }
       if (/\b(check|city|ville|what about|living in|vivre a|vivre a|habiter a|habiter a)\b/.test(value)) {
         return getWesternCanonicalRouteById('relocation_city_check');
       }
@@ -2250,13 +2292,184 @@ function parseFocusFromQuestion(text) {
     ['career', /\bcareer\b|\bwork\b|\bprofession\b|\bcarri[èe]re\b/i],
     ['love', /\blove\b|\bromance\b|\bamour\b/i],
     ['home', /\bhome\b|\bfamily\b|\bfoyer\b|\bfamille\b/i],
-    ['wellbeing', /\bwellbeing\b|\bwell-being\b|\bsant[ée]\b|\bbien[- ]?[êe]tre\b/i],
+    ['health', /\bwellbeing\b|\bwell-being\b|\bhealth\b|\bhealthy\b|\bsant[ée]\b|\bbien[- ]?[êe]tre\b/i],
     ['creativity', /\bcreativity\b|\bcreative\b|\bcr[ée]ativit[ée]\b/i],
     ['spiritual growth', /\bspiritual\b|\bspirituel\b/i]
   ];
 
   const match = pairs.find(([, pattern]) => pattern.test(value));
   return match ? match[0] : null;
+}
+
+function normalizeRelocationFocusForMcp(focus) {
+  switch (String(focus || '').trim().toLowerCase()) {
+    case 'love':
+      return 'romance';
+    case 'spiritual growth':
+      return 'spiritual';
+    case 'health':
+    case 'career':
+    case 'home':
+      return String(focus || '').trim().toLowerCase();
+    default:
+      return null;
+  }
+}
+
+const RELOCATION_COUNTRY_NAME_TO_CODE = {
+  fr: 'FR',
+  france: 'FR',
+  french: 'FR',
+  espagne: 'ES',
+  espana: 'ES',
+  spain: 'ES',
+  espagnol: 'ES',
+  portugal: 'PT',
+  portugais: 'PT',
+  italy: 'IT',
+  italie: 'IT',
+  italian: 'IT',
+  deutschland: 'DE',
+  germany: 'DE',
+  allemagne: 'DE',
+  german: 'DE',
+  uk: 'GB',
+  gb: 'GB',
+  britain: 'GB',
+  britanique: 'GB',
+  england: 'GB',
+  'royaume uni': 'GB',
+  'united kingdom': 'GB',
+  'etats unis': 'US',
+  etatsunis: 'US',
+  'etats-unis': 'US',
+  usa: 'US',
+  us: 'US',
+  'united states': 'US',
+  canada: 'CA',
+  japon: 'JP',
+  japan: 'JP',
+  inde: 'IN',
+  india: 'IN',
+  mexique: 'MX',
+  mexico: 'MX',
+  bresil: 'BR',
+  brazil: 'BR',
+  australie: 'AU',
+  australia: 'AU',
+  suisse: 'CH',
+  switzerland: 'CH',
+  belgique: 'BE',
+  belgium: 'BE',
+  'pays bas': 'NL',
+  'pays-bas': 'NL',
+  netherlands: 'NL',
+  hollande: 'NL',
+  irlande: 'IE',
+  ireland: 'IE',
+  suede: 'SE',
+  sweden: 'SE',
+  norvege: 'NO',
+  norway: 'NO',
+  danemark: 'DK',
+  denmark: 'DK'
+};
+
+function sanitizeCountryCode(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : null;
+}
+
+async function extractRelocationCountryConstraintWithAi(text) {
+  const value = String(text || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  const systemInstruction = [
+    'You extract country restrictions for broad astrocartography relocation recommendation questions.',
+    'Understand English, French, German, and Spanish.',
+    'Return one JSON object and nothing else.',
+    'Allowed keys: countryCode, confidence.',
+    'countryCode must be an ISO-3166 alpha-2 code.',
+    'Return countryCode null when the user names a city instead of constraining recommendations to a country.',
+    'Return countryCode null when no country restriction is present.'
+  ].join('\n');
+
+  const prompt = [
+    `User text: ${value}`,
+    'Examples:',
+    '- "Where should I relocate for health in France?" -> {"countryCode":"FR","confidence":0.97}',
+    '- "Ou devrais-je habiter pour ma carriere en Espagne ?" -> {"countryCode":"ES","confidence":0.96}',
+    '- "What about Paris for health?" -> {"countryCode":null,"confidence":0.92}',
+    '- "Where should I relocate?" -> {"countryCode":null,"confidence":0.9}',
+    'Return JSON now.'
+  ].join('\n');
+
+  try {
+    const parsed = extractJsonObject(await generatePlainText({
+      systemInstruction,
+      userText: prompt,
+      history: [],
+      model: getFastPathModelName()
+    }));
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    const confidence = Number(parsed.confidence || 0);
+    const countryCode = sanitizeCountryCode(parsed.countryCode);
+    if (!countryCode || !Number.isFinite(confidence) || confidence < 0.7) {
+      return null;
+    }
+    return {
+      countryScope: 'selected_countries',
+      countries: [countryCode]
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function extractRelocationCountryConstraint(text) {
+  const value = String(text || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  const normalized = normalizeMatchingText(value)
+    .replace(/[^a-z0-9 -]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const directCodeMatch = value.match(/\b(?:in|within|inside|to|en|au|aux|dans)\s+([A-Za-z]{2})\b/);
+  const directCode = sanitizeCountryCode(directCodeMatch?.[1]);
+  if (directCode) {
+    return {
+      countryScope: 'selected_countries',
+      countries: [directCode]
+    };
+  }
+
+  for (const [name, code] of Object.entries(RELOCATION_COUNTRY_NAME_TO_CODE)) {
+    const pattern = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (pattern.test(normalized)) {
+      return {
+        countryScope: 'selected_countries',
+        countries: [code]
+      };
+    }
+  }
+
+  return extractRelocationCountryConstraintWithAi(value);
+}
+
+function isBroadRelocationRecommendationQuestion(text) {
+  const value = normalizeMatchingText(text)
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return /\bwhere should i (?:relocate|live|move)\b|\bbest places to live\b|\bo[uù] devrais je habiter\b|\bo[uù] est ce que je dois habiter\b|\bo[uù] vivre\b|\bmeilleures villes pour vivre\b/.test(value);
 }
 
 function parseYearFromQuestion(text) {
@@ -2702,7 +2915,7 @@ function buildCanonicalMissingArgsResponse(locale, route, missing) {
   };
 
   const en = {
-    focus: 'I can answer that question, but I first need your main goal: career, love, home, wellbeing, creativity, or spiritual growth.',
+    focus: 'I can answer that question, but I first need your main goal: career, love, home, health, creativity, or spiritual growth.',
     city: 'I can answer that question, but I first need a specific city.',
     transitPlanet: 'I can answer that question, but I first need the transit planet.',
     natalPoint: 'I can answer that question, but I first need the natal point.',
@@ -2717,6 +2930,21 @@ function buildCanonicalMissingArgsResponse(locale, route, missing) {
   return (locale === 'fr' ? fr[first] : en[first]) || (locale === 'fr'
     ? 'Je peux répondre à cette question, mais il me manque un paramètre nécessaire.'
     : 'I can answer that question, but I am missing a required parameter.');
+}
+
+function buildRelocationReplayQuestion(userText, queryState = null) {
+  const baseQuestion = String(queryState?.baseQuestion || userText || '').trim();
+  const focus = queryState?.parameters?.focus || null;
+
+  if (!baseQuestion) {
+    return String(userText || '').trim();
+  }
+
+  if (focus && !parseFocusFromQuestion(baseQuestion)) {
+    return `${baseQuestion}\n\nFocus on ${focus}.`;
+  }
+
+  return baseQuestion;
 }
 
 function buildCanonicalToolPrompt(route, userText, subjectProfile, result, locale) {
@@ -3073,15 +3301,30 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
         secondaryProfileId: secondaryProfile.profileId
       };
     case 'relocation_recommendations': {
-      const focus = parseFocusFromQuestion(userText);
-      if (!focus) {
+      const focus = queryState?.parameters?.focus || parseFocusFromQuestion(userText);
+      const mcpFocus = normalizeRelocationFocusForMcp(focus);
+      if (!mcpFocus) {
         return { missing: ['focus'] };
       }
+      const countryConstraint = queryState?.parameters?.countries?.length
+        ? {
+            countryScope: queryState?.parameters?.countryScope || 'selected_countries',
+            countries: queryState.parameters.countries
+          }
+        : await extractRelocationCountryConstraint(userText);
+      const defaultWorldScope = !countryConstraint && isBroadRelocationRecommendationQuestion(userText)
+        ? { countryScope: 'all' }
+        : null;
+      const effectiveCountryConstraint = countryConstraint || defaultWorldScope;
       return {
         toolName: route.toolTarget,
         requestArgs: {
           natal: flatNatal,
-          focus,
+          focus: mcpFocus,
+          ...(effectiveCountryConstraint?.countryScope ? { country_scope: effectiveCountryConstraint.countryScope } : {}),
+          ...(Array.isArray(effectiveCountryConstraint?.countries) && effectiveCountryConstraint.countries.length > 0
+            ? { countries: effectiveCountryConstraint.countries }
+            : {}),
           limit: 5,
           include_map_lines: true,
           include_crossings: true,
@@ -3315,6 +3558,9 @@ async function executeCanonicalToolRoute(identity, route, userText, subjectProfi
       requiresCitySelection: true,
       candidates: execution.candidates || [],
       cityQuery: execution.cityQuery || null,
+      replayQuestion: route.id === 'relocation_city_check'
+        ? buildRelocationReplayQuestion(userText, queryState)
+        : (queryState?.baseQuestion || userText),
       text: buildCanonicalMissingArgsResponse(locale, route, ['city']),
       usedTools: [],
       renderMode: 'plain'
@@ -6533,7 +6779,7 @@ function buildRawRelocationNeedsText(locale, subjectProfile) {
     en: [
       title,
       'To return grounded relocation results, I need:',
-      '1. Your main goal: career, love, home, wellbeing, creativity, or spiritual growth.',
+      '1. Your main goal: career, love, home, health, creativity, or spiritual growth.',
       '2. One target city, or up to 3 cities/countries to compare.',
       '3. Optional timeframe if the move is tied to a specific month or year.'
     ],
@@ -6565,7 +6811,7 @@ function buildRawRelocationNeedsText(locale, subjectProfile) {
 
 function needsRelocationInputs(userText) {
   const value = String(userText || '').toLowerCase();
-  const hasGoal = /\bcareer\b|\bwork\b|\blove\b|\bhome\b|\bfamily\b|\bwellbeing\b|\bcreativity\b|\bspiritual\b|\bcarri[èe]re\b|\bamour\b|\bfoyer\b|\bfamille\b|\bbien[- ]?[êe]tre\b|\bcr[ée]ativit[ée]\b|\bspirituel\b/i.test(value);
+  const hasGoal = /\bcareer\b|\bwork\b|\blove\b|\bhome\b|\bfamily\b|\bwellbeing\b|\bhealth\b|\bcreativity\b|\bspiritual\b|\bcarri[èe]re\b|\bamour\b|\bfoyer\b|\bfamille\b|\bsant[ée]\b|\bbien[- ]?[êe]tre\b|\bcr[ée]ativit[ée]\b|\bspirituel\b/i.test(value);
   const hasSpecificLocation = /\b(to|in|at|vers|à|a|en|au|aux)\s+[a-zà-ÿ' -]{2,}\b/i.test(value) && !/\b(world|monde|everywhere|partout)\b/i.test(value);
   const isOpenEndedWorldAsk = /\bwhere should i\b|\bo[uù]\b.*\bhabiter\b|\bo[uù]\b.*\bvivre\b|\bdans le monde\b|\bin the world\b/i.test(value);
   return isOpenEndedWorldAsk && !hasGoal && !hasSpecificLocation;
@@ -8083,7 +8329,7 @@ async function answerConversation(identity, userText) {
 
     if (canonicalRoute) {
       route = applyCanonicalRoute(route, canonicalRoute, plannerQuestionText);
-      plannerQuestionText = canonicalRoute.responseShape === 'full_listing'
+      plannerQuestionText = canonicalRoute.responseShape === 'full_listing' || route.kind === 'astrology_relocation'
         ? plannerQuestionText
         : (canonicalRoute.intentSample || plannerQuestionText);
       commonRoute = canonicalRoute?.commonRouteId
@@ -8449,10 +8695,11 @@ async function answerConversation(identity, userText) {
   }
 
   if (shouldUseDirectCanonicalMcpExecution(executionIntent, canonicalRoute)) {
+    const canonicalExecutionQuestion = explicitFollowUp?.rewrittenQuestion || effectiveUserQuestion;
     const directCanonicalResult = await executeCanonicalToolRoute(
       identity,
       canonicalRoute,
-      effectiveUserQuestion,
+      canonicalExecutionQuestion,
       subjectProfile,
       secondaryProfile,
       locale,
@@ -8473,7 +8720,8 @@ async function answerConversation(identity, userText) {
           usedTools: directCanonicalResult.usedTools || [],
           intent: route.kind,
           requiresCitySelection: true,
-          candidates: directCanonicalResult.candidates || []
+          candidates: directCanonicalResult.candidates || [],
+          replayQuestion: directCanonicalResult.replayQuestion || null
         };
       }
       pushHistory(identity, 'user', userText);
