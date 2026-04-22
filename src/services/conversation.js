@@ -2441,7 +2441,7 @@ async function extractRelocationCountryConstraint(text) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  const directCodeMatch = value.match(/\b(?:in|within|inside|to|en|au|aux|dans)\s+([A-Za-z]{2})\b/);
+  const directCodeMatch = value.match(/\b(?:in|within|inside|to|en|au|aux|dans)\s+([A-Z]{2})\b/);
   const directCode = sanitizeCountryCode(directCodeMatch?.[1]);
   if (directCode) {
     return {
@@ -2469,7 +2469,7 @@ function isBroadRelocationRecommendationQuestion(text) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  return /\bwhere should i (?:relocate|live|move)\b|\bbest places to live\b|\bo[uù] devrais je habiter\b|\bo[uù] est ce que je dois habiter\b|\bo[uù] vivre\b|\bmeilleures villes pour vivre\b/.test(value);
+  return /\bwhere should i (?:relocate|live|move)\b|\bbest places to live\b|\bo[uù] devrais je habiter\b|\bo[uù] est ce que je dois habiter\b|\bo[uù] vivre\b|\bmeilleures villes pour vivre\b|\bmeilleur(?:e)?(?:s)? (?:endroit|ville|lieu|places?) .*vivre\b/.test(value);
 }
 
 function parseYearFromQuestion(text) {
