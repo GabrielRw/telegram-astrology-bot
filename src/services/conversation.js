@@ -5127,6 +5127,106 @@ function extractStructuredToolPayload(result) {
   return null;
 }
 
+function getLatestElectionalToolResult(toolResults = []) {
+  const entries = Array.isArray(toolResults) ? toolResults : [];
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!/^v2_western_electional_/i.test(String(entry?.name || ''))) {
+      continue;
+    }
+
+    const payload = extractStructuredToolPayload(entry?.result);
+    const topResult = asArray(payload?.results)[0] || null;
+    if (!payload || !topResult) {
+      continue;
+    }
+
+    return {
+      toolName: String(entry.name),
+      toolArgs: entry?.args || null,
+      payload,
+      topResult
+    };
+  }
+
+  return null;
+}
+
+function isElectionalResultExplanationFollowUp(text) {
+  const value = normalizeMatchingText(text)
+    .replace(/[^a-z0-9?' -]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!value || value.length > 160) {
+    return false;
+  }
+
+  return /\b(what are (these|those) conditions|which conditions|what conditions|what makes (it|this window|this date) (good|favorable|favourable)|why (that|this date|this window)|explain (this|that|the window|the date)|details? on (this|that)|quelles? sont ces conditions|c est quoi ces conditions|pourquoi (cette date|ce moment|ce creneau)|explique (ce|cette) (date|moment|creneau)|plus de details?|detaille|developpe)\b/i.test(value);
+}
+
+function formatElectionalFactorTitles(factors = [], limit = 3) {
+  return asArray(factors)
+    .slice(0, limit)
+    .map((item) => formatScalarValue(item?.title || item?.detail || item?.code))
+    .filter(Boolean);
+}
+
+function buildElectionalResultExplanationResponse(locale, cachedElectionalResult) {
+  const payload = cachedElectionalResult?.payload || {};
+  const topResult = cachedElectionalResult?.topResult || {};
+  const support = formatElectionalFactorTitles(topResult?.supporting_factors, 4);
+  const caution = formatElectionalFactorTitles(topResult?.caution_factors, 3);
+  const dateLabel = formatRawDate(topResult?.event_time_local || topResult?.event_time_utc) || '?';
+  const quality = humanizeRawKey(topResult?.quality_band || topResult?.status || '');
+  const verdict = humanizeRawKey(topResult?.strict_traditional_verdict || '');
+  const bestInWindow = topResult?.best_available_in_window === true;
+
+  if (locale === 'fr') {
+    const lines = [
+      `Pour le créneau du ${dateLabel}, les conditions favorables viennent surtout de : ${support.length > 0 ? support.join(', ') : 'plusieurs facteurs de soutien dans la fenêtre analysée'}.`
+    ];
+
+    if (quality || verdict || bestInWindow) {
+      const meta = [
+        quality ? `qualité globale : ${quality}` : null,
+        verdict ? `verdict traditionnel : ${verdict}` : null,
+        bestInWindow ? 'meilleur créneau disponible dans cette fenêtre' : null
+      ].filter(Boolean);
+      if (meta.length > 0) {
+        lines.push(`En synthèse : ${meta.join(' ; ')}.`);
+      }
+    }
+
+    if (caution.length > 0) {
+      lines.push(`Les points de vigilance sont : ${caution.join(', ')}.`);
+    }
+
+    return normalizeAssistantText(lines.join('\n\n'));
+  }
+
+  const lines = [
+    `For the ${dateLabel} window, the strongest supporting conditions are: ${support.length > 0 ? support.join(', ') : 'several supportive factors in the scanned window'}.`
+  ];
+
+  if (quality || verdict || bestInWindow) {
+    const meta = [
+      quality ? `overall quality: ${quality}` : null,
+      verdict ? `traditional verdict: ${verdict}` : null,
+      bestInWindow ? 'best available window in that search range' : null
+    ].filter(Boolean);
+    if (meta.length > 0) {
+      lines.push(`Summary: ${meta.join('; ')}.`);
+    }
+  }
+
+  if (caution.length > 0) {
+    lines.push(`Main caution factors: ${caution.join(', ')}.`);
+  }
+
+  return normalizeAssistantText(lines.join('\n\n'));
+}
+
 function formatAstroLineLabel(body, angle) {
   const angleMap = {
     asc: 'ASC',
@@ -8896,6 +8996,16 @@ async function answerConversation(identity, userText) {
   const responsePerspective = shouldUseThirdPersonVoice(userText, subjectProfile, activeProfile)
     ? 'third_person'
     : 'second_person';
+  const electionalContextRouteId = explicitFollowUp?.canonicalRouteId
+    || conversationContext?.lastCommonRouteId
+    || currentQueryState?.canonicalRouteId
+    || null;
+  const cachedElectionalResult = (
+    conversationContext?.lastResultFamily === 'mcp_electional' &&
+    ELECTIONAL_ROUTE_IDS.has(electionalContextRouteId || '')
+  )
+    ? getLatestElectionalToolResult(chatState.lastToolResults || [])
+    : null;
 
   if (targetContext.needsClarification) {
     const text = buildProfileResolutionResponse(locale, route);
@@ -8942,6 +9052,30 @@ async function answerConversation(identity, userText) {
         es: 'Necesito tus datos de nacimiento antes de poder responder preguntas astrológicas personales a partir de tu carta.'
       }[locale] || 'I need your birth details before I can answer personal astrology questions from your chart.',
       usedTools: [],
+      intent: route.kind
+    };
+  }
+
+  if (
+    cachedElectionalResult &&
+    isElectionalResultExplanationFollowUp(userText)
+  ) {
+    const text = buildElectionalResultExplanationResponse(locale, cachedElectionalResult);
+    pushHistory(identity, 'user', userText);
+    pushHistory(identity, 'model', text);
+    setLastToolResults(identity, chatState.lastToolResults || []);
+    updateConversationState(
+      identity,
+      route,
+      subjectProfile,
+      secondaryProfile,
+      explicitFollowUp?.rewrittenQuestion || plannerQuestionText,
+      currentQueryState,
+      { target: 'mcp', family: 'mcp_electional' }
+    );
+    return {
+      text,
+      usedTools: chatState.lastToolResults || [],
       intent: route.kind
     };
   }
