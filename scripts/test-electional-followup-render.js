@@ -12,7 +12,7 @@ const payload = {
       { title: 'Jupiter dignified' },
       { title: 'Venus dignified' },
       { title: '2nd ruler dignified' },
-      { title: '11th ruler dignified' }
+      { title: 'Venus in a finance supportive house' }
     ],
     caution_factors: [
       { title: 'Saturn debilitated' },
@@ -28,12 +28,14 @@ function testFrench() {
   assert.match(text, /Jupiter est en bonne dignité/i);
   assert.match(text, /Vénus est en bonne dignité/i);
   assert.match(text, /maître de la maison 2 est en bonne dignité/i);
+  assert.match(text, /Vénus se trouve dans une maison favorable aux finances/i);
   assert.match(text, /qualité globale est mitigée/i);
   assert.match(text, /verdict traditionnel reste favorable/i);
   assert.match(text, /Saturne est affaibli/i);
   assert.doesNotMatch(text, /\bUTC\b/);
   assert.doesNotMatch(text, /\bJupiter dignified\b/i);
   assert.doesNotMatch(text, /\b2nd ruler dignified\b/i);
+  assert.doesNotMatch(text, /\bfinance supportive house\b/i);
 }
 
 function testEnglish() {
@@ -42,6 +44,7 @@ function testEnglish() {
   assert.match(text, /Jupiter is dignified/i);
   assert.match(text, /Venus is dignified/i);
   assert.match(text, /the ruler of the 2 house is dignified|the ruler of the 2nd house is dignified/i);
+  assert.match(text, /Venus is in a house that supports finance/i);
   assert.match(text, /overall quality is mixed/i);
   assert.match(text, /traditional verdict stays sound/i);
   assert.match(text, /Saturn is debilitated/i);
@@ -55,6 +58,7 @@ function testGerman() {
   assert.match(text, /Jupiter steht in guter Würde/i);
   assert.match(text, /Venus steht in guter Würde/i);
   assert.match(text, /Herrscher des 2\. Hauses steht in guter Würde/i);
+  assert.match(text, /Venus steht in einem Haus, das besonders günstig für Finanzen ist/i);
   assert.match(text, /Gesamtqualität ist gemischt/i);
   assert.match(text, /traditionelle Urteil bleibt tragfähig/i);
   assert.match(text, /Saturn ist geschwächt/i);
@@ -68,6 +72,7 @@ function testSpanish() {
   assert.match(text, /Júpiter está bien dignificado/i);
   assert.match(text, /Venus está bien dignificado/i);
   assert.match(text, /regente de la casa 2 está bien dignificado/i);
+  assert.match(text, /Venus está en una casa favorable para las finanzas/i);
   assert.match(text, /calidad general es mixta/i);
   assert.match(text, /veredicto tradicional sigue siendo favorable/i);
   assert.match(text, /Saturno está debilitado/i);
@@ -75,9 +80,17 @@ function testSpanish() {
   assert.doesNotMatch(text, /\bJupiter Dignified\b/i);
 }
 
+function testElectionalExplanationFollowUpDetection() {
+  assert.equal(__test.isElectionalResultExplanationFollowUp('quels sont ces facteurs ?'), true);
+  assert.equal(__test.isElectionalResultExplanationFollowUp('what are these factors?'), true);
+  assert.equal(__test.isElectionalResultExplanationFollowUp('welche faktoren?'), true);
+  assert.equal(__test.isElectionalResultExplanationFollowUp('cuales son estos factores?'), true);
+}
+
 testFrench();
 testEnglish();
 testGerman();
 testSpanish();
+testElectionalExplanationFollowUpDetection();
 
 console.log('ok');

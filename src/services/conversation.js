@@ -312,6 +312,58 @@ function getPreviousUserQuestion(history = [], userText = '') {
     ?.text || null;
 }
 
+function getPreviousAssistantAnswer(history = []) {
+  return (Array.isArray(history) ? history : [])
+    .slice()
+    .reverse()
+    .find((item) => item?.role === 'model' && String(item.text || '').trim())
+    ?.text || null;
+}
+
+function truncateArtifactSummary(text, maxLength = 320) {
+  const normalized = normalizeAssistantText(text);
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function getLastAnswerArtifact(conversationContext) {
+  if (!conversationContext?.lastAnswerArtifact || typeof conversationContext.lastAnswerArtifact !== 'object') {
+    return null;
+  }
+
+  const artifact = conversationContext.lastAnswerArtifact;
+  return {
+    family: artifact.family ? String(artifact.family) : null,
+    routeKind: artifact.routeKind ? String(artifact.routeKind) : null,
+    routeId: artifact.routeId ? String(artifact.routeId) : null,
+    summary: artifact.summary ? String(artifact.summary) : null,
+    toolNames: Array.isArray(artifact.toolNames) ? artifact.toolNames.map((value) => String(value)) : []
+  };
+}
+
+function buildConversationAnswerArtifact(route, executionIntent = null, queryState = null, finalText = '', toolResults = []) {
+  const routeId = queryState?.canonicalRouteId || route?.commonRouteId || null;
+  const toolNames = asArray(toolResults)
+    .map((entry) => String(entry?.name || '').trim())
+    .filter(Boolean)
+    .slice(-4);
+
+  return {
+    family: executionIntent?.family || route?.kind || null,
+    routeKind: route?.kind || null,
+    routeId,
+    summary: truncateArtifactSummary(finalText),
+    toolNames
+  };
+}
+
 function sanitizeStructuredQueryPatch(patch = {}) {
   if (!patch || typeof patch !== 'object') {
     return {};
@@ -627,6 +679,47 @@ function parseRequestedResultLimit(text) {
   }
 
   return null;
+}
+
+function looksLikeReferentialFollowUp(text) {
+  const value = String(text || '').trim().toLowerCase();
+  if (!value || value.length > 220) {
+    return false;
+  }
+
+  const referentialCue = /\b(this|that|these|those|it|them|ce|cette|ces|cela|ca|ça|das|diese|dieser|esto|eso|estos|esas|esa)\b/i.test(value);
+  const followUpCue = /\b(why|verify|recheck|check|confirm|clarify|explain|details?|meaning|factors?|risks?|cautions?|which one|which ones|what about|and in|and for|pourquoi|verifie|vérifie|confirme|explique|detaille|détaille|plus de details|plus de détails|facteurs?|risques?|prudence|quels?|quelles?|et en|et pour|welche|warum|prufe|prüfe|erklare|erkläre|faktoren|risiken|y en|y para|verifica|explica|detalles|factores|riesgos)\b/i.test(value);
+  const shortReferential = /^(?:ok|okay|d accord|dac|alors|et|and|und|y|dis moi|tell me)\b/i.test(value);
+
+  return (referentialCue && followUpCue) || shortReferential || followUpCue;
+}
+
+function detectArtifactFollowUpLocally(userText, conversationContext, history = []) {
+  const value = String(userText || '').trim();
+  const artifact = getLastAnswerArtifact(conversationContext);
+  const lastResolvedQuestion = getLastResolvedQuestion(conversationContext, history, userText);
+  const lastQueryState = getLastQueryState(conversationContext);
+  const lastRouteKind = conversationContext?.lastResponseRoute || null;
+
+  if (!artifact || !lastResolvedQuestion || !lastRouteKind) {
+    return null;
+  }
+
+  if (looksLikeStandaloneAstrologyQuery(value) && !looksLikeReferentialFollowUp(value)) {
+    return null;
+  }
+
+  if (!looksLikeReferentialFollowUp(value)) {
+    return null;
+  }
+
+  return {
+    followUpType: 'artifact_follow_up',
+    rewrittenQuestion: `${lastQueryState?.baseQuestion || lastResolvedQuestion}\n\nFollow-up request: ${value}`,
+    routeKind: lastRouteKind,
+    canonicalRouteId: lastQueryState?.canonicalRouteId || artifact.routeId || null,
+    artifactFamily: artifact.family || null
+  };
 }
 
 function wantsStrongestSubset(text) {
@@ -1549,6 +1642,76 @@ async function resolveFollowUpWithAi(locale, userText, conversationContext, rout
       : (lastQueryState?.baseQuestion || lastResolvedQuestion),
     queryPatch,
     routeKind: conversationContext?.lastResponseRoute || route?.kind || null
+  };
+}
+
+async function resolveArtifactFollowUpWithAi(locale, userText, conversationContext, history = [], route = null) {
+  const artifact = getLastAnswerArtifact(conversationContext);
+  const lastResolvedQuestion = getLastResolvedQuestion(conversationContext, history, userText);
+  const lastQueryState = getLastQueryState(conversationContext);
+  const lastAssistantAnswer = getPreviousAssistantAnswer(history);
+
+  if (!artifact || !lastResolvedQuestion) {
+    return null;
+  }
+
+  const value = String(userText || '').trim();
+  if (!value || value.length > 220) {
+    return null;
+  }
+
+  if (looksLikeStandaloneAstrologyQuery(value) && !looksLikeReferentialFollowUp(value)) {
+    return null;
+  }
+
+  const systemInstruction = [
+    'You detect whether the user is referring to the previous astrology answer, even when the wording is short, vague, or indirect.',
+    `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}, but output JSON only.`,
+    'Return one JSON object and nothing else.',
+    'Allowed keys: isFollowUp, intentType, rewrittenQuestion, confidence, reason.',
+    'intentType must be one of: explain_previous_answer, verify_previous_answer, refine_previous_answer, compare_previous_answer, new_question.',
+    'If it is a follow-up, rewrite it as one complete standalone astrology question that keeps the previous scope and target.'
+  ].join('\n');
+
+  const prompt = [
+    `Current message: ${value}`,
+    `Previous resolved question: ${lastResolvedQuestion}`,
+    `Previous route kind: ${conversationContext?.lastResponseRoute || route?.kind || 'unknown'}`,
+    `Previous result family: ${artifact.family || conversationContext?.lastResultFamily || 'unknown'}`,
+    `Previous route id: ${artifact.routeId || conversationContext?.lastCommonRouteId || 'unknown'}`,
+    `Previous artifact summary: ${artifact.summary || 'none'}`,
+    `Previous answer excerpt: ${truncateArtifactSummary(lastAssistantAnswer || '', 420) || 'none'}`,
+    'Return JSON now.'
+  ].join('\n');
+
+  let parsed = null;
+  try {
+    parsed = extractJsonObject(await generatePlainText({
+      systemInstruction,
+      userText: prompt,
+      history: [],
+      model: getFastPathModelName()
+    }));
+  } catch (_error) {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+
+  const confidence = Number(parsed.confidence || 0);
+  if (parsed.isFollowUp !== true || confidence < 0.72 || !parsed.rewrittenQuestion) {
+    return null;
+  }
+
+  return {
+    followUpType: 'artifact_ai_follow_up',
+    rewrittenQuestion: String(parsed.rewrittenQuestion),
+    routeKind: conversationContext?.lastResponseRoute || route?.kind || null,
+    canonicalRouteId: lastQueryState?.canonicalRouteId || artifact.routeId || null,
+    artifactFamily: artifact.family || null,
+    artifactIntentType: parsed.intentType ? String(parsed.intentType) : null
   };
 }
 
@@ -5162,7 +5325,7 @@ function isElectionalResultExplanationFollowUp(text) {
     return false;
   }
 
-  return /\b(why|what are (these|those) conditions|which conditions|what conditions|what makes (it|this window|this date) (good|favorable|favourable)|why (that|this date|this window)|explain (this|that|the window|the date)|details? on (this|that)|quelles? sont ces conditions|c est quoi ces conditions|pourquoi|pourquoi (cette date|ce moment|ce creneau)|explique (ce|cette) (date|moment|creneau)|plus de details?|detaille|developpe)\b/i.test(value);
+  return /\b(why|what are (these|those) conditions|which conditions|what conditions|what are (these|those) factors|which factors|what factors|what makes (it|this window|this date) (good|favorable|favourable)|why (that|this date|this window)|explain (this|that|the window|the date)|details? on (this|that)|quelles? sont ces conditions|quels? sont ces facteurs|c est quoi ces conditions|c est quoi ces facteurs|pourquoi|pourquoi (cette date|ce moment|ce creneau)|explique (ce|cette) (date|moment|creneau)|plus de details?|detaille|developpe|welche faktoren|was sind diese faktoren|que factores|cuales son estos factores)\b/i.test(value);
 }
 
 function localizeElectionalQuality(locale, value) {
@@ -5621,8 +5784,16 @@ function localizeElectionalFactor(locale, value) {
 
   const normalized = rendered.trim();
   const lower = normalized.toLowerCase();
+  const supportiveHouseMatch = normalized.match(/^([A-Za-z]+)\s+in a\s+(.+?)\s+supportive house$/i);
 
   if (locale === 'fr') {
+    if (supportiveHouseMatch) {
+      const topic = supportiveHouseMatch[2].toLowerCase() === 'finance'
+        ? 'aux finances'
+        : `à ${supportiveHouseMatch[2].toLowerCase()}`;
+      return `${localizePlanetName(locale, supportiveHouseMatch[1])} se trouve dans une maison favorable ${topic}`;
+    }
+
     const planetDignifiedMatch = normalized.match(/^([A-Za-z]+)\s+dignified$/i);
     if (planetDignifiedMatch) {
       return `${localizePlanetName(locale, planetDignifiedMatch[1])} est en bonne dignité`;
@@ -5659,6 +5830,13 @@ function localizeElectionalFactor(locale, value) {
   }
 
   if (locale === 'de') {
+    if (supportiveHouseMatch) {
+      const topic = supportiveHouseMatch[2].toLowerCase() === 'finance'
+        ? 'für Finanzen'
+        : `für ${supportiveHouseMatch[2].toLowerCase()}`;
+      return `${localizePlanetName(locale, supportiveHouseMatch[1])} steht in einem Haus, das besonders günstig ${topic} ist`;
+    }
+
     const planetDignifiedMatch = normalized.match(/^([A-Za-z]+)\s+dignified$/i);
     if (planetDignifiedMatch) {
       return `${localizePlanetName(locale, planetDignifiedMatch[1])} steht in guter Würde`;
@@ -5695,6 +5873,13 @@ function localizeElectionalFactor(locale, value) {
   }
 
   if (locale === 'es') {
+    if (supportiveHouseMatch) {
+      const topic = supportiveHouseMatch[2].toLowerCase() === 'finance'
+        ? 'las finanzas'
+        : supportiveHouseMatch[2].toLowerCase();
+      return `${localizePlanetName(locale, supportiveHouseMatch[1])} está en una casa favorable para ${topic}`;
+    }
+
     const planetDignifiedMatch = normalized.match(/^([A-Za-z]+)\s+dignified$/i);
     if (planetDignifiedMatch) {
       return `${localizePlanetName(locale, planetDignifiedMatch[1])} está bien dignificado`;
@@ -5731,6 +5916,13 @@ function localizeElectionalFactor(locale, value) {
   }
 
   if (locale === 'en') {
+    if (supportiveHouseMatch) {
+      const topic = supportiveHouseMatch[2].toLowerCase() === 'finance'
+        ? 'finance'
+        : supportiveHouseMatch[2].toLowerCase();
+      return `${localizePlanetName(locale, supportiveHouseMatch[1])} is in a house that supports ${topic}`;
+    }
+
     const planetDignifiedMatch = normalized.match(/^([A-Za-z]+)\s+dignified$/i);
     if (planetDignifiedMatch) {
       return `${localizePlanetName(locale, planetDignifiedMatch[1])} is dignified`;
@@ -9552,8 +9744,40 @@ function updateConversationState(identity, route, subjectProfile, secondaryProfi
     lastAnswerStyle: route?.answerStyle || null,
     lastResolvedQuestion: resolvedQuestion || null,
     lastCommonRouteId: route?.commonRouteId || null,
-    lastQueryState: queryState || null
+    lastQueryState: queryState || null,
+    lastAnswerArtifact: executionIntent?.artifact || null
   }, { notify: false });
+}
+
+function persistConversationAnswerState(
+  identity,
+  route,
+  subjectProfile,
+  secondaryProfile = null,
+  resolvedQuestion = null,
+  queryState = null,
+  executionIntent = null,
+  finalText = '',
+  toolResults = []
+) {
+  const nextExecutionIntent = executionIntent
+    ? {
+        ...executionIntent,
+        artifact: buildConversationAnswerArtifact(route, executionIntent, queryState, finalText, toolResults)
+      }
+    : {
+        artifact: buildConversationAnswerArtifact(route, null, queryState, finalText, toolResults)
+      };
+
+  updateConversationState(
+    identity,
+    route,
+    subjectProfile,
+    secondaryProfile,
+    resolvedQuestion,
+    queryState,
+    nextExecutionIntent
+  );
 }
 
 function summarizeIdentityForLogs(identity) {
@@ -9574,6 +9798,12 @@ async function answerConversation(identity, userText) {
   let explicitFollowUp = shouldBypassFollowUpInheritance
     ? null
     : detectExplicitFollowUp(userText, conversationContext, chatState.history);
+  if (!explicitFollowUp && !shouldBypassFollowUpInheritance) {
+    explicitFollowUp = detectArtifactFollowUpLocally(userText, conversationContext, chatState.history);
+  }
+  if (!explicitFollowUp && !shouldBypassFollowUpInheritance) {
+    explicitFollowUp = await resolveArtifactFollowUpWithAi(locale, userText, conversationContext, chatState.history, null);
+  }
   if (!explicitFollowUp && !shouldBypassFollowUpInheritance) {
     explicitFollowUp = await resolveFollowUpWithAi(locale, userText, conversationContext, null);
   }
@@ -9598,10 +9828,10 @@ async function answerConversation(identity, userText) {
 
   if (route.kind === 'system_meta') {
     const text = buildSystemMetaResponse(locale, getChatState(identity), activeProfile);
-    updateConversationState(identity, route, activeProfile, null, plannerQuestionText);
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
     setLastToolResults(identity, []);
+    persistConversationAnswerState(identity, route, activeProfile, null, plannerQuestionText, null, null, text, []);
     return {
       text,
       usedTools: [],
@@ -9611,10 +9841,10 @@ async function answerConversation(identity, userText) {
 
   if (route.kind === 'profile_management') {
     const text = buildProfileManagementResponse(locale);
-    updateConversationState(identity, route, activeProfile, null, plannerQuestionText);
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
     setLastToolResults(identity, []);
+    persistConversationAnswerState(identity, route, activeProfile, null, plannerQuestionText, null, null, text, []);
     return {
       text,
       usedTools: [],
@@ -9627,10 +9857,10 @@ async function answerConversation(identity, userText) {
       ? await profiles.getProfileById(identity, conversationContext.lastResponseProfileId)
       : activeProfile;
     const text = buildClarificationResponse(locale, activeProfile, referencedProfile, conversationContext);
-    updateConversationState(identity, route, referencedProfile || activeProfile, null, plannerQuestionText);
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
     setLastToolResults(identity, []);
+    persistConversationAnswerState(identity, route, referencedProfile || activeProfile, null, plannerQuestionText, null, null, text, []);
     return {
       text,
       usedTools: [],
@@ -9672,6 +9902,7 @@ async function answerConversation(identity, userText) {
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
     setLastToolResults(identity, []);
+    persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, text, []);
     return {
       text,
       usedTools: [],
@@ -9694,6 +9925,7 @@ async function answerConversation(identity, userText) {
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
     setLastToolResults(identity, []);
+    persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, text, []);
     return {
       text,
       usedTools: [],
@@ -9727,14 +9959,16 @@ async function answerConversation(identity, userText) {
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
     setLastToolResults(identity, chatState.lastToolResults || []);
-    updateConversationState(
+    persistConversationAnswerState(
       identity,
       route,
       subjectProfile,
       secondaryProfile,
       explicitFollowUp?.rewrittenQuestion || plannerQuestionText,
       currentQueryState,
-      { target: 'mcp', family: 'mcp_electional' }
+      { target: 'mcp', family: 'mcp_electional' },
+      text,
+      chatState.lastToolResults || []
     );
     return {
       text,
@@ -9775,7 +10009,7 @@ async function answerConversation(identity, userText) {
         pushHistory(identity, 'user', userText);
         pushHistory(identity, 'model', text);
         setLastToolResults(identity, []);
-        updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, null);
+        persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, null, text, []);
         return {
           text,
           usedTools: [],
@@ -9801,7 +10035,7 @@ async function answerConversation(identity, userText) {
       pushHistory(identity, 'user', userText);
       pushHistory(identity, 'model', text);
       setLastToolResults(identity, []);
-      updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, null);
+      persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, null, text, []);
       return {
         text,
         usedTools: [],
@@ -9936,22 +10170,19 @@ async function answerConversation(identity, userText) {
         : [refinedListingResult.text].filter(Boolean);
       pushHistory(identity, 'user', userText);
       pushHistory(identity, 'model', textParts.join('\n\n'));
-      setLastToolResults(identity, [{
+      const usedTools = [{
         name: 'get_cached_minor_aspects',
         args: { requestedPlanet: requestedPlanet || null, limit: requestedLimit || null },
         result: { aspects: refinedAspects }
-      }]);
-      updateConversationState(identity, route, subjectProfile, secondaryProfile, explicitFollowUp.rewrittenQuestion || plannerQuestionText, currentQueryState, executionIntent);
+      }];
+      setLastToolResults(identity, usedTools);
+      persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, explicitFollowUp.rewrittenQuestion || plannerQuestionText, currentQueryState, executionIntent, textParts.join('\n\n'), usedTools);
 
       return {
         text: textParts[0] || '',
         textParts,
         renderMode: refinedListingResult.renderMode || 'plain',
-        usedTools: [{
-          name: 'get_cached_minor_aspects',
-          args: { requestedPlanet: requestedPlanet || null, limit: requestedLimit || null },
-          result: { aspects: refinedAspects }
-        }],
+        usedTools,
         intent: route.kind
       };
     }
@@ -9984,7 +10215,7 @@ async function answerConversation(identity, userText) {
       pushHistory(identity, 'user', userText);
       pushHistory(identity, 'model', textParts.join('\n\n'));
       setLastToolResults(identity, fullListingResult.usedTools || []);
-      updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent);
+      persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, textParts.join('\n\n'), fullListingResult.usedTools || []);
 
       return {
         text: textParts[0] || '',
@@ -10184,7 +10415,7 @@ async function answerConversation(identity, userText) {
       : validateFinalAnswer(fastPathResult.text, route, locale);
     pushHistory(identity, 'model', finalText);
     setLastToolResults(identity, fastPathResult.usedTools);
-    updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent);
+    persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, fastPathResult.usedTools);
 
     return {
       text: finalText,
@@ -10238,7 +10469,7 @@ async function answerConversation(identity, userText) {
           : validateFinalAnswer(exactTransitResult.text, route, locale);
         pushHistory(identity, 'model', finalText);
         setLastToolResults(identity, exactTransitResult.usedTools || []);
-        updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent);
+        persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, exactTransitResult.usedTools || []);
 
         return {
           text: finalText,
@@ -10289,7 +10520,7 @@ async function answerConversation(identity, userText) {
         pushHistory(identity, 'user', userText);
         pushHistory(identity, 'model', directCanonicalResult.text);
         setLastToolResults(identity, directCanonicalResult.usedTools || []);
-        updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent);
+        persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, directCanonicalResult.text, directCanonicalResult.usedTools || []);
         return {
           text: directCanonicalResult.text,
           textParts: directCanonicalResult.textParts,
@@ -10333,7 +10564,7 @@ async function answerConversation(identity, userText) {
         : validateFinalAnswer(directCanonicalResult.text, route, locale);
       pushHistory(identity, 'model', finalText);
       setLastToolResults(identity, directCanonicalResult.usedTools || []);
-      updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent);
+      persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, directCanonicalResult.usedTools || []);
 
       return {
         text: finalText,
@@ -10462,7 +10693,7 @@ async function answerConversation(identity, userText) {
     : validateFinalAnswer(result.text, route, locale);
   pushHistory(identity, 'model', finalText);
   setLastToolResults(identity, result.toolResults);
-  updateConversationState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent);
+  persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, result.toolResults);
 
   return {
     text: finalText,
@@ -10479,6 +10710,7 @@ module.exports = {
     buildElectionalResultExplanationResponse,
     formatElectionalEventTimeLabel,
     localizeElectionalFactor,
+    buildConversationAnswerArtifact,
     buildSecondaryProgressionsRawResponse,
     buildSolarReturnRawResponse,
     buildTransitSearchInterpretiveResponse,
@@ -10487,6 +10719,8 @@ module.exports = {
     buildAnnualProfectionsRawResponse,
     buildRelocationRawResponse,
     buildEphemerisRawResponse,
-    buildTransitSearchRawResponse
+    buildTransitSearchRawResponse,
+    isElectionalResultExplanationFollowUp,
+    detectArtifactFollowUpLocally
   }
 };
