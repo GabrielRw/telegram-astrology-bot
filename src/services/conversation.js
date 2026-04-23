@@ -5185,6 +5185,28 @@ function localizeElectionalQuality(locale, value) {
     },
     en: {
       very_strong: 'very strong'
+    },
+    de: {
+      strong: 'stark',
+      very_strong: 'sehr stark',
+      excellent: 'ausgezeichnet',
+      good: 'gut',
+      mixed: 'gemischt',
+      moderate: 'moderat',
+      weak: 'schwach',
+      poor: 'schwach',
+      rejected: 'ungünstig'
+    },
+    es: {
+      strong: 'sólida',
+      very_strong: 'muy sólida',
+      excellent: 'excelente',
+      good: 'buena',
+      mixed: 'mixta',
+      moderate: 'moderada',
+      weak: 'débil',
+      poor: 'débil',
+      rejected: 'desfavorable'
     }
   };
 
@@ -5204,6 +5226,20 @@ function localizeElectionalVerdict(locale, value) {
       mixed: 'mitigé',
       weak: 'fragile',
       rejected: 'déconseillé'
+    },
+    de: {
+      sound: 'tragfähig',
+      acceptable: 'akzeptabel',
+      mixed: 'gemischt',
+      weak: 'fragil',
+      rejected: 'nicht empfohlen'
+    },
+    es: {
+      sound: 'favorable',
+      acceptable: 'aceptable',
+      mixed: 'mixto',
+      weak: 'frágil',
+      rejected: 'desaconsejado'
     }
   };
 
@@ -5220,8 +5256,33 @@ function joinLocalizedList(locale, values = []) {
     return items[0];
   }
 
-  const conjunction = locale === 'fr' ? ' et ' : ' and ';
+  const conjunction = locale === 'fr'
+    ? ' et '
+    : (locale === 'de' ? ' und ' : (locale === 'es' ? ' y ' : ' and '));
   return `${items.slice(0, -1).join(', ')}${conjunction}${items[items.length - 1]}`;
+}
+
+function formatEnglishOrdinal(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return String(value || '');
+  }
+
+  const mod100 = number % 100;
+  if (mod100 >= 11 && mod100 <= 13) {
+    return `${number}th`;
+  }
+
+  switch (number % 10) {
+    case 1:
+      return `${number}st`;
+    case 2:
+      return `${number}nd`;
+    case 3:
+      return `${number}rd`;
+    default:
+      return `${number}th`;
+  }
 }
 
 function formatElectionalHouseLabel(locale, houseNumber) {
@@ -5229,7 +5290,15 @@ function formatElectionalHouseLabel(locale, houseNumber) {
     return `le maître de la maison ${houseNumber}`;
   }
 
-  return `the ruler of the ${houseNumber} house`;
+  if (locale === 'de') {
+    return `der Herrscher des ${houseNumber}. Hauses`;
+  }
+
+  if (locale === 'es') {
+    return `el regente de la casa ${houseNumber}`;
+  }
+
+  return `the ruler of the ${formatEnglishOrdinal(houseNumber)} house`;
 }
 
 function localizePlanetName(locale, value) {
@@ -5239,6 +5308,18 @@ function localizePlanetName(locale, value) {
   }
 
   const localized = {
+    en: {
+      sun: 'Sun',
+      moon: 'Moon',
+      mercury: 'Mercury',
+      venus: 'Venus',
+      mars: 'Mars',
+      jupiter: 'Jupiter',
+      saturn: 'Saturn',
+      uranus: 'Uranus',
+      neptune: 'Neptune',
+      pluto: 'Pluto'
+    },
     fr: {
       sun: 'le Soleil',
       moon: 'la Lune',
@@ -5250,10 +5331,225 @@ function localizePlanetName(locale, value) {
       uranus: 'Uranus',
       neptune: 'Neptune',
       pluto: 'Pluton'
+    },
+    de: {
+      sun: 'die Sonne',
+      moon: 'der Mond',
+      mercury: 'Merkur',
+      venus: 'Venus',
+      mars: 'Mars',
+      jupiter: 'Jupiter',
+      saturn: 'Saturn',
+      uranus: 'Uranus',
+      neptune: 'Neptun',
+      pluto: 'Pluto'
+    },
+    es: {
+      sun: 'el Sol',
+      moon: 'la Luna',
+      mercury: 'Mercurio',
+      venus: 'Venus',
+      mars: 'Marte',
+      jupiter: 'Júpiter',
+      saturn: 'Saturno',
+      uranus: 'Urano',
+      neptune: 'Neptuno',
+      pluto: 'Plutón'
     }
   };
 
-  return localized[locale]?.[normalized] || humanizeRawKey(value);
+  return localized[locale]?.[normalized] || null;
+}
+
+function localizeAngleName(locale, value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const localized = {
+    ascendant: {
+      en: 'Ascendant',
+      fr: 'Ascendant',
+      de: 'Aszendent',
+      es: 'Ascendente'
+    },
+    midheaven: {
+      en: 'Midheaven',
+      fr: 'Milieu du Ciel',
+      de: 'Medium Coeli',
+      es: 'Medio Cielo'
+    }
+  };
+
+  return localized[normalized]?.[locale] || localized[normalized]?.en || null;
+}
+
+function localizeSignName(locale, value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const localized = {
+    aries: { en: 'Aries', fr: 'Bélier', de: 'Widder', es: 'Aries' },
+    taurus: { en: 'Taurus', fr: 'Taureau', de: 'Stier', es: 'Tauro' },
+    gemini: { en: 'Gemini', fr: 'Gémeaux', de: 'Zwillinge', es: 'Géminis' },
+    cancer: { en: 'Cancer', fr: 'Cancer', de: 'Krebs', es: 'Cáncer' },
+    leo: { en: 'Leo', fr: 'Lion', de: 'Löwe', es: 'Leo' },
+    virgo: { en: 'Virgo', fr: 'Vierge', de: 'Jungfrau', es: 'Virgo' },
+    libra: { en: 'Libra', fr: 'Balance', de: 'Waage', es: 'Libra' },
+    scorpio: { en: 'Scorpio', fr: 'Scorpion', de: 'Skorpion', es: 'Escorpio' },
+    sagittarius: { en: 'Sagittarius', fr: 'Sagittaire', de: 'Schütze', es: 'Sagitario' },
+    capricorn: { en: 'Capricorn', fr: 'Capricorne', de: 'Steinbock', es: 'Capricornio' },
+    aquarius: { en: 'Aquarius', fr: 'Verseau', de: 'Wassermann', es: 'Acuario' },
+    pisces: { en: 'Pisces', fr: 'Poissons', de: 'Fische', es: 'Piscis' }
+  };
+
+  return localized[normalized]?.[locale] || localized[normalized]?.en || humanizeRawKey(value);
+}
+
+function localizeAstroPointName(locale, value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return localizeAngleName(locale, normalized)
+    || localizePlanetName(locale, normalized)
+    || humanizeRawKey(normalized);
+}
+
+function localizeLongitudeText(locale, value) {
+  const text = formatScalarValue(value);
+  if (!text) {
+    return null;
+  }
+
+  return text.replace(
+    /\b(Aries|Taurus|Gemini|Cancer|Leo|Virgo|Libra|Scorpio|Sagittarius|Capricorn|Aquarius|Pisces)\b/g,
+    (match) => localizeSignName(locale, match) || match
+  );
+}
+
+function localizeAspectName(locale, value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const localized = {
+    conjunction: { en: 'conjunction', fr: 'conjonction', de: 'Konjunktion', es: 'conjunción' },
+    opposition: { en: 'opposition', fr: 'opposition', de: 'Opposition', es: 'oposición' },
+    trine: { en: 'trine', fr: 'trigone', de: 'Trigon', es: 'trígono' },
+    square: { en: 'square', fr: 'carré', de: 'Quadrat', es: 'cuadratura' },
+    sextile: { en: 'sextile', fr: 'sextile', de: 'Sextil', es: 'sextil' },
+    quincunx: { en: 'quincunx', fr: 'quinconce', de: 'Quinkunx', es: 'quincuncio' },
+    inconjunct: { en: 'inconjunct', fr: 'quinconce', de: 'Quinkunx', es: 'quincuncio' }
+  };
+
+  return localized[normalized]?.[locale] || localized[normalized]?.en || humanizeRawKey(value);
+}
+
+function formatLocalizedHouseToken(locale, value) {
+  const number = formatScalarValue(value);
+  if (!number) {
+    return null;
+  }
+
+  return `${formatRawLabel(locale, { en: 'House', fr: 'Maison', de: 'Haus', es: 'Casa' })} ${number}`;
+}
+
+function formatLocalizedDateValue(locale, value, options = {}) {
+  const text = formatScalarValue(value);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (!match) {
+    return text;
+  }
+
+  const year = match[1];
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = match[4];
+  const minute = match[5];
+  const monthNames = {
+    en: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+    fr: ['janvier', 'fevrier', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'septembre', 'octobre', 'novembre', 'decembre'],
+    de: ['Januar', 'Februar', 'Marz', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'],
+    es: ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+  };
+  const names = monthNames[locale] || monthNames.en;
+  const monthLabel = names[month - 1] || String(month).padStart(2, '0');
+  const localSuffix = options.localTime
+    ? formatRawLabel(locale, { en: ' (local time)', fr: ' (heure locale)', de: ' (Ortszeit)', es: ' (hora local)' })
+    : '';
+
+  if (locale === 'fr') {
+    const datePart = `${day} ${monthLabel} ${year}`;
+    return hour && minute ? `${datePart} à ${hour}h${minute}${localSuffix}` : datePart;
+  }
+
+  if (locale === 'de') {
+    const datePart = `${day}. ${monthLabel} ${year}`;
+    return hour && minute ? `${datePart} um ${hour}:${minute} Uhr${localSuffix}` : datePart;
+  }
+
+  if (locale === 'es') {
+    const datePart = `${day} de ${monthLabel} de ${year}`;
+    return hour && minute ? `${datePart} a las ${hour}:${minute}${localSuffix}` : datePart;
+  }
+
+  const datePart = `${monthLabel} ${day}, ${year}`;
+  return hour && minute ? `${datePart} at ${hour}:${minute}${localSuffix}` : datePart;
+}
+
+function formatLocalizedDateWindow(locale, startValue, endValue, options = {}) {
+  const start = formatLocalizedDateValue(locale, startValue, options);
+  const end = formatLocalizedDateValue(locale, endValue, options);
+
+  if (start && end) {
+    return `${start} → ${end}`;
+  }
+
+  return start || end || null;
+}
+
+function formatLocalizedPlanetPosition(locale, label, bodyData = {}) {
+  if (!bodyData) {
+    return null;
+  }
+
+  const renderedLabel = localizeAstroPointName(locale, label);
+  const position = localizeLongitudeText(locale, bodyData.position_text)
+    || [
+      localizeSignName(locale, bodyData.sign_abbr || bodyData.sign || ''),
+      formatScalarValue(bodyData.pos)
+    ].filter(Boolean).join(' ');
+
+  return [renderedLabel, position].filter(Boolean).join(' ');
+}
+
+function localizeRelocationFocus(locale, value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const localized = {
+    health: { en: 'Health', fr: 'Santé', de: 'Gesundheit', es: 'Salud' },
+    love: { en: 'Love', fr: 'Amour', de: 'Liebe', es: 'Amor' },
+    career: { en: 'Career', fr: 'Carrière', de: 'Beruf', es: 'Carrera' },
+    money: { en: 'Money', fr: 'Argent', de: 'Geld', es: 'Dinero' },
+    family: { en: 'Family', fr: 'Famille', de: 'Familie', es: 'Familia' },
+    spirituality: { en: 'Spirituality', fr: 'Spiritualité', de: 'Spiritualität', es: 'Espiritualidad' },
+    relocation: { en: 'Relocation', fr: 'Relocalisation', de: 'Relokation', es: 'Relocalización' }
+  };
+
+  return localized[normalized]?.[locale] || localized[normalized]?.en || humanizeRawKey(value);
 }
 
 function formatElectionalEventTimeLabel(locale, topResult = {}) {
@@ -5294,6 +5590,20 @@ function formatElectionalEventTimeLabel(locale, topResult = {}) {
     const datePart = `${day} ${monthLabel} ${year}`;
     return hour && minute
       ? `${datePart} à ${hour}h${minute}${rawLocal ? ' (heure locale)' : ' UTC'}`
+      : datePart;
+  }
+
+  if (locale === 'de') {
+    const datePart = `${day}. ${monthLabel} ${year}`;
+    return hour && minute
+      ? `${datePart} um ${hour}:${minute} Uhr${rawLocal ? ' (Ortszeit)' : ' UTC'}`
+      : datePart;
+  }
+
+  if (locale === 'es') {
+    const datePart = `${day} de ${monthLabel} de ${year}`;
+    return hour && minute
+      ? `${datePart} a las ${hour}:${minute}${rawLocal ? ' (hora local)' : ' UTC'}`
       : datePart;
   }
 
@@ -5348,6 +5658,114 @@ function localizeElectionalFactor(locale, value) {
     }
   }
 
+  if (locale === 'de') {
+    const planetDignifiedMatch = normalized.match(/^([A-Za-z]+)\s+dignified$/i);
+    if (planetDignifiedMatch) {
+      return `${localizePlanetName(locale, planetDignifiedMatch[1])} steht in guter Würde`;
+    }
+
+    const planetDebilitatedMatch = normalized.match(/^([A-Za-z]+)\s+debilitated$/i);
+    if (planetDebilitatedMatch) {
+      return `${localizePlanetName(locale, planetDebilitatedMatch[1])} ist geschwächt`;
+    }
+
+    const planetPressureMatch = normalized.match(/^([A-Za-z]+)\s+under hard malefic pressure$/i);
+    if (planetPressureMatch) {
+      return `${localizePlanetName(locale, planetPressureMatch[1])} steht unter starkem malefischem Druck`;
+    }
+
+    const rulerDignifiedMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+dignified$/i);
+    if (rulerDignifiedMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerDignifiedMatch[1])} steht in guter Würde`;
+    }
+
+    const rulerDebilitatedMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+debilitated$/i);
+    if (rulerDebilitatedMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerDebilitatedMatch[1])} ist geschwächt`;
+    }
+
+    const rulerPressureMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+under hard malefic pressure$/i);
+    if (rulerPressureMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerPressureMatch[1])} steht unter starkem malefischem Druck`;
+    }
+
+    if (lower === 'moon void of course') {
+      return 'der Mond ist ohne Kurs';
+    }
+  }
+
+  if (locale === 'es') {
+    const planetDignifiedMatch = normalized.match(/^([A-Za-z]+)\s+dignified$/i);
+    if (planetDignifiedMatch) {
+      return `${localizePlanetName(locale, planetDignifiedMatch[1])} está bien dignificado`;
+    }
+
+    const planetDebilitatedMatch = normalized.match(/^([A-Za-z]+)\s+debilitated$/i);
+    if (planetDebilitatedMatch) {
+      return `${localizePlanetName(locale, planetDebilitatedMatch[1])} está debilitado`;
+    }
+
+    const planetPressureMatch = normalized.match(/^([A-Za-z]+)\s+under hard malefic pressure$/i);
+    if (planetPressureMatch) {
+      return `${localizePlanetName(locale, planetPressureMatch[1])} está bajo fuerte presión maléfica`;
+    }
+
+    const rulerDignifiedMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+dignified$/i);
+    if (rulerDignifiedMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerDignifiedMatch[1])} está bien dignificado`;
+    }
+
+    const rulerDebilitatedMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+debilitated$/i);
+    if (rulerDebilitatedMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerDebilitatedMatch[1])} está debilitado`;
+    }
+
+    const rulerPressureMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+under hard malefic pressure$/i);
+    if (rulerPressureMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerPressureMatch[1])} está bajo fuerte presión maléfica`;
+    }
+
+    if (lower === 'moon void of course') {
+      return 'la Luna está fuera de curso';
+    }
+  }
+
+  if (locale === 'en') {
+    const planetDignifiedMatch = normalized.match(/^([A-Za-z]+)\s+dignified$/i);
+    if (planetDignifiedMatch) {
+      return `${localizePlanetName(locale, planetDignifiedMatch[1])} is dignified`;
+    }
+
+    const planetDebilitatedMatch = normalized.match(/^([A-Za-z]+)\s+debilitated$/i);
+    if (planetDebilitatedMatch) {
+      return `${localizePlanetName(locale, planetDebilitatedMatch[1])} is debilitated`;
+    }
+
+    const planetPressureMatch = normalized.match(/^([A-Za-z]+)\s+under hard malefic pressure$/i);
+    if (planetPressureMatch) {
+      return `${localizePlanetName(locale, planetPressureMatch[1])} is under strong malefic pressure`;
+    }
+
+    const rulerDignifiedMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+dignified$/i);
+    if (rulerDignifiedMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerDignifiedMatch[1])} is dignified`;
+    }
+
+    const rulerDebilitatedMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+debilitated$/i);
+    if (rulerDebilitatedMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerDebilitatedMatch[1])} is debilitated`;
+    }
+
+    const rulerPressureMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+under hard malefic pressure$/i);
+    if (rulerPressureMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerPressureMatch[1])} is under strong malefic pressure`;
+    }
+
+    if (lower === 'moon void of course') {
+      return 'the Moon is void of course';
+    }
+  }
+
   return humanizeRawKey(normalized);
 }
 
@@ -5391,6 +5809,54 @@ function buildElectionalResultExplanationResponse(locale, cachedElectionalResult
     return normalizeAssistantText(lines.join('\n\n'));
   }
 
+  if (locale === 'de') {
+    const lines = [
+      `Das ausgewählte Zeitfenster ist ${dateLabel}.`,
+      `Ausschlaggebend sind vor allem folgende Faktoren: ${support.length > 0 ? joinLocalizedList(locale, support) : 'mehrere unterstützende Faktoren im geprüften Zeitraum'}.`
+    ];
+
+    if (quality || verdict || bestInWindow) {
+      const meta = [
+        quality ? `die Gesamtqualität ist ${quality}` : null,
+        verdict ? `das traditionelle Urteil bleibt ${verdict}` : null,
+        bestInWindow ? 'es ist das beste gefundene Zeitfenster in diesem Bereich' : null
+      ].filter(Boolean);
+      if (meta.length > 0) {
+        lines.push(`Zusammengefasst gilt: ${joinLocalizedList(locale, meta)}.`);
+      }
+    }
+
+    if (caution.length > 0) {
+      lines.push(`Die wichtigsten Vorsichtspunkte sind: ${joinLocalizedList(locale, caution)}.`);
+    }
+
+    return normalizeAssistantText(lines.join('\n\n'));
+  }
+
+  if (locale === 'es') {
+    const lines = [
+      `La franja seleccionada es ${dateLabel}.`,
+      `Destaca sobre todo porque ${support.length > 0 ? joinLocalizedList(locale, support) : 'varios factores de apoyo coinciden dentro de la ventana analizada'}.`
+    ];
+
+    if (quality || verdict || bestInWindow) {
+      const meta = [
+        quality ? `la calidad general es ${quality}` : null,
+        verdict ? `el veredicto tradicional sigue siendo ${verdict}` : null,
+        bestInWindow ? 'es la mejor franja encontrada dentro de esta ventana' : null
+      ].filter(Boolean);
+      if (meta.length > 0) {
+        lines.push(`En resumen, ${joinLocalizedList(locale, meta)}.`);
+      }
+    }
+
+    if (caution.length > 0) {
+      lines.push(`Los principales puntos de cautela son: ${joinLocalizedList(locale, caution)}.`);
+    }
+
+    return normalizeAssistantText(lines.join('\n\n'));
+  }
+
   const lines = [
     `The selected window is ${dateLabel}.`,
     `It stands out mainly because ${support.length > 0 ? joinLocalizedList(locale, support) : 'several supportive factors line up in the scanned window'}.`
@@ -5414,19 +5880,19 @@ function buildElectionalResultExplanationResponse(locale, cachedElectionalResult
   return normalizeAssistantText(lines.join('\n\n'));
 }
 
-function formatAstroLineLabel(body, angle) {
+function formatAstroLineLabel(locale, body, angle) {
   const angleMap = {
     asc: 'ASC',
     dsc: 'DSC',
     mc: 'MC',
     ic: 'IC'
   };
-  return [humanizeRawKey(body), angleMap[String(angle || '').toLowerCase()] || humanizeRawKey(angle)].filter(Boolean).join(' ');
+  return [localizeAstroPointName(locale, body), angleMap[String(angle || '').toLowerCase()] || humanizeRawKey(angle)].filter(Boolean).join(' ');
 }
 
 function buildRelocationRawResponse(locale, payload, subjectProfile, userText) {
   const meta = payload?.meta || {};
-  const focus = humanizeRawKey(meta.focus || parseFocusFromQuestion(userText) || 'relocation');
+  const focus = localizeRelocationFocus(locale, meta.focus || parseFocusFromQuestion(userText) || 'relocation');
   const results = asArray(payload?.results);
   const cityEntry = results[0] || payload?.result || payload;
   const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
@@ -5462,11 +5928,11 @@ function buildRelocationRawResponse(locale, payload, subjectProfile, userText) {
     }
     const favorable = entry.nearest_favorable_line;
     if (favorable?.body || favorable?.angle) {
-      block.push(`${formatRawLabel(locale, { en: 'Best line', fr: 'Meilleure ligne', de: 'Beste Linie', es: 'Mejor línea' })}: ${formatAstroLineLabel(favorable.body, favorable.angle)}${favorable.distance_km !== undefined ? ` • ${formatScalarValue(favorable.distance_km)} km` : ''}`);
+      block.push(`${formatRawLabel(locale, { en: 'Best line', fr: 'Meilleure ligne', de: 'Beste Linie', es: 'Mejor línea' })}: ${formatAstroLineLabel(locale, favorable.body, favorable.angle)}${favorable.distance_km !== undefined ? ` • ${formatScalarValue(favorable.distance_km)} km` : ''}`);
     }
     const challenging = entry.nearest_challenging_line;
     if (challenging?.body || challenging?.angle) {
-      block.push(`${formatRawLabel(locale, { en: 'Challenge', fr: 'Défi', de: 'Herausforderung', es: 'Desafío' })}: ${formatAstroLineLabel(challenging.body, challenging.angle)}${challenging.distance_km !== undefined ? ` • ${formatScalarValue(challenging.distance_km)} km` : ''}`);
+      block.push(`${formatRawLabel(locale, { en: 'Challenge', fr: 'Défi', de: 'Herausforderung', es: 'Desafío' })}: ${formatAstroLineLabel(locale, challenging.body, challenging.angle)}${challenging.distance_km !== undefined ? ` • ${formatScalarValue(challenging.distance_km)} km` : ''}`);
     }
     const themes = normalizeRawList(entry?.relocation_summary?.dominant_themes, humanizeRawKey);
     if (themes.length > 0) {
@@ -5536,10 +6002,10 @@ function buildRelocationCityCheckRawResponse(locale, payload, subjectProfile, us
           base.push(`   ${formatScalarValue(entry.summary)}`);
         }
         if (favorable?.body || favorable?.angle) {
-          base.push(`   ${formatRawLabel(locale, { en: 'Best line', fr: 'Meilleure ligne', de: 'Beste Linie', es: 'Mejor línea' })}: ${formatAstroLineLabel(favorable.body, favorable.angle)}${favorable.distance_km !== undefined ? ` • ${formatScalarValue(favorable.distance_km)} km` : ''}`);
+          base.push(`   ${formatRawLabel(locale, { en: 'Best line', fr: 'Meilleure ligne', de: 'Beste Linie', es: 'Mejor línea' })}: ${formatAstroLineLabel(locale, favorable.body, favorable.angle)}${favorable.distance_km !== undefined ? ` • ${formatScalarValue(favorable.distance_km)} km` : ''}`);
         }
         if (challenge?.body || challenge?.angle) {
-          base.push(`   ${formatRawLabel(locale, { en: 'Challenge', fr: 'Défi', de: 'Herausforderung', es: 'Desafío' })}: ${formatAstroLineLabel(challenge.body, challenge.angle)}${challenge.distance_km !== undefined ? ` • ${formatScalarValue(challenge.distance_km)} km` : ''}`);
+          base.push(`   ${formatRawLabel(locale, { en: 'Challenge', fr: 'Défi', de: 'Herausforderung', es: 'Desafío' })}: ${formatAstroLineLabel(locale, challenge.body, challenge.angle)}${challenge.distance_km !== undefined ? ` • ${formatScalarValue(challenge.distance_km)} km` : ''}`);
         }
         return base.join('\n');
       })
@@ -5561,21 +6027,21 @@ function buildRelocationCityCheckRawResponse(locale, payload, subjectProfile, us
   return normalizeRawPresentationText(lines.join('\n\n'));
 }
 
-function summarizeProgressionPoint(point) {
+function summarizeProgressionPoint(locale, point) {
   if (!point || typeof point !== 'object') {
     return null;
   }
-  const name = point.name || humanizeRawKey(point.id || '');
-  const sign = point.sign?.name || point.sign_id || point.sign || null;
-  const longitude = point.longitude_text || null;
-  const house = formatScalarValue(point.house);
-  return [name, longitude || (sign ? `${humanizeRawKey(sign)}` : null), house ? `House ${house}` : null].filter(Boolean).join(' • ');
+  const name = localizeAstroPointName(locale, point.name || point.id || '');
+  const sign = localizeSignName(locale, point.sign?.name || point.sign_id || point.sign || null);
+  const longitude = localizeLongitudeText(locale, point.longitude_text);
+  const house = formatLocalizedHouseToken(locale, point.house);
+  return [name, longitude || sign, house].filter(Boolean).join(' • ');
 }
 
 function formatProgressionAspectLine(locale, aspect, index) {
-  const left = humanizeRawKey(aspect.progressed_point || aspect.point_1 || aspect.p1_id || aspect.p1_name || '');
-  const right = humanizeRawKey(aspect.natal_point || aspect.point_2 || aspect.p2_id || aspect.p2_name || '');
-  const type = humanizeRawKey(aspect.aspect?.name || aspect.type || '');
+  const left = localizeAstroPointName(locale, aspect.progressed_point || aspect.point_1 || aspect.p1_id || aspect.p1_name || '');
+  const right = localizeAstroPointName(locale, aspect.natal_point || aspect.point_2 || aspect.p2_id || aspect.p2_name || '');
+  const type = localizeAspectName(locale, aspect.aspect?.name || aspect.type || '');
   const parts = [`${index + 1}. ${[left, type, right].filter(Boolean).join(' ')}`];
   const detail = [
     aspect.orb_deg !== undefined || aspect.orb !== undefined
@@ -5599,10 +6065,10 @@ function buildSecondaryProgressionsRawResponse(locale, payload, subjectProfile) 
   const aspects = payload?.aspects || {};
   const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
   const lines = [formatRawLabel(locale, {
-    en: `Secondary progressions for ${subject} — ${formatRawDate(meta.target_date || meta.target_datetime) || '?'}`,
-    fr: `Progressions secondaires pour ${subject} — ${formatRawDate(meta.target_date || meta.target_datetime) || '?'}`,
-    de: `Sekundärprogressionen für ${subject} — ${formatRawDate(meta.target_date || meta.target_datetime) || '?'}`,
-    es: `Progresiones secundarias para ${subject} — ${formatRawDate(meta.target_date || meta.target_datetime) || '?'}`
+    en: `Secondary progressions for ${subject} — ${formatLocalizedDateValue(locale, meta.target_date || meta.target_datetime) || '?'}`,
+    fr: `Progressions secondaires pour ${subject} — ${formatLocalizedDateValue(locale, meta.target_date || meta.target_datetime) || '?'}`,
+    de: `Sekundärprogressionen für ${subject} — ${formatLocalizedDateValue(locale, meta.target_date || meta.target_datetime) || '?'}`,
+    es: `Progresiones secundarias para ${subject} — ${formatLocalizedDateValue(locale, meta.target_date || meta.target_datetime) || '?'}`
   })];
 
   const keyPoints = [
@@ -5613,7 +6079,7 @@ function buildSecondaryProgressionsRawResponse(locale, payload, subjectProfile) 
     chart?.points?.mars,
     chart?.angles?.ascendant ? { name: 'Ascendant', ...chart.angles.ascendant } : null,
     chart?.angles?.midheaven ? { name: 'Midheaven', ...chart.angles.midheaven } : null
-  ].map(summarizeProgressionPoint).filter(Boolean);
+  ].map((point) => summarizeProgressionPoint(locale, point)).filter(Boolean);
   if (keyPoints.length > 0) {
     lines.push([
       formatRawLabel(locale, { en: 'Key placements', fr: 'Positions clés', de: 'Wichtige Stellungen', es: 'Posiciones clave' }),
@@ -5654,9 +6120,9 @@ function buildAnnualProfectionsRawResponse(locale, payload, subjectProfile) {
     de: `Jahresprofection für ${subject} — ${formatScalarValue(metaAnnual.target_year) || '?'}`,
     es: `Profección anual para ${subject} — ${formatScalarValue(metaAnnual.target_year) || '?'}`
   })];
-  lines.push(`${formatRawLabel(locale, { en: 'Activated house', fr: 'Maison activée', de: 'Aktiviertes Haus', es: 'Casa activada' })}: ${formatScalarValue(annual.activated_house)} • ${humanizeRawKey(annual.activated_sign_name || annual.activated_sign_id)}`);
-  lines.push(`${formatRawLabel(locale, { en: 'Time lord', fr: 'Maître du temps', de: 'Zeitlord', es: 'Señor del tiempo' })}: ${humanizeRawKey(annual.time_lord_name || annual.time_lord_id)}`);
-  const window = formatRawDateWindow(annual?.period?.start || metaAnnual?.period?.start, annual?.period?.end || metaAnnual?.period?.end);
+  lines.push(`${formatRawLabel(locale, { en: 'Activated house', fr: 'Maison activée', de: 'Aktiviertes Haus', es: 'Casa activada' })}: ${formatScalarValue(annual.activated_house)} • ${localizeSignName(locale, annual.activated_sign_name || annual.activated_sign_id) || humanizeRawKey(annual.activated_sign_name || annual.activated_sign_id)}`);
+  lines.push(`${formatRawLabel(locale, { en: 'Time lord', fr: 'Maître du temps', de: 'Zeitlord', es: 'Señor del tiempo' })}: ${localizeAstroPointName(locale, annual.time_lord_name || annual.time_lord_id)}`);
+  const window = formatLocalizedDateWindow(locale, annual?.period?.start || metaAnnual?.period?.start, annual?.period?.end || metaAnnual?.period?.end);
   if (window) {
     lines.push(`${formatRawLabel(locale, { en: 'Period', fr: 'Période', de: 'Zeitraum', es: 'Periodo' })}: ${window}`);
   }
@@ -5674,13 +6140,20 @@ function buildSolarReturnRawResponse(locale, payload, subjectProfile) {
     de: `Solar Return für ${subject} — ${formatScalarValue(meta?.solar_return?.target_year) || '?'}`,
     es: `Retorno solar para ${subject} — ${formatScalarValue(meta?.solar_return?.target_year) || '?'}`
   })];
-  const exactMoment = formatRawDate(meta?.solar_return?.exact_moment_local || meta?.solar_return?.exact_moment_utc);
+  const exactMoment = formatLocalizedDateValue(
+    locale,
+    meta?.solar_return?.exact_moment_local || meta?.solar_return?.exact_moment_utc,
+    { localTime: Boolean(meta?.solar_return?.exact_moment_local) }
+  );
   if (exactMoment) {
     lines.push(`${formatRawLabel(locale, { en: 'Exact moment', fr: 'Moment exact', de: 'Exakter Moment', es: 'Momento exacto' })}: ${exactMoment}`);
   }
   const keyPlanets = planets
     .filter((planet) => ['sun', 'moon', 'mercury', 'venus', 'mars'].includes(String(planet?.id || '').toLowerCase()))
-    .map((planet) => `${planet.name}: ${planet.sign || planet.sign_id} ${formatScalarValue(planet.pos)}${planet.house ? ` • House ${planet.house}` : ''}`);
+    .map((planet) => [
+      `${localizeAstroPointName(locale, planet.name || planet.id || '')}: ${localizeSignName(locale, planet.sign || planet.sign_id || '')} ${formatScalarValue(planet.pos)}`.trim(),
+      planet.house ? formatLocalizedHouseToken(locale, planet.house) : null
+    ].filter(Boolean).join(' • '));
   if (keyPlanets.length > 0) {
     lines.push([
       formatRawLabel(locale, { en: 'Key placements', fr: 'Positions clés', de: 'Wichtige Stellungen', es: 'Posiciones clave' }),
@@ -5693,14 +6166,14 @@ function buildSolarReturnRawResponse(locale, payload, subjectProfile) {
   if (asc || mc) {
     lines.push([
       formatRawLabel(locale, { en: 'Angles', fr: 'Angles', de: 'Winkel', es: 'Ángulos' }),
-      asc ? `- ASC: ${asc.sign || asc.sign_id} ${formatScalarValue(asc.pos)}` : null,
-      mc ? `- MC: ${mc.sign || mc.sign_id} ${formatScalarValue(mc.pos)}` : null
+      asc ? `- ASC: ${localizeSignName(locale, asc.sign || asc.sign_id || '')} ${formatScalarValue(asc.pos)}` : null,
+      mc ? `- MC: ${localizeSignName(locale, mc.sign || mc.sign_id || '')} ${formatScalarValue(mc.pos)}` : null
     ].filter(Boolean).join('\n'));
   }
   if (aspects.length > 0) {
     lines.push([
       formatRawLabel(locale, { en: 'Major aspects', fr: 'Aspects majeurs', de: 'Wichtige Aspekte', es: 'Aspectos mayores' }),
-      ...aspects.slice(0, 6).map((aspect, index) => `${index + 1}. ${humanizeRawKey(aspect.p1_name || aspect.p1_id)} ${humanizeRawKey(aspect.type)} ${humanizeRawKey(aspect.p2_name || aspect.p2_id)} • ${formatRawLabel(locale, { en: 'Orb', fr: 'Orbe', de: 'Orbis', es: 'Orbe' })}: ${formatScalarValue(aspect.orb)}`)
+      ...aspects.slice(0, 6).map((aspect, index) => `${index + 1}. ${localizeAstroPointName(locale, aspect.p1_name || aspect.p1_id)} ${localizeAspectName(locale, aspect.type)} ${localizeAstroPointName(locale, aspect.p2_name || aspect.p2_id)} • ${formatRawLabel(locale, { en: 'Orb', fr: 'Orbe', de: 'Orbis', es: 'Orbe' })}: ${formatScalarValue(aspect.orb)}`)
     ].join('\n'))
   }
   return normalizeRawPresentationText(lines.join('\n\n'));
@@ -5729,18 +6202,18 @@ function buildEphemerisRawResponse(locale, payload, subjectProfile) {
       const mars = bodies.Mars || bodies.mars;
       const jupiter = bodies.Jupiter || bodies.jupiter;
       const saturn = bodies.Saturn || bodies.saturn;
-      const date = formatRawDate(row.local_timestamp || row.timestamp) || `Row ${index + 1}`;
+      const date = formatLocalizedDateValue(locale, row.local_timestamp || row.timestamp) || `${formatRawLabel(locale, { en: 'Row', fr: 'Ligne', de: 'Zeile', es: 'Fila' })} ${index + 1}`;
       const bodyLine = [
-        sun ? `Sun ${sun.position_text || `${sun.sign_abbr || sun.sign} ${formatScalarValue(sun.pos)}`}` : null,
-        moon ? `Moon ${moon.position_text || `${moon.sign_abbr || moon.sign} ${formatScalarValue(moon.pos)}`}` : null,
-        mercury ? `Mercury ${mercury.position_text || `${mercury.sign_abbr || mercury.sign} ${formatScalarValue(mercury.pos)}`}` : null,
-        venus ? `Venus ${venus.position_text || `${venus.sign_abbr || venus.sign} ${formatScalarValue(venus.pos)}`}` : null,
-        mars ? `Mars ${mars.position_text || `${mars.sign_abbr || mars.sign} ${formatScalarValue(mars.pos)}`}` : null,
-        jupiter ? `Jupiter ${jupiter.position_text || `${jupiter.sign_abbr || jupiter.sign} ${formatScalarValue(jupiter.pos)}`}` : null,
-        saturn ? `Saturn ${saturn.position_text || `${saturn.sign_abbr || saturn.sign} ${formatScalarValue(saturn.pos)}`}` : null
+        sun ? formatLocalizedPlanetPosition(locale, 'sun', sun) : null,
+        moon ? formatLocalizedPlanetPosition(locale, 'moon', moon) : null,
+        mercury ? formatLocalizedPlanetPosition(locale, 'mercury', mercury) : null,
+        venus ? formatLocalizedPlanetPosition(locale, 'venus', venus) : null,
+        mars ? formatLocalizedPlanetPosition(locale, 'mars', mars) : null,
+        jupiter ? formatLocalizedPlanetPosition(locale, 'jupiter', jupiter) : null,
+        saturn ? formatLocalizedPlanetPosition(locale, 'saturn', saturn) : null
       ].filter(Boolean).join(' • ');
       const notable = [];
-      const retrogradeBodies = normalizeRawList(row?.astrology?.retrograde_bodies);
+      const retrogradeBodies = normalizeRawList(row?.astrology?.retrograde_bodies, (value) => localizeAstroPointName(locale, value));
       if (retrogradeBodies.length > 0) {
         notable.push(`${formatRawLabel(locale, { en: 'Retrograde', fr: 'Rétrograde', de: 'Rückläufig', es: 'Retrógrado' })}: ${retrogradeBodies.join(', ')}`);
       }
@@ -5778,11 +6251,11 @@ function buildHoroscopeRawResponse(locale, payload, subjectProfile) {
   }
   const scores = data.scores || {};
   const scoreLine = [
-    scores.overall !== undefined ? `Overall ${formatScalarValue(scores.overall)}` : null,
-    scores.love !== undefined ? `Love ${formatScalarValue(scores.love)}` : null,
-    scores.career !== undefined ? `Career ${formatScalarValue(scores.career)}` : null,
-    scores.money !== undefined ? `Money ${formatScalarValue(scores.money)}` : null,
-    scores.health !== undefined ? `Health ${formatScalarValue(scores.health)}` : null
+    scores.overall !== undefined ? `${formatRawLabel(locale, { en: 'Overall', fr: 'Global', de: 'Gesamt', es: 'General' })} ${formatScalarValue(scores.overall)}` : null,
+    scores.love !== undefined ? `${formatRawLabel(locale, { en: 'Love', fr: 'Amour', de: 'Liebe', es: 'Amor' })} ${formatScalarValue(scores.love)}` : null,
+    scores.career !== undefined ? `${formatRawLabel(locale, { en: 'Career', fr: 'Carrière', de: 'Beruf', es: 'Carrera' })} ${formatScalarValue(scores.career)}` : null,
+    scores.money !== undefined ? `${formatRawLabel(locale, { en: 'Money', fr: 'Argent', de: 'Geld', es: 'Dinero' })} ${formatScalarValue(scores.money)}` : null,
+    scores.health !== undefined ? `${formatRawLabel(locale, { en: 'Health', fr: 'Santé', de: 'Gesundheit', es: 'Salud' })} ${formatScalarValue(scores.health)}` : null
   ].filter(Boolean);
   if (scoreLine.length > 0) {
     lines.push(`${formatRawLabel(locale, { en: 'Scores', fr: 'Scores', de: 'Werte', es: 'Puntuaciones' })}: ${scoreLine.join(' • ')}`);
@@ -5858,13 +6331,13 @@ function buildSynastryRawResponse(locale, payload, subjectProfile) {
     es: `Sinastría para ${personA} y ${personB}`
   })];
   const scoreLine = [
-    scores.overall !== undefined ? `Overall ${formatScalarValue(scores.overall)}` : null,
-    scores.romance !== undefined ? `Romance ${formatScalarValue(scores.romance)}` : null,
-    scores.communication !== undefined ? `Communication ${formatScalarValue(scores.communication)}` : null,
-    scores.stability !== undefined ? `Stability ${formatScalarValue(scores.stability)}` : null,
-    scores.intimacy !== undefined ? `Intimacy ${formatScalarValue(scores.intimacy)}` : null,
-    scores.growth !== undefined ? `Growth ${formatScalarValue(scores.growth)}` : null,
-    scores.tension !== undefined ? `Tension ${formatScalarValue(scores.tension)}` : null
+    scores.overall !== undefined ? `${formatRawLabel(locale, { en: 'Overall', fr: 'Global', de: 'Gesamt', es: 'General' })} ${formatScalarValue(scores.overall)}` : null,
+    scores.romance !== undefined ? `${formatRawLabel(locale, { en: 'Romance', fr: 'Romance', de: 'Romantik', es: 'Romance' })} ${formatScalarValue(scores.romance)}` : null,
+    scores.communication !== undefined ? `${formatRawLabel(locale, { en: 'Communication', fr: 'Communication', de: 'Kommunikation', es: 'Comunicación' })} ${formatScalarValue(scores.communication)}` : null,
+    scores.stability !== undefined ? `${formatRawLabel(locale, { en: 'Stability', fr: 'Stabilité', de: 'Stabilität', es: 'Estabilidad' })} ${formatScalarValue(scores.stability)}` : null,
+    scores.intimacy !== undefined ? `${formatRawLabel(locale, { en: 'Intimacy', fr: 'Intimité', de: 'Intimität', es: 'Intimidad' })} ${formatScalarValue(scores.intimacy)}` : null,
+    scores.growth !== undefined ? `${formatRawLabel(locale, { en: 'Growth', fr: 'Croissance', de: 'Entwicklung', es: 'Crecimiento' })} ${formatScalarValue(scores.growth)}` : null,
+    scores.tension !== undefined ? `${formatRawLabel(locale, { en: 'Tension', fr: 'Tension', de: 'Spannung', es: 'Tensión' })} ${formatScalarValue(scores.tension)}` : null
   ].filter(Boolean);
   if (scoreLine.length > 0) {
     lines.push(`${formatRawLabel(locale, { en: 'Scores', fr: 'Scores', de: 'Werte', es: 'Puntuaciones' })}: ${scoreLine.join(' • ')}`);
@@ -5917,9 +6390,9 @@ function getRawSubjectLabel(locale, subjectLabel) {
 
 function formatTransitSearchHeading(locale, payload, subjectProfile) {
   const input = payload?.input || {};
-  const transitPlanet = humanizeRawKey(formatScalarValue(input.transit_planet) || 'Transit');
-  const natalPoint = humanizeRawKey(formatScalarValue(input.natal_point) || 'Point');
-  const aspectType = humanizeRawKey(formatScalarValue(asArray(input.aspect_types)[0]) || 'aspect');
+  const transitPlanet = localizeAstroPointName(locale, formatScalarValue(input.transit_planet) || 'Transit');
+  const natalPoint = localizeAstroPointName(locale, formatScalarValue(input.natal_point) || 'Point');
+  const aspectType = localizeAspectName(locale, formatScalarValue(asArray(input.aspect_types)[0]) || 'aspect');
   const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
 
   return formatRawLabel(locale, {
@@ -5938,8 +6411,8 @@ function buildTransitSearchRawResponse(locale, payload, subjectProfile) {
   const passes = asArray(payload?.passes);
   const lines = [heading];
 
-  const rangeStart = formatRawDate(meta.range_start);
-  const rangeEnd = formatRawDate(meta.range_end);
+  const rangeStart = formatLocalizedDateValue(locale, meta.range_start);
+  const rangeEnd = formatLocalizedDateValue(locale, meta.range_end);
   if (rangeStart || rangeEnd) {
     lines.push(`${formatRawLabel(locale, { en: 'Range', fr: 'Période', de: 'Zeitraum', es: 'Periodo' })}: ${[rangeStart || '?', rangeEnd || '?'].join(' → ')}`);
   }
@@ -5959,7 +6432,7 @@ function buildTransitSearchRawResponse(locale, payload, subjectProfile) {
   const renderedCycles = cycles.map((cycle, index) => {
     const block = [];
     block.push(`${index + 1}. ${normalizeRawTitle(cycle.label) || heading}`);
-    block.push(`${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${formatRawDate(cycle.cycle_start_datetime)} → ${formatRawDate(cycle.cycle_end_datetime)}`);
+    block.push(`${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${formatLocalizedDateWindow(locale, cycle.cycle_start_datetime, cycle.cycle_end_datetime)}`);
     if (formatScalarValue(cycle.hit_count)) {
       block.push(`${formatRawLabel(locale, { en: 'Exact hits', fr: 'Exactitudes', de: 'Exakte Treffer', es: 'Exactitudes' })}: ${formatScalarValue(cycle.hit_count)}`);
     }
@@ -5967,7 +6440,7 @@ function buildTransitSearchRawResponse(locale, payload, subjectProfile) {
     if (closestOrb) {
       block.push(`${formatRawLabel(locale, { en: 'Closest orb', fr: 'Orbe la plus proche', de: 'Kleinster Orbis', es: 'Orbe más cercano' })}: ${closestOrb}`);
     }
-    const exacts = asArray(cycle?.passes).flatMap((pass) => asArray(pass.exact_datetimes)).map((value) => formatRawDate(value)).filter(Boolean);
+    const exacts = asArray(cycle?.passes).flatMap((pass) => asArray(pass.exact_datetimes)).map((value) => formatLocalizedDateValue(locale, value)).filter(Boolean);
     if (exacts.length > 0) {
       block.push(`${formatRawLabel(locale, { en: 'Exact', fr: 'Exact', de: 'Exakt', es: 'Exacto' })}: ${exacts.slice(0, 4).join(', ')}`);
     }
@@ -5982,13 +6455,13 @@ function buildTransitSearchRawResponse(locale, payload, subjectProfile) {
   const renderedPasses = passes.map((pass, index) => {
     const block = [];
     block.push(`${index + 1}. ${normalizeRawTitle(pass.label) || heading}`);
-    const passType = humanizeRawKey(formatScalarValue(pass.pass_type) || '');
+    const passType = formatTransitPassTypeLabel(locale, formatScalarValue(pass.pass_type) || '');
     const phase = humanizeRawKey(formatScalarValue(pass.applying_or_separating) || '');
     if (passType || phase) {
       block.push([passType, phase].filter(Boolean).join(' • '));
     }
-    block.push(`${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${formatRawDate(pass.start_datetime)} → ${formatRawDate(pass.end_datetime)}`);
-    const exacts = asArray(pass.exact_datetimes).map((value) => formatRawDate(value)).filter(Boolean);
+    block.push(`${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${formatLocalizedDateWindow(locale, pass.start_datetime, pass.end_datetime)}`);
+    const exacts = asArray(pass.exact_datetimes).map((value) => formatLocalizedDateValue(locale, value)).filter(Boolean);
     if (exacts.length > 0) {
       block.push(`${formatRawLabel(locale, { en: 'Exact', fr: 'Exact', de: 'Exakt', es: 'Exacto' })}: ${exacts.join(', ')}`);
     }
@@ -6012,13 +6485,13 @@ function buildTransitSearchInterpretiveResponse(locale, payload, subjectProfile)
   const cycles = asArray(payload?.cycles);
   const firstCycle = cycles[0] || null;
   const exactHits = firstCycle
-    ? asArray(firstCycle?.passes).flatMap((pass) => asArray(pass.exact_datetimes)).map((value) => formatRawDate(value)).filter(Boolean)
+    ? asArray(firstCycle?.passes).flatMap((pass) => asArray(pass.exact_datetimes)).map((value) => formatLocalizedDateValue(locale, value)).filter(Boolean)
     : [];
-  const windowStart = formatRawDate(firstCycle?.cycle_start_datetime || payload?.meta?.range_start);
-  const windowEnd = formatRawDate(firstCycle?.cycle_end_datetime || payload?.meta?.range_end);
-  const transitPlanet = humanizeRawKey(formatScalarValue(payload?.input?.transit_planet) || 'Transit');
-  const natalPoint = humanizeRawKey(formatScalarValue(payload?.input?.natal_point) || 'Point');
-  const aspectType = humanizeRawKey(formatScalarValue(asArray(payload?.input?.aspect_types)[0] || payload?.input?.aspect_types) || 'aspect');
+  const windowStart = formatLocalizedDateValue(locale, firstCycle?.cycle_start_datetime || payload?.meta?.range_start);
+  const windowEnd = formatLocalizedDateValue(locale, firstCycle?.cycle_end_datetime || payload?.meta?.range_end);
+  const transitPlanet = localizeAstroPointName(locale, formatScalarValue(payload?.input?.transit_planet) || 'Transit');
+  const natalPoint = localizeAstroPointName(locale, formatScalarValue(payload?.input?.natal_point) || 'Point');
+  const aspectType = localizeAspectName(locale, formatScalarValue(asArray(payload?.input?.aspect_types)[0] || payload?.input?.aspect_types) || 'aspect');
   const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
   const hitCount = Number(summary.hit_count || exactHits.length || 0);
 
@@ -6033,10 +6506,10 @@ function buildTransitSearchInterpretiveResponse(locale, payload, subjectProfile)
 
   const exactText = exactHits[0] || null;
   return formatRawLabel(locale, {
-    en: `Since birth, ${transitPlanet} formed a ${aspectType} to the natal ${natalPoint} for ${subject} in one main cycle from ${windowStart} to ${windowEnd}.${exactText ? ` The exact hit occurred on ${exactText}.` : ''}`,
-    fr: `Depuis la naissance, ${transitPlanet} a formé un ${aspectType} au ${natalPoint} natal pour ${subject} dans un cycle principal allant de ${windowStart} à ${windowEnd}.${exactText ? ` L’exactitude a eu lieu le ${exactText}.` : ''}`,
-    de: `Seit der Geburt bildete ${transitPlanet} einen ${aspectType} zum Radix-${natalPoint} für ${subject} in einem Hauptzyklus von ${windowStart} bis ${windowEnd}.${exactText ? ` Der exakte Treffer lag am ${exactText}.` : ''}`,
-    es: `Desde el nacimiento, ${transitPlanet} formó un ${aspectType} al ${natalPoint} natal para ${subject} en un ciclo principal de ${windowStart} a ${windowEnd}.${exactText ? ` La exactitud ocurrió el ${exactText}.` : ''}`
+    en: `Since birth, ${transitPlanet} formed a ${aspectType} to the natal point ${natalPoint} for ${subject} in one main cycle from ${windowStart} to ${windowEnd}.${exactText ? ` The exact hit occurred on ${exactText}.` : ''}`,
+    fr: `Depuis la naissance, ${transitPlanet} a formé un ${aspectType} au point natal ${natalPoint} pour ${subject} dans un cycle principal allant de ${windowStart} à ${windowEnd}.${exactText ? ` L’exactitude a eu lieu le ${exactText}.` : ''}`,
+    de: `Seit der Geburt bildete ${transitPlanet} einen ${aspectType} zum Radixpunkt ${natalPoint} für ${subject} in einem Hauptzyklus von ${windowStart} bis ${windowEnd}.${exactText ? ` Der exakte Treffer lag am ${exactText}.` : ''}`,
+    es: `Desde el nacimiento, ${transitPlanet} formó un ${aspectType} al punto natal ${natalPoint} para ${subject} en un ciclo principal de ${windowStart} a ${windowEnd}.${exactText ? ` La exactitud ocurrió el ${exactText}.` : ''}`
   });
 }
 
@@ -6063,9 +6536,9 @@ function buildTransitSearchFullListingResponse(locale, payload, subjectProfile, 
   const transitPlanetKey = formatScalarValue(input.transit_planet) || 'transit';
   const natalPointKey = formatScalarValue(input.natal_point) || 'point';
   const aspectTypeKey = formatScalarValue(asArray(input.aspect_types)[0] || input.aspect_types) || 'aspect';
-  const transitPlanet = humanizeRawKey(transitPlanetKey);
-  const natalPoint = humanizeRawKey(natalPointKey);
-  const aspectType = humanizeRawKey(aspectTypeKey);
+  const transitPlanet = localizeAstroPointName(locale, transitPlanetKey);
+  const natalPoint = localizeAstroPointName(locale, natalPointKey);
+  const aspectType = localizeAspectName(locale, aspectTypeKey);
   const subject = getRawSubjectLabel(locale, subjectProfile?.profileName || 'Chart User');
   const summary = payload?.search_summary || {};
 
@@ -6078,7 +6551,7 @@ function buildTransitSearchFullListingResponse(locale, payload, subjectProfile, 
     return exacts.map((exactValue, index) => {
       const ageYears = asArray(pass?.exact_age_years)[index];
       const bits = [
-        `${formatRawDate(exactValue) || '?'}`,
+        `${formatLocalizedDateValue(locale, exactValue) || '?'}`,
         formatScalarValue(pass?.pass_type) ? formatTransitPassTypeLabel(locale, formatScalarValue(pass.pass_type)) : null,
         Number.isFinite(Number(ageYears))
           ? formatRawLabel(locale, {
@@ -10005,6 +10478,15 @@ module.exports = {
   __test: {
     buildElectionalResultExplanationResponse,
     formatElectionalEventTimeLabel,
-    localizeElectionalFactor
+    localizeElectionalFactor,
+    buildSecondaryProgressionsRawResponse,
+    buildSolarReturnRawResponse,
+    buildTransitSearchInterpretiveResponse,
+    buildHoroscopeRawResponse,
+    buildSynastryRawResponse,
+    buildAnnualProfectionsRawResponse,
+    buildRelocationRawResponse,
+    buildEphemerisRawResponse,
+    buildTransitSearchRawResponse
   }
 };
