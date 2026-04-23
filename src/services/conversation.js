@@ -389,6 +389,17 @@ function sanitizeStructuredQueryPatch(patch = {}) {
     next.limit = Math.min(Math.round(patch.limit), 200);
   }
 
+  if (typeof patch.durationDays === 'number' && Number.isFinite(patch.durationDays) && patch.durationDays > 0) {
+    next.durationDays = Math.min(Math.round(patch.durationDays), 366);
+  }
+
+  const normalizedRangeStart = parseIsoDateString(patch.rangeStart);
+  const normalizedRangeEnd = parseIsoDateString(patch.rangeEnd);
+  if (normalizedRangeStart && normalizedRangeEnd && normalizedRangeStart <= normalizedRangeEnd) {
+    next.rangeStart = normalizedRangeStart;
+    next.rangeEnd = normalizedRangeEnd;
+  }
+
   if (patch.month && typeof patch.month === 'object') {
     const year = Number(patch.month.year);
     const month = Number(patch.month.month);
@@ -418,21 +429,36 @@ function getLastQueryState(conversationContext) {
   };
 }
 
+function parseDurationDaysFromQuestion(text) {
+  const value = String(text || '').toLowerCase();
+  const match = value.match(/\b(?:for|de|sur|pendant|over)?\s*(\d{1,3})\s*(?:days?|jours?)\b/i);
+  const days = match ? Number(match[1]) : null;
+  return Number.isFinite(days) && days > 0 ? days : null;
+}
+
 function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone = 'UTC') {
   const value = String(text || '');
+  const explicitDateRange = parseExplicitDateRangeFromQuestion(value, timezone);
   const limit = parseRequestedResultLimit(value);
   const strongest = wantsStrongestSubset(value);
-  const parsedMonth = parseMonthFromQuestion(value, timezone);
+  const parsedMonth = explicitDateRange ? null : parseMonthFromQuestion(value, timezone);
   const wantsToday = /\b(today|aujourd'hui|aujourdhui|du jour|heute|hoy)\b/i.test(value);
   const wantsWeek = /\b(this week|current week|for the week|de la semaine|cette semaine|semaine en cours|diese woche|esta semana)\b/i.test(value);
   const explicitYear = parseYearFromQuestion(value);
+  const durationDays = parseDurationDaysFromQuestion(value);
 
   if (ELECTIONAL_ROUTE_IDS.has(routeId)) {
     const wantsCurrentMonth = /\b(this month|ce mois|ce mois ci|dieser monat|este mes)\b/i.test(value);
     const wantsCurrentYear = /\b(this year|cette annee|cette année|dieses jahr|este ano|este año)\b/i.test(value);
     return sanitizeStructuredQueryPatch({
+      rangeStart: explicitDateRange?.start || null,
+      rangeEnd: explicitDateRange?.end || null,
       month: parsedMonth,
-      timeframe: parsedMonth
+      timeframe: explicitDateRange
+        ? 'explicit_range'
+        : durationDays
+        ? 'rolling_days'
+        : parsedMonth
         ? 'specific_month'
         : wantsToday
         ? 'current_day'
@@ -443,6 +469,7 @@ function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone 
         : (explicitYear || wantsCurrentYear)
         ? 'current_year'
         : null,
+      durationDays,
       limit
     });
   }
@@ -541,7 +568,10 @@ function buildStructuredQueryState({
             : null
         )
     );
-  const routeId = inferredRouteId || (explicitFollowUp ? previousState?.canonicalRouteId : null) || null;
+  const routeId = explicitFollowUp?.canonicalRouteId
+    || inferredRouteId
+    || (explicitFollowUp ? previousState?.canonicalRouteId : null)
+    || null;
   const reusesPreviousState = Boolean(explicitFollowUp && previousState && previousState.canonicalRouteId === routeId);
   const baseQuestion = reusesPreviousState
     ? (previousState.baseQuestion || plannerQuestionText || userText)
@@ -796,6 +826,43 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
     };
   }
 
+  const requestedDurationDays = parseDurationDaysFromQuestion(value);
+  if (
+    requestedDurationDays &&
+    lastResolvedQuestion &&
+    ELECTIONAL_ROUTE_IDS.has(lastQueryState?.canonicalRouteId || '')
+  ) {
+    return {
+      followUpType: 'electional_duration_refinement',
+      rewrittenQuestion: `${lastQueryState?.baseQuestion || lastResolvedQuestion}\n\nUse a ${requestedDurationDays}-day search window starting today.`,
+      routeKind: lastRouteKind,
+      canonicalRouteId: lastQueryState?.canonicalRouteId || null,
+      queryPatch: {
+        timeframe: 'rolling_days',
+        durationDays: requestedDurationDays
+      }
+    };
+  }
+
+  const explicitElectionalRange = parseExplicitDateRangeFromQuestion(value);
+  if (
+    explicitElectionalRange &&
+    lastResolvedQuestion &&
+    ELECTIONAL_ROUTE_IDS.has(lastQueryState?.canonicalRouteId || '')
+  ) {
+    return {
+      followUpType: 'electional_window_refinement',
+      rewrittenQuestion: `${lastQueryState?.baseQuestion || lastResolvedQuestion}\n\nUse a search window from ${explicitElectionalRange.start} to ${explicitElectionalRange.end}.`,
+      routeKind: lastRouteKind,
+      canonicalRouteId: lastQueryState?.canonicalRouteId || null,
+      queryPatch: {
+        timeframe: 'explicit_range',
+        rangeStart: explicitElectionalRange.start,
+        rangeEnd: explicitElectionalRange.end
+      }
+    };
+  }
+
   if (
     lastResolvedQuestion &&
     conversationContext?.lastCommonRouteId === 'all_natal_aspects' &&
@@ -962,7 +1029,7 @@ const NON_PROFILE_NAME_TOKENS = new Set([
   'horoscope', 'transit', 'transits', 'progression', 'progressions', 'profection', 'profections',
   'solar', 'return', 'returns', 'ephemeris', 'ephemerides', 'éphémérides', 'synastrie', 'synastry',
   'relocation', 'relocalisation', 'relocalisation', 'astrocartography', 'astrocartographie',
-  'day', 'week', 'month', 'jour', 'semaine', 'mois', 'today', 'today?', 'tomorrow', 'hier', 'demain',
+  'day', 'days', 'week', 'month', 'jour', 'jours', 'semaine', 'mois', 'today', 'today?', 'tomorrow', 'hier', 'demain',
   'career', 'work', 'love', 'home', 'family', 'wellbeing', 'health', 'creativity', 'spiritual',
   'carrière', 'amour', 'foyer', 'famille', 'bien-être', 'santé', 'créativité', 'spirituel',
   'wedding', 'marriage', 'marry', 'mariage', 'marier', 'marrier', 'epouser',
@@ -1006,6 +1073,10 @@ function isLikelyExternalProfileName(candidate) {
   }
 
   if (/\b\d{4}\b/.test(normalized) || /^\d+$/.test(normalized.replace(/\s+/g, ''))) {
+    return false;
+  }
+
+  if (parseDurationDaysFromQuestion(normalized)) {
     return false;
   }
 
@@ -1433,7 +1504,7 @@ async function resolveFollowUpWithAi(locale, userText, conversationContext, rout
     `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}, but output JSON only.`,
     'Return one JSON object and nothing else.',
     'Allowed keys: isFollowUp, rewrittenQuestion, refinement, confidence, reason.',
-    'The refinement object may contain only these keys: planet, transitPlanet, natalPoint, aspectTypes, aspectClass, limit, sort, timeframe, month, focus, body, sign, fullListing.',
+    'The refinement object may contain only these keys: planet, transitPlanet, natalPoint, aspectTypes, aspectClass, limit, sort, timeframe, month, rangeStart, rangeEnd, focus, body, sign, fullListing.',
     'If it is a follow-up, rewrite it as one complete standalone astrology question that preserves the previous scope and adds the new refinement.',
     'If it is not a follow-up, set isFollowUp to false and rewrittenQuestion to null.'
   ].join('\n');
@@ -1865,7 +1936,8 @@ function normalizeExecutionFamily(value, routeKind = null) {
 }
 
 async function routeConversationExecutionWithAi(locale, userText, route, subjectProfile, factAvailability, conversationContext, queryState = null) {
-  const electionalConfig = inferElectionalRouteConfigFromQuestion(userText);
+  const electionalConfig = inferElectionalRouteConfigFromQuestion(userText)
+    || getElectionalRouteConfig(queryState?.canonicalRouteId);
   if (electionalConfig) {
     return {
       target: 'mcp',
@@ -2408,6 +2480,18 @@ function normalizeMatchingText(text) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const NORMALIZED_MONTH_NAME_MAP = Object.fromEntries(
+  Object.entries(MONTH_NAME_MAP).map(([name, monthNumber]) => [normalizeMatchingText(name), monthNumber])
+);
+const MONTH_NAME_PATTERN = Object.keys(NORMALIZED_MONTH_NAME_MAP)
+  .sort((left, right) => right.length - left.length)
+  .map((name) => escapeRegExp(name))
+  .join('|');
+
 function findEarliestMappedToken(text, synonymMap = {}) {
   const value = normalizeMatchingText(text);
   let best = null;
@@ -2689,6 +2773,155 @@ function parseYearFromQuestion(text) {
   return match ? Number(match[1]) : null;
 }
 
+function buildIsoDateString(year, month, day) {
+  const normalizedYear = Number(year);
+  const normalizedMonth = Number(month);
+  const normalizedDay = Number(day);
+  if (
+    !Number.isInteger(normalizedYear) ||
+    !Number.isInteger(normalizedMonth) ||
+    !Number.isInteger(normalizedDay) ||
+    normalizedMonth < 1 ||
+    normalizedMonth > 12 ||
+    normalizedDay < 1 ||
+    normalizedDay > 31
+  ) {
+    return null;
+  }
+
+  const candidate = new Date(Date.UTC(normalizedYear, normalizedMonth - 1, normalizedDay));
+  if (
+    Number.isNaN(candidate.getTime()) ||
+    candidate.getUTCFullYear() !== normalizedYear ||
+    candidate.getUTCMonth() !== normalizedMonth - 1 ||
+    candidate.getUTCDate() !== normalizedDay
+  ) {
+    return null;
+  }
+
+  return `${normalizedYear}-${String(normalizedMonth).padStart(2, '0')}-${String(normalizedDay).padStart(2, '0')}`;
+}
+
+function parseIsoDateString(value) {
+  const match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  return buildIsoDateString(Number(match[1]), Number(match[2]), Number(match[3]));
+}
+
+function extractTextualDateMentions(text) {
+  const normalized = normalizeMatchingText(text).replace(/[–—]/g, '-');
+  if (!normalized || !MONTH_NAME_PATTERN) {
+    return [];
+  }
+
+  const mentions = [];
+  const dayMonthPattern = new RegExp(`\\b(\\d{1,2})(?:er|st|nd|rd|th)?(?:\\s+of)?\\s+(${MONTH_NAME_PATTERN})(?:\\s*,?\\s*(20\\d{2}))?\\b`, 'gi');
+  const monthDayPattern = new RegExp(`\\b(${MONTH_NAME_PATTERN})\\s+(\\d{1,2})(?:er|st|nd|rd|th)?(?:\\s*,?\\s*(20\\d{2}))?\\b`, 'gi');
+
+  for (const pattern of [dayMonthPattern, monthDayPattern]) {
+    let match = pattern.exec(normalized);
+    while (match) {
+      const isDayMonth = pattern === dayMonthPattern;
+      const day = Number(isDayMonth ? match[1] : match[2]);
+      const monthToken = normalizeMatchingText(isDayMonth ? match[2] : match[1]);
+      const year = match[3] ? Number(match[3]) : null;
+      const month = NORMALIZED_MONTH_NAME_MAP[monthToken] || null;
+      if (month && Number.isInteger(day)) {
+        mentions.push({
+          index: match.index,
+          endIndex: match.index + match[0].length,
+          day,
+          month,
+          year
+        });
+      }
+      match = pattern.exec(normalized);
+    }
+  }
+
+  return mentions
+    .sort((left, right) => left.index - right.index || right.endIndex - left.endIndex)
+    .filter((mention, index, all) => index === 0 || mention.index >= all[index - 1].endIndex);
+}
+
+function resolveTextualDateRange(startMention, endMention, timezone = 'UTC', fallbackYear = null) {
+  if (!startMention || !endMention) {
+    return null;
+  }
+
+  const currentYear = getCurrentLocalDateParts(timezone).year;
+  const compareMonthDay = (left, right) => (left.month - right.month) || (left.day - right.day);
+  let startYear = Number.isInteger(startMention.year) ? startMention.year : null;
+  let endYear = Number.isInteger(endMention.year) ? endMention.year : null;
+
+  if (!startYear && !endYear) {
+    startYear = fallbackYear || currentYear;
+    endYear = fallbackYear || currentYear;
+    if (compareMonthDay(endMention, startMention) < 0) {
+      endYear += 1;
+    }
+  } else if (startYear && !endYear) {
+    endYear = startYear;
+    if (compareMonthDay(endMention, startMention) < 0) {
+      endYear += 1;
+    }
+  } else if (!startYear && endYear) {
+    startYear = endYear;
+    if (compareMonthDay(startMention, endMention) > 0) {
+      startYear -= 1;
+    }
+  }
+
+  const start = buildIsoDateString(startYear, startMention.month, startMention.day);
+  const end = buildIsoDateString(endYear, endMention.month, endMention.day);
+  if (!start || !end || start > end) {
+    return null;
+  }
+
+  return { start, end };
+}
+
+function parseExplicitDateRangeFromQuestion(text, timezone = 'UTC') {
+  const value = String(text || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  const normalized = normalizeMatchingText(value).replace(/[–—]/g, '-');
+  const isoRangeMatch = normalized.match(/\b(20\d{2}-\d{2}-\d{2})\b\s*(?:and|to|through|until|till|au|a|et|-)\s*\b(20\d{2}-\d{2}-\d{2})\b/i);
+  if (isoRangeMatch) {
+    const start = parseIsoDateString(isoRangeMatch[1]);
+    const end = parseIsoDateString(isoRangeMatch[2]);
+    if (start && end && start <= end) {
+      return { start, end };
+    }
+  }
+
+  const mentions = extractTextualDateMentions(normalized);
+  const fallbackYear = parseYearFromQuestion(normalized) || null;
+  for (let index = 0; index < mentions.length - 1; index += 1) {
+    const startMention = mentions[index];
+    const endMention = mentions[index + 1];
+    const prefix = normalized.slice(Math.max(0, startMention.index - 24), startMention.index);
+    const connector = normalized.slice(startMention.endIndex, endMention.index);
+    const hasRangeLeadIn = /\b(between|from|du|de|entre)\s*$/i.test(prefix);
+    const hasRangeConnector = /\b(and|to|through|until|till|au|a|et)\b|[-]/i.test(connector);
+    if (!hasRangeLeadIn && !hasRangeConnector) {
+      continue;
+    }
+
+    const range = resolveTextualDateRange(startMention, endMention, timezone, fallbackYear);
+    if (range) {
+      return range;
+    }
+  }
+
+  return null;
+}
+
 function parseMonthFromQuestion(text, timezone = 'UTC') {
   const value = String(text || '').toLowerCase();
   const requestedMonthlyPlanet = parseRequestedMonthlyTransitPlanet(value);
@@ -2738,6 +2971,23 @@ function buildMonthDateRange(monthInfo) {
   };
 }
 
+function buildElectionalSearchTuningForRange(range) {
+  const start = range?.start ? new Date(`${range.start}T00:00:00Z`) : null;
+  const end = range?.end ? new Date(`${range.end}T00:00:00Z`) : null;
+
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return { mode: 'direct' };
+  }
+
+  const durationDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+  return durationDays > 14
+    ? {
+        mode: 'year',
+        coarse_step_minutes: 720
+      }
+    : { mode: 'direct' };
+}
+
 function buildCurrentYearRange(timezone = 'UTC', yearOverride = null) {
   const year = yearOverride || getCurrentLocalDateParts(timezone).year;
   return {
@@ -2767,6 +3017,24 @@ function buildCurrentWeekRange(timezone = 'UTC') {
   return {
     start: toDateString(monday),
     end: toDateString(sunday)
+  };
+}
+
+function buildRollingDaysRange(durationDays, timezone = 'UTC') {
+  const days = Number(durationDays);
+  if (!Number.isFinite(days) || days <= 0) {
+    return null;
+  }
+
+  const current = getCurrentLocalDateParts(timezone);
+  const startDate = new Date(Date.UTC(current.year, current.month - 1, current.day));
+  const endDate = new Date(startDate);
+  endDate.setUTCDate(startDate.getUTCDate() + Math.max(0, Math.round(days) - 1));
+  const toDateString = (date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+
+  return {
+    start: toDateString(startDate),
+    end: toDateString(endDate)
   };
 }
 
@@ -2940,14 +3208,38 @@ function buildTransitSearchWindow(userText, subjectProfile, timezone = 'UTC') {
 function buildElectionalSearchWindow(userText, queryState = null, timezone = 'UTC') {
   const value = String(userText || '').toLowerCase();
   const timeframe = String(queryState?.parameters?.timeframe || '').toLowerCase();
+  const explicitRange = queryState?.parameters?.rangeStart && queryState?.parameters?.rangeEnd
+    ? {
+        start: queryState.parameters.rangeStart,
+        end: queryState.parameters.rangeEnd
+      }
+    : parseExplicitDateRangeFromQuestion(userText, timezone);
   const requestedMonth = queryState?.parameters?.month || parseMonthFromQuestion(userText, timezone);
+  const durationDays = Number(queryState?.parameters?.durationDays || parseDurationDaysFromQuestion(userText) || 0);
+
+  if (explicitRange?.start && explicitRange?.end) {
+    return {
+      searchWindow: explicitRange,
+      searchTuning: buildElectionalSearchTuningForRange(explicitRange)
+    };
+  }
+
+  if (timeframe === 'rolling_days' && durationDays > 0) {
+    const range = buildRollingDaysRange(durationDays, timezone);
+    if (range) {
+      return {
+        searchWindow: range,
+        searchTuning: buildElectionalSearchTuningForRange(range)
+      };
+    }
+  }
 
   if (requestedMonth) {
     const range = buildMonthDateRange(requestedMonth);
     if (range) {
       return {
         searchWindow: range,
-        searchTuning: { mode: 'direct' }
+        searchTuning: buildElectionalSearchTuningForRange(range)
       };
     }
   }
@@ -2969,12 +3261,13 @@ function buildElectionalSearchWindow(userText, queryState = null, timezone = 'UT
   if (timeframe === 'current_month' || /\b(this month|ce mois|ce mois ci|dieser monat|este mes)\b/i.test(value)) {
     const currentMonth = toolCache.getCurrentMonthWindow(timezone);
     if (currentMonth) {
+      const range = {
+        start: currentMonth.rangeStart,
+        end: currentMonth.rangeEnd
+      };
       return {
-        searchWindow: {
-          start: currentMonth.rangeStart,
-          end: currentMonth.rangeEnd
-        },
-        searchTuning: { mode: 'direct' }
+        searchWindow: range,
+        searchTuning: buildElectionalSearchTuningForRange(range)
       };
     }
   }
@@ -7893,6 +8186,8 @@ function hasSemanticQueryRefinement(queryState = null) {
     parameters.body ||
     parameters.sign ||
     parameters.timeframe ||
+    parameters.rangeStart ||
+    parameters.rangeEnd ||
     parameters.month ||
     parameters.city ||
     parameters.limit ||
