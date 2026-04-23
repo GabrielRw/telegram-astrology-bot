@@ -5165,63 +5165,250 @@ function isElectionalResultExplanationFollowUp(text) {
   return /\b(why|what are (these|those) conditions|which conditions|what conditions|what makes (it|this window|this date) (good|favorable|favourable)|why (that|this date|this window)|explain (this|that|the window|the date)|details? on (this|that)|quelles? sont ces conditions|c est quoi ces conditions|pourquoi|pourquoi (cette date|ce moment|ce creneau)|explique (ce|cette) (date|moment|creneau)|plus de details?|detaille|developpe)\b/i.test(value);
 }
 
-function formatElectionalFactorTitles(factors = [], limit = 3) {
+function localizeElectionalQuality(locale, value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const localized = {
+    fr: {
+      strong: 'solide',
+      very_strong: 'très solide',
+      excellent: 'excellente',
+      good: 'bonne',
+      mixed: 'mitigée',
+      moderate: 'modérée',
+      weak: 'faible',
+      poor: 'faible',
+      rejected: 'défavorable'
+    },
+    en: {
+      very_strong: 'very strong'
+    }
+  };
+
+  return localized[locale]?.[normalized] || localized.en?.[normalized] || humanizeRawKey(normalized).toLowerCase();
+}
+
+function localizeElectionalVerdict(locale, value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const localized = {
+    fr: {
+      sound: 'favorable',
+      acceptable: 'acceptable',
+      mixed: 'mitigé',
+      weak: 'fragile',
+      rejected: 'déconseillé'
+    }
+  };
+
+  return localized[locale]?.[normalized] || humanizeRawKey(normalized).toLowerCase();
+}
+
+function joinLocalizedList(locale, values = []) {
+  const items = asArray(values).filter(Boolean);
+  if (items.length === 0) {
+    return null;
+  }
+
+  if (items.length === 1) {
+    return items[0];
+  }
+
+  const conjunction = locale === 'fr' ? ' et ' : ' and ';
+  return `${items.slice(0, -1).join(', ')}${conjunction}${items[items.length - 1]}`;
+}
+
+function formatElectionalHouseLabel(locale, houseNumber) {
+  if (locale === 'fr') {
+    return `le maître de la maison ${houseNumber}`;
+  }
+
+  return `the ruler of the ${houseNumber} house`;
+}
+
+function localizePlanetName(locale, value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const localized = {
+    fr: {
+      sun: 'le Soleil',
+      moon: 'la Lune',
+      mercury: 'Mercure',
+      venus: 'Vénus',
+      mars: 'Mars',
+      jupiter: 'Jupiter',
+      saturn: 'Saturne',
+      uranus: 'Uranus',
+      neptune: 'Neptune',
+      pluto: 'Pluton'
+    }
+  };
+
+  return localized[locale]?.[normalized] || humanizeRawKey(value);
+}
+
+function formatElectionalEventTimeLabel(locale, topResult = {}) {
+  const rawLocal = formatScalarValue(topResult?.event_time_local);
+  const rawUtc = formatScalarValue(topResult?.event_time_utc);
+  const source = rawLocal || rawUtc;
+  if (!source) {
+    return '?';
+  }
+
+  const match = source.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (!match) {
+    const fallback = formatRawDate(source);
+    if (!fallback) {
+      return '?';
+    }
+    if (rawLocal) {
+      return locale === 'fr' ? `${fallback} (heure locale)` : `${fallback} (local time)`;
+    }
+    return fallback;
+  }
+
+  const year = match[1];
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = match[4];
+  const minute = match[5];
+  const monthNames = {
+    en: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+    fr: ['janvier', 'fevrier', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'septembre', 'octobre', 'novembre', 'decembre'],
+    de: ['Januar', 'Februar', 'Marz', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'],
+    es: ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+  };
+  const names = monthNames[locale] || monthNames.en;
+  const monthLabel = names[month - 1] || String(month).padStart(2, '0');
+
+  if (locale === 'fr') {
+    const datePart = `${day} ${monthLabel} ${year}`;
+    return hour && minute
+      ? `${datePart} à ${hour}h${minute}${rawLocal ? ' (heure locale)' : ' UTC'}`
+      : datePart;
+  }
+
+  const datePart = `${monthLabel} ${day}, ${year}`;
+  return hour && minute
+    ? `${datePart} at ${hour}:${minute}${rawLocal ? ' (local time)' : ' UTC'}`
+    : datePart;
+}
+
+function localizeElectionalFactor(locale, value) {
+  const rendered = formatScalarValue(value);
+  if (!rendered) {
+    return null;
+  }
+
+  const normalized = rendered.trim();
+  const lower = normalized.toLowerCase();
+
+  if (locale === 'fr') {
+    const planetDignifiedMatch = normalized.match(/^([A-Za-z]+)\s+dignified$/i);
+    if (planetDignifiedMatch) {
+      return `${localizePlanetName(locale, planetDignifiedMatch[1])} est en bonne dignité`;
+    }
+
+    const planetDebilitatedMatch = normalized.match(/^([A-Za-z]+)\s+debilitated$/i);
+    if (planetDebilitatedMatch) {
+      return `${localizePlanetName(locale, planetDebilitatedMatch[1])} est affaibli`;
+    }
+
+    const planetPressureMatch = normalized.match(/^([A-Za-z]+)\s+under hard malefic pressure$/i);
+    if (planetPressureMatch) {
+      return `${localizePlanetName(locale, planetPressureMatch[1])} subit une forte pression maléfique`;
+    }
+
+    const rulerDignifiedMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+dignified$/i);
+    if (rulerDignifiedMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerDignifiedMatch[1])} est en bonne dignité`;
+    }
+
+    const rulerDebilitatedMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+debilitated$/i);
+    if (rulerDebilitatedMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerDebilitatedMatch[1])} est affaibli`;
+    }
+
+    const rulerPressureMatch = normalized.match(/^(\d+)(?:st|nd|rd|th)?\s+ruler\s+under hard malefic pressure$/i);
+    if (rulerPressureMatch) {
+      return `${formatElectionalHouseLabel(locale, rulerPressureMatch[1])} subit une forte pression maléfique`;
+    }
+
+    if (lower === 'moon void of course') {
+      return 'la Lune est vide de course';
+    }
+  }
+
+  return humanizeRawKey(normalized);
+}
+
+function formatElectionalFactorTitles(locale, factors = [], limit = 3) {
   return asArray(factors)
     .slice(0, limit)
-    .map((item) => formatScalarValue(item?.title || item?.detail || item?.code))
+    .map((item) => localizeElectionalFactor(locale, item?.title || item?.detail || item?.code))
     .filter(Boolean);
 }
 
 function buildElectionalResultExplanationResponse(locale, cachedElectionalResult) {
-  const payload = cachedElectionalResult?.payload || {};
   const topResult = cachedElectionalResult?.topResult || {};
-  const support = formatElectionalFactorTitles(topResult?.supporting_factors, 4);
-  const caution = formatElectionalFactorTitles(topResult?.caution_factors, 3);
-  const dateLabel = formatRawDate(topResult?.event_time_local || topResult?.event_time_utc) || '?';
-  const quality = humanizeRawKey(topResult?.quality_band || topResult?.status || '');
-  const verdict = humanizeRawKey(topResult?.strict_traditional_verdict || '');
+  const support = formatElectionalFactorTitles(locale, topResult?.supporting_factors, 4);
+  const caution = formatElectionalFactorTitles(locale, topResult?.caution_factors, 3);
+  const dateLabel = formatElectionalEventTimeLabel(locale, topResult);
+  const quality = localizeElectionalQuality(locale, topResult?.quality_band || topResult?.status || '');
+  const verdict = localizeElectionalVerdict(locale, topResult?.strict_traditional_verdict || '');
   const bestInWindow = topResult?.best_available_in_window === true;
 
   if (locale === 'fr') {
     const lines = [
-      `Pour le créneau du ${dateLabel}, les conditions favorables viennent surtout de : ${support.length > 0 ? support.join(', ') : 'plusieurs facteurs de soutien dans la fenêtre analysée'}.`
+      `Le créneau retenu est le ${dateLabel}.`,
+      `Il ressort surtout parce que ${support.length > 0 ? joinLocalizedList(locale, support) : 'plusieurs facteurs de soutien se combinent dans la fenêtre analysée'}.`
     ];
 
     if (quality || verdict || bestInWindow) {
       const meta = [
-        quality ? `qualité globale : ${quality}` : null,
-        verdict ? `verdict traditionnel : ${verdict}` : null,
-        bestInWindow ? 'meilleur créneau disponible dans cette fenêtre' : null
+        quality ? `la qualité globale est ${quality}` : null,
+        verdict ? `le verdict traditionnel reste ${verdict}` : null,
+        bestInWindow ? 'c’est le meilleur créneau trouvé dans cette fenêtre' : null
       ].filter(Boolean);
       if (meta.length > 0) {
-        lines.push(`En synthèse : ${meta.join(' ; ')}.`);
+        lines.push(`En synthèse, ${joinLocalizedList(locale, meta)}.`);
       }
     }
 
     if (caution.length > 0) {
-      lines.push(`Les points de vigilance sont : ${caution.join(', ')}.`);
+      lines.push(`Les points de vigilance sont les suivants : ${joinLocalizedList(locale, caution)}.`);
     }
 
     return normalizeAssistantText(lines.join('\n\n'));
   }
 
   const lines = [
-    `For the ${dateLabel} window, the strongest supporting conditions are: ${support.length > 0 ? support.join(', ') : 'several supportive factors in the scanned window'}.`
+    `The selected window is ${dateLabel}.`,
+    `It stands out mainly because ${support.length > 0 ? joinLocalizedList(locale, support) : 'several supportive factors line up in the scanned window'}.`
   ];
 
   if (quality || verdict || bestInWindow) {
     const meta = [
-      quality ? `overall quality: ${quality}` : null,
-      verdict ? `traditional verdict: ${verdict}` : null,
-      bestInWindow ? 'best available window in that search range' : null
+      quality ? `the overall quality is ${quality}` : null,
+      verdict ? `the traditional verdict stays ${verdict}` : null,
+      bestInWindow ? 'it is the best window found in that search range' : null
     ].filter(Boolean);
     if (meta.length > 0) {
-      lines.push(`Summary: ${meta.join('; ')}.`);
+      lines.push(`In summary, ${joinLocalizedList(locale, meta)}.`);
     }
   }
 
   if (caution.length > 0) {
-    lines.push(`Main caution factors: ${caution.join(', ')}.`);
+    lines.push(`Main caution factors remain ${joinLocalizedList(locale, caution)}.`);
   }
 
   return normalizeAssistantText(lines.join('\n\n'));
@@ -9814,5 +10001,10 @@ async function answerConversation(identity, userText) {
 }
 
 module.exports = {
-  answerConversation
+  answerConversation,
+  __test: {
+    buildElectionalResultExplanationResponse,
+    formatElectionalEventTimeLabel,
+    localizeElectionalFactor
+  }
 };
