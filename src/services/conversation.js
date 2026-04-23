@@ -5162,7 +5162,7 @@ function isElectionalResultExplanationFollowUp(text) {
     return false;
   }
 
-  return /\b(what are (these|those) conditions|which conditions|what conditions|what makes (it|this window|this date) (good|favorable|favourable)|why (that|this date|this window)|explain (this|that|the window|the date)|details? on (this|that)|quelles? sont ces conditions|c est quoi ces conditions|pourquoi (cette date|ce moment|ce creneau)|explique (ce|cette) (date|moment|creneau)|plus de details?|detaille|developpe)\b/i.test(value);
+  return /\b(why|what are (these|those) conditions|which conditions|what conditions|what makes (it|this window|this date) (good|favorable|favourable)|why (that|this date|this window)|explain (this|that|the window|the date)|details? on (this|that)|quelles? sont ces conditions|c est quoi ces conditions|pourquoi|pourquoi (cette date|ce moment|ce creneau)|explique (ce|cette) (date|moment|creneau)|plus de details?|detaille|developpe)\b/i.test(value);
 }
 
 function formatElectionalFactorTitles(factors = [], limit = 3) {
@@ -9058,7 +9058,10 @@ async function answerConversation(identity, userText) {
 
   if (
     cachedElectionalResult &&
-    isElectionalResultExplanationFollowUp(userText)
+    (
+      isElectionalResultExplanationFollowUp(userText)
+      || isElectionalResultExplanationFollowUp(explicitFollowUp?.rewrittenQuestion || '')
+    )
   ) {
     const text = buildElectionalResultExplanationResponse(locale, cachedElectionalResult);
     pushHistory(identity, 'user', userText);
