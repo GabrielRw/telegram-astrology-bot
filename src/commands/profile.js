@@ -67,6 +67,27 @@ module.exports = function registerProfileCommand(bot) {
     );
   });
 
+  bot.action(/^WEDDING_SPOUSE_A_.+$/, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
+  bot.action(ACTIONS.WEDDING_SPOUSE_B_NEW, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.WEDDING_SPOUSE_B_NEW }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
+  bot.action(/^WEDDING_SPOUSE_B_.+$/, async (ctx) => {
+    await handleIncomingAction(
+      createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
+      createTelegramChannelApi(ctx)
+    );
+  });
+
   bot.action(/^RELOCATION_CITY_.+$/, async (ctx) => {
     await handleIncomingAction(
       createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
