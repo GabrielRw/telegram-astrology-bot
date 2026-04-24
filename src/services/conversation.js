@@ -124,7 +124,7 @@ const ELECTIONAL_ROUTE_CONFIGS = [
     toolTarget: 'v2_western_electional_starting_journey_search',
     primaryNatalKey: 'traveler_natal',
     topicPatterns: [
-      /\b(journey|trip|travel|voyage|departure|depart|partir)\b/
+      /\b(journey|trip|travel|traveling|travelling|voyage|voyager|voyagerai|voyagerais|departure|depart|partir)\b/
     ]
   },
   {
@@ -1122,7 +1122,7 @@ const NON_PROFILE_NAME_TOKENS = new Set([
   'horoscope', 'transit', 'transits', 'progression', 'progressions', 'profection', 'profections',
   'solar', 'return', 'returns', 'ephemeris', 'ephemerides', 'éphémérides', 'synastrie', 'synastry',
   'relocation', 'relocalisation', 'relocalisation', 'astrocartography', 'astrocartographie',
-  'day', 'days', 'week', 'month', 'jour', 'jours', 'semaine', 'mois', 'today', 'today?', 'tomorrow', 'hier', 'demain',
+  'day', 'days', 'week', 'month', 'year', 'jour', 'jours', 'semaine', 'mois', 'annee', 'année', 'today', 'today?', 'tomorrow', 'hier', 'demain', 'cette', 'this',
   'career', 'work', 'love', 'home', 'family', 'wellbeing', 'health', 'creativity', 'spiritual',
   'carrière', 'amour', 'foyer', 'famille', 'bien-être', 'santé', 'créativité', 'spirituel',
   'wedding', 'marriage', 'marry', 'mariage', 'marier', 'marrier', 'epouser',
@@ -1130,7 +1130,7 @@ const NON_PROFILE_NAME_TOKENS = new Set([
   'audition', 'interview', 'entretien', 'embauche', 'emploi', 'casting',
   'property', 'real', 'estate', 'house', 'apartment', 'immobilier', 'maison', 'appartement', 'bien',
   'car', 'vehicle', 'auto', 'voiture', 'vehicule',
-  'journey', 'trip', 'travel', 'voyage', 'departure', 'depart', 'partir',
+  'journey', 'trip', 'travel', 'traveling', 'travelling', 'voyage', 'voyager', 'voyagerai', 'voyagerais', 'departure', 'depart', 'partir',
   'legal', 'proceedings', 'lawsuit', 'court', 'hearing', 'tribunal', 'proces', 'justice',
   'physical', 'examination', 'medical', 'exam', 'checkup', 'check-up', 'doctor', 'bilan',
   'invest', 'investment', 'investir', 'investissement', 'placement', 'money', 'argent', 'portfolio', 'bourse',
@@ -1147,8 +1147,13 @@ function normalizeExternalProfileCandidate(candidate) {
 
 function isLikelyExternalProfileName(candidate) {
   const normalized = normalizeExternalProfileCandidate(candidate);
+  const normalizedMatchText = normalizeMatchingText(normalized);
 
   if (!normalized || normalized.length < 2 || normalized.length > 60) {
+    return false;
+  }
+
+  if (/\b(this|current|cette|cet|ce|esta|este|dieses|dieser)\s+(year|month|week|annee|année|mois|semaine|ano|año|mes|woche|jahr)\b/i.test(normalizedMatchText)) {
     return false;
   }
 
@@ -9830,8 +9835,6 @@ async function answerConversation(identity, userText) {
     const text = buildSystemMetaResponse(locale, getChatState(identity), activeProfile);
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
-    setLastToolResults(identity, []);
-    persistConversationAnswerState(identity, route, activeProfile, null, plannerQuestionText, null, null, text, []);
     return {
       text,
       usedTools: [],
@@ -9843,8 +9846,6 @@ async function answerConversation(identity, userText) {
     const text = buildProfileManagementResponse(locale);
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
-    setLastToolResults(identity, []);
-    persistConversationAnswerState(identity, route, activeProfile, null, plannerQuestionText, null, null, text, []);
     return {
       text,
       usedTools: [],
@@ -9859,8 +9860,6 @@ async function answerConversation(identity, userText) {
     const text = buildClarificationResponse(locale, activeProfile, referencedProfile, conversationContext);
     pushHistory(identity, 'user', userText);
     pushHistory(identity, 'model', text);
-    setLastToolResults(identity, []);
-    persistConversationAnswerState(identity, route, referencedProfile || activeProfile, null, plannerQuestionText, null, null, text, []);
     return {
       text,
       usedTools: [],
@@ -10721,6 +10720,8 @@ module.exports = {
     buildEphemerisRawResponse,
     buildTransitSearchRawResponse,
     isElectionalResultExplanationFollowUp,
-    detectArtifactFollowUpLocally
+    detectArtifactFollowUpLocally,
+    inferElectionalRouteConfigFromQuestion,
+    extractRequestedExternalProfileName
   }
 };

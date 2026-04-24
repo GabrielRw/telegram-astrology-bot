@@ -157,12 +157,14 @@ const ELECTIONAL_CANONICAL_ROUTES = [
       en: [
         'what is the best time to start my journey',
         'best date to begin a trip',
-        'when should i start traveling'
+        'when should i start traveling',
+        'what is the best time to travel this year'
       ],
       fr: [
         'quel est le meilleur moment pour commencer mon voyage',
         'quelle est la meilleure date pour partir en voyage',
-        'quel est le meilleur moment pour prendre la route'
+        'quel est le meilleur moment pour prendre la route',
+        'quel est le meilleur moment pour voyager cette annee'
       ]
     }
   }),
