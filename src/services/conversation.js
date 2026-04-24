@@ -161,7 +161,7 @@ const ELECTIONAL_ROUTE_IDS = new Set(
   ELECTIONAL_ROUTE_CONFIGS.map((config) => config.id)
 );
 
-const ELECTIONAL_TIMING_CUE_PATTERN = /\b(best|better|good|when|quand|date|day|jour|moment|timing|election|electional|favorable|favourable|auspicious|ideal|optimal|meilleur(?:e)?|bonne?\s+date|bon\s+moment|this year|this month|cette annee|cette annee|cette année|ce mois|should i|devrais[- ]?je)\b/;
+const ELECTIONAL_TIMING_CUE_PATTERN = /\b(best|better|good|when|quand|date|day|jour|journee|journée|hour|heure|moment|timing|election|electional|favorable|favourable|auspicious|ideal|optimal|meilleur(?:e)?|bonne?\s+date|bon\s+moment|this year|this month|cette annee|cette annee|cette année|ce mois|should i|devrais[- ]?je)\b/;
 
 const RAW_INTERPRETIVE_PATTERNS = [
   /\bthis means\b/i,
@@ -491,9 +491,10 @@ function parseDurationDaysFromQuestion(text) {
 function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone = 'UTC') {
   const value = String(text || '');
   const explicitDateRange = parseExplicitDateRangeFromQuestion(value, timezone);
+  const explicitSingleDate = explicitDateRange ? null : parseExplicitSingleDateFromQuestion(value, timezone);
   const limit = parseRequestedResultLimit(value);
   const strongest = wantsStrongestSubset(value);
-  const parsedMonth = explicitDateRange ? null : parseMonthFromQuestion(value, timezone);
+  const parsedMonth = (explicitDateRange || explicitSingleDate) ? null : parseMonthFromQuestion(value, timezone);
   const wantsToday = /\b(today|aujourd'hui|aujourdhui|du jour|heute|hoy)\b/i.test(value);
   const wantsWeek = /\b(this week|current week|for the week|de la semaine|cette semaine|semaine en cours|diese woche|esta semana)\b/i.test(value);
   const explicitYear = parseYearFromQuestion(value);
@@ -505,9 +506,15 @@ function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone 
     return sanitizeStructuredQueryPatch({
       rangeStart: explicitDateRange?.start || null,
       rangeEnd: explicitDateRange?.end || null,
+      ...(explicitSingleDate ? {
+        rangeStart: explicitSingleDate.start,
+        rangeEnd: explicitSingleDate.end
+      } : {}),
       month: parsedMonth,
       timeframe: explicitDateRange
         ? 'explicit_range'
+        : explicitSingleDate
+        ? 'explicit_day'
         : durationDays
         ? 'rolling_days'
         : parsedMonth
@@ -938,20 +945,22 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
   }
 
   const explicitElectionalRange = parseExplicitDateRangeFromQuestion(value);
+  const explicitElectionalSingleDate = explicitElectionalRange ? null : parseExplicitSingleDateFromQuestion(value);
   if (
-    explicitElectionalRange &&
+    (explicitElectionalRange || explicitElectionalSingleDate) &&
     lastResolvedQuestion &&
     ELECTIONAL_ROUTE_IDS.has(lastQueryState?.canonicalRouteId || '')
   ) {
+    const range = explicitElectionalRange || explicitElectionalSingleDate;
     return {
       followUpType: 'electional_window_refinement',
-      rewrittenQuestion: `${lastQueryState?.baseQuestion || lastResolvedQuestion}\n\nUse a search window from ${explicitElectionalRange.start} to ${explicitElectionalRange.end}.`,
+      rewrittenQuestion: `${lastQueryState?.baseQuestion || lastResolvedQuestion}\n\nUse a search window from ${range.start} to ${range.end}.`,
       routeKind: lastRouteKind,
       canonicalRouteId: lastQueryState?.canonicalRouteId || null,
       queryPatch: {
         timeframe: 'explicit_range',
-        rangeStart: explicitElectionalRange.start,
-        rangeEnd: explicitElectionalRange.end
+        rangeStart: range.start,
+        rangeEnd: range.end
       }
     };
   }
@@ -1118,6 +1127,7 @@ const EXTERNAL_PROFILE_ROUTE_KINDS = new Set([
 
 const NON_PROFILE_NAME_TOKENS = new Set([
   'mon', 'ma', 'mes', 'moi', 'me', 'my', 'mine', 'meu', 'pour', 'for', 'about', 'avec', 'with',
+  'et', 'and', 'und', 'y', 'why', 'pourquoi',
   'theme', 'thème', 'astro', 'astral', 'natal', 'chart', 'birth', 'carte', 'profil', 'profile',
   'horoscope', 'transit', 'transits', 'progression', 'progressions', 'profection', 'profections',
   'solar', 'return', 'returns', 'ephemeris', 'ephemerides', 'éphémérides', 'synastrie', 'synastry',
@@ -3090,6 +3100,30 @@ function parseExplicitDateRangeFromQuestion(text, timezone = 'UTC') {
   return null;
 }
 
+function parseExplicitSingleDateFromQuestion(text, timezone = 'UTC') {
+  const value = String(text || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  const normalized = normalizeMatchingText(value).replace(/[–—]/g, '-');
+  const isoMatch = normalized.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  if (isoMatch) {
+    const date = parseIsoDateString(isoMatch[1]);
+    return date ? { start: date, end: date } : null;
+  }
+
+  const mentions = extractTextualDateMentions(normalized);
+  if (mentions.length !== 1) {
+    return null;
+  }
+
+  const mention = mentions[0];
+  const year = mention.year || parseYearFromQuestion(normalized) || getCurrentLocalDateParts(timezone).year;
+  const date = buildIsoDateString(year, mention.month, mention.day);
+  return date ? { start: date, end: date } : null;
+}
+
 function parseMonthFromQuestion(text, timezone = 'UTC') {
   const value = String(text || '').toLowerCase();
   const requestedMonthlyPlanet = parseRequestedMonthlyTransitPlanet(value);
@@ -3382,6 +3416,7 @@ function buildElectionalSearchWindow(userText, queryState = null, timezone = 'UT
         end: queryState.parameters.rangeEnd
       }
     : parseExplicitDateRangeFromQuestion(userText, timezone);
+  const explicitSingleDate = explicitRange ? null : parseExplicitSingleDateFromQuestion(userText, timezone);
   const requestedMonth = queryState?.parameters?.month || parseMonthFromQuestion(userText, timezone);
   const durationDays = Number(queryState?.parameters?.durationDays || parseDurationDaysFromQuestion(userText) || 0);
 
@@ -3389,6 +3424,13 @@ function buildElectionalSearchWindow(userText, queryState = null, timezone = 'UT
     return {
       searchWindow: explicitRange,
       searchTuning: buildElectionalSearchTuningForRange(explicitRange)
+    };
+  }
+
+  if (explicitSingleDate?.start && explicitSingleDate?.end) {
+    return {
+      searchWindow: explicitSingleDate,
+      searchTuning: { mode: 'direct' }
     };
   }
 
@@ -10722,6 +10764,7 @@ module.exports = {
     isElectionalResultExplanationFollowUp,
     detectArtifactFollowUpLocally,
     inferElectionalRouteConfigFromQuestion,
-    extractRequestedExternalProfileName
+    extractRequestedExternalProfileName,
+    parseExplicitSingleDateFromQuestion
   }
 };
