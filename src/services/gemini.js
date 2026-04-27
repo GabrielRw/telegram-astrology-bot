@@ -200,7 +200,8 @@ async function runFunctionCallingLoop({
   userText,
   functionDeclarations,
   executeFunction,
-  model
+  model,
+  toolConfigMode
 }) {
   const ai = getGeminiClient();
   const contents = [
@@ -235,7 +236,7 @@ async function runFunctionCallingLoop({
             toolConfig: functionDeclarations.length > 0
               ? {
                   functionCallingConfig: {
-                    mode: FunctionCallingConfigMode.AUTO
+                    mode: toolConfigMode || FunctionCallingConfigMode.AUTO
                   }
                 }
               : undefined

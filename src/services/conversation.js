@@ -12,6 +12,7 @@ const mcpService = require('./freeastroMcp');
 const profiles = require('./profiles');
 const toolCache = require('./toolCache');
 const { appendUnmatchedCanonicalQuestion } = require('./unmatchedCanonicalLog');
+const { FunctionCallingConfigMode } = require('@google/genai');
 const { createLocalFunctionDeclarations, generatePlainText, getFastPathModelName, runFunctionCallingLoop } = require('./gemini');
 const { info } = require('./logger');
 const {
@@ -220,6 +221,8 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
     'Do not repeat the same point twice in one answer, even in different wording.',
     'Ground every answer in the user natal chart, cached tool results, or explicit tool results.',
     'Never invent placements, houses, angles, aspects, timings, or predictions.',
+    'For any direct factual placement question, call get_cached_planet_placement, get_cached_house_info, or get_cached_angle_info before answering.',
+    'If the available local facts do not answer the question, call the relevant MCP tool family when available; otherwise say the exact missing data instead of guessing.',
     'If information is missing, say so clearly and ask a narrow follow-up only when required.',
     'If the user asks for transits, ephemeris, or a month-specific forecast and the needed date window is missing, first prefer the cached monthly transit timeline.',
     'Do not give medical, legal, or financial advice.',
@@ -2614,6 +2617,20 @@ const NATAL_POINT_SYNONYMS = {
   chiron: 'chiron'
 };
 const ZODIAC_SIGNS = ['aries', 'taurus', 'gemini', 'cancer', 'leo', 'virgo', 'libra', 'scorpio', 'sagittarius', 'capricorn', 'aquarius', 'pisces'];
+const SIGN_SYNONYMS = {
+  aries: 'aries', belier: 'aries', bélier: 'aries', widder: 'aries',
+  taurus: 'taurus', taureau: 'taurus', stier: 'taurus', tauro: 'taurus',
+  gemini: 'gemini', gemeaux: 'gemini', gémeaux: 'gemini', zwillinge: 'gemini', geminis: 'gemini', géminis: 'gemini',
+  cancer: 'cancer', krebs: 'cancer',
+  leo: 'leo', lion: 'leo', lowe: 'leo', löwe: 'leo',
+  virgo: 'virgo', vierge: 'virgo', jungfrau: 'virgo',
+  libra: 'libra', balance: 'libra', waage: 'libra',
+  scorpio: 'scorpio', scorpion: 'scorpio', skorpion: 'scorpio', escorpio: 'scorpio',
+  sagittarius: 'sagittarius', sagittaire: 'sagittarius', schutze: 'sagittarius', schütze: 'sagittarius', sagitario: 'sagittarius',
+  capricorn: 'capricorn', capricorne: 'capricorn', steinbock: 'capricorn', capricornio: 'capricorn',
+  aquarius: 'aquarius', verseau: 'aquarius', wassermann: 'aquarius', acuario: 'aquarius',
+  pisces: 'pisces', poissons: 'pisces', fische: 'pisces', piscis: 'pisces'
+};
 const MONTH_NAME_MAP = {
   january: 1, janvier: 1, januar: 1, enero: 1,
   february: 2, fevrier: 2, février: 2, februar: 2, febrero: 2,
@@ -7254,6 +7271,130 @@ function formatPlanetPlacementLine(locale, planet) {
   return parts.join(' • ');
 }
 
+function looksLikeDirectPlanetPlacementQuestion(text) {
+  const value = normalizeMatchingText(text);
+  if (!parsePlanetFromQuestion(value)) {
+    return false;
+  }
+
+  return /\b(sign|signe|zeichen|signo|house|maison|haus|casa|where|ou|où|donde|dónde|welchem)\b/.test(value);
+}
+
+function buildPlacementIntegrityMap(subjectProfile) {
+  if (!subjectProfile?.rawNatalPayload) {
+    return new Map();
+  }
+
+  const normalizedProfile = normalizeNatalProfile(
+    subjectProfile.rawNatalPayload,
+    subjectProfile.cityLabel,
+    { birthCountry: subjectProfile.birthCountry }
+  );
+
+  return new Map(
+    asArray(normalizedProfile.planets)
+      .filter((planet) => planet?.id)
+      .map((planet) => [String(planet.id).toLowerCase(), {
+        signId: String(planet.sign_id || planet.sign || '').toLowerCase(),
+        house: Number.isFinite(Number(planet.house)) ? Number(planet.house) : null
+      }])
+  );
+}
+
+function validateNatalPlacementIntegrity(text, subjectProfile) {
+  const value = String(text || '');
+  if (!value.trim()) {
+    return true;
+  }
+
+  const placements = buildPlacementIntegrityMap(subjectProfile);
+  if (placements.size === 0) {
+    return true;
+  }
+
+  const normalized = normalizeMatchingText(value);
+  const signHits = [...new Set(Object.entries(SIGN_SYNONYMS)
+    .filter(([term]) => new RegExp(`\\b${term}\\b`, 'i').test(normalized))
+    .map(([, sign]) => sign))];
+  const houseMatches = [...normalized.matchAll(/\b(?:house|maison|haus|casa)\s+(\d{1,2})\b/gi)]
+    .map((match) => Number(match[1]))
+    .filter((house) => Number.isInteger(house) && house >= 1 && house <= 12);
+
+  if (signHits.length === 0 && houseMatches.length === 0) {
+    return true;
+  }
+
+  for (const [planetId, placement] of placements.entries()) {
+    const planetMentioned = Object.entries(PLANET_SYNONYMS)
+      .some(([term, mappedPlanet]) => mappedPlanet === planetId && new RegExp(`\\b${term}\\b`, 'i').test(normalized))
+      || new RegExp(`\\b${planetId}\\b`, 'i').test(normalized);
+
+    if (!planetMentioned) {
+      continue;
+    }
+
+    const wrongSign = signHits.some((sign) => sign !== placement.signId);
+    const wrongHouse = houseMatches.some((house) => placement.house && house !== placement.house);
+    if (wrongSign || wrongHouse) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function buildDirectPlanetPlacementResponse(locale, subjectProfile, userText) {
+  if (!subjectProfile?.rawNatalPayload || !looksLikeDirectPlanetPlacementQuestion(userText)) {
+    return null;
+  }
+
+  const planetId = parsePlanetFromQuestion(userText);
+  if (!planetId) {
+    return null;
+  }
+
+  const normalizedProfile = normalizeNatalProfile(
+    subjectProfile.rawNatalPayload,
+    subjectProfile.cityLabel,
+    { birthCountry: subjectProfile.birthCountry }
+  );
+  const planet = normalizedProfile.planetsById?.[planetId] || null;
+  if (!planet) {
+    return null;
+  }
+
+  const planetName = localizeAstroPointName(locale, planet.id || planet.name || planetId);
+  const signName = localizeSignName(locale, planet.sign_id || planet.sign || '');
+  const houseValue = Number.isFinite(Number(planet.house)) ? Number(planet.house) : null;
+  const degree = Number.isFinite(Number(planet.pos)) ? Number(planet.pos).toFixed(2).replace(/\.?0+$/, '') : null;
+
+  if (locale === 'fr') {
+    return [
+      `${planetName || 'La planète demandée'} se trouve en ${signName || 'signe inconnu'}${houseValue ? `, en maison ${houseValue}` : ''}.`,
+      degree ? `Position exacte dans le signe : ${degree}°.` : null
+    ].filter(Boolean).join('\n\n');
+  }
+
+  if (locale === 'de') {
+    return [
+      `${planetName || 'Der angefragte Planet'} steht in ${signName || 'einem unbekannten Zeichen'}${houseValue ? `, in Haus ${houseValue}` : ''}.`,
+      degree ? `Exakte Position im Zeichen: ${degree}°.` : null
+    ].filter(Boolean).join('\n\n');
+  }
+
+  if (locale === 'es') {
+    return [
+      `${planetName || 'El planeta solicitado'} está en ${signName || 'un signo desconocido'}${houseValue ? `, en la casa ${houseValue}` : ''}.`,
+      degree ? `Posición exacta en el signo: ${degree}°.` : null
+    ].filter(Boolean).join('\n\n');
+  }
+
+  return [
+    `${planetName || 'The requested planet'} is in ${signName || 'an unknown sign'}${houseValue ? `, in house ${houseValue}` : ''}.`,
+    degree ? `Exact position in the sign: ${degree}°.` : null
+  ].filter(Boolean).join('\n\n');
+}
+
 function formatAspectLine(locale, aspect) {
   if (!aspect) {
     return null;
@@ -9989,6 +10130,31 @@ async function answerConversation(identity, userText) {
     };
   }
 
+  const directPlacementText = buildDirectPlanetPlacementResponse(locale, subjectProfile, userText);
+  if (directPlacementText) {
+    const usedTools = [{
+      name: 'get_cached_planet_placement',
+      args: { planet: parsePlanetFromQuestion(userText) },
+      result: {
+        planet: findPlanet(normalizeNatalProfile(subjectProfile.rawNatalPayload, subjectProfile.cityLabel, {
+          birthCountry: subjectProfile.birthCountry
+        }), parsePlanetFromQuestion(userText))
+      }
+    }];
+    pushHistory(identity, 'user', userText);
+    pushHistory(identity, 'model', directPlacementText);
+    setLastToolResults(identity, usedTools);
+    persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, {
+      target: 'indexed_facts',
+      family: 'indexed_natal'
+    }, directPlacementText, usedTools);
+    return {
+      text: directPlacementText,
+      usedTools,
+      intent: route.kind
+    };
+  }
+
   if (
     cachedElectionalResult &&
     (
@@ -10640,12 +10806,14 @@ async function answerConversation(identity, userText) {
     ...toolDisciplineLines
   ].join('\n');
   const toolPassStartedAt = performance.now();
+  const mustCallToolBeforeAnswer = looksLikeDirectPlanetPlacementQuestion(effectiveUserQuestion);
   let result = await runFunctionCallingLoop({
     systemInstruction: toolLoopInstruction,
     history: chatState.history,
     userText: effectiveUserQuestion,
     functionDeclarations: [...localDeclarationsForLoop, ...mcpDeclarations],
-    executeFunction
+    executeFunction,
+    toolConfigMode: mustCallToolBeforeAnswer ? FunctionCallingConfigMode.ANY : FunctionCallingConfigMode.AUTO
   });
 
   info('conversation tool pass complete', {
@@ -10732,6 +10900,31 @@ async function answerConversation(identity, userText) {
   const finalText = responseMode === 'raw'
     ? validateRawAnswer(result.text, locale)
     : validateFinalAnswer(result.text, route, locale);
+  if (!validateNatalPlacementIntegrity(finalText, subjectProfile)) {
+    const fallbackPlacementText = buildDirectPlanetPlacementResponse(locale, subjectProfile, effectiveUserQuestion || userText);
+    if (fallbackPlacementText) {
+      const planetId = parsePlanetFromQuestion(effectiveUserQuestion || userText);
+      const normalizedProfile = normalizeNatalProfile(subjectProfile.rawNatalPayload, subjectProfile.cityLabel, {
+        birthCountry: subjectProfile.birthCountry
+      });
+      const usedTools = [{
+        name: 'get_cached_planet_placement',
+        args: { planet: planetId },
+        result: { planet: findPlanet(normalizedProfile, planetId) }
+      }];
+      pushHistory(identity, 'model', fallbackPlacementText);
+      setLastToolResults(identity, usedTools);
+      persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, {
+        target: 'indexed_facts',
+        family: 'indexed_natal'
+      }, fallbackPlacementText, usedTools);
+      return {
+        text: fallbackPlacementText,
+        usedTools,
+        intent: route.kind
+      };
+    }
+  }
   pushHistory(identity, 'model', finalText);
   setLastToolResults(identity, result.toolResults);
   persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, result.toolResults);
@@ -10765,6 +10958,8 @@ module.exports = {
     detectArtifactFollowUpLocally,
     inferElectionalRouteConfigFromQuestion,
     extractRequestedExternalProfileName,
-    parseExplicitSingleDateFromQuestion
+    parseExplicitSingleDateFromQuestion,
+    buildDirectPlanetPlacementResponse,
+    validateNatalPlacementIntegrity
   }
 };
