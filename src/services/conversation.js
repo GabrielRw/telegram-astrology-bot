@@ -1116,6 +1116,13 @@ function detectThirdPartyPronoun(text) {
   return /\b(son|sa|ses|lui|elle|leur|leurs|his|her|hers|him|their|them)\b/i.test(String(text || ''));
 }
 
+function looksLikeFirstPersonPlacementQuestion(text) {
+  const value = normalizeMatchingText(text);
+  return parsePlanetsFromQuestion(value).length > 0
+    && /\b(mon|ma|mes|moi|my|mi|mein|meine|meinen|meiner)\b/i.test(value)
+    && /\b(sign|signe|zeichen|signo|house|maison|haus|casa|where|ou|où|donde|dónde|welchem)\b/i.test(value);
+}
+
 const EXTERNAL_PROFILE_ROUTE_KINDS = new Set([
   'astrology_natal',
   'astrology_transits',
@@ -2713,6 +2720,55 @@ function findEarliestMappedToken(text, synonymMap = {}) {
 function parsePlanetFromQuestion(text) {
   return findEarliestMappedToken(text, PLANET_SYNONYMS)
     || WESTERN_PLANETS.find((planet) => new RegExp(`\\b${planet}\\b`, 'i').test(normalizeMatchingText(text))) || null;
+}
+
+function parsePlanetsFromQuestion(text) {
+  const value = normalizeMatchingText(text);
+  const matches = [];
+
+  for (const [needle, planetId] of Object.entries(PLANET_SYNONYMS)) {
+    const normalizedNeedle = normalizeMatchingText(needle);
+    const pattern = new RegExp(`\\b${escapeRegExp(normalizedNeedle)}\\b`, 'gi');
+    let match = pattern.exec(value);
+    while (match) {
+      matches.push({ index: match.index, planetId });
+      match = pattern.exec(value);
+    }
+  }
+
+  for (const planetId of WESTERN_PLANETS) {
+    const pattern = new RegExp(`\\b${escapeRegExp(planetId)}\\b`, 'gi');
+    let match = pattern.exec(value);
+    while (match) {
+      matches.push({ index: match.index, planetId });
+      match = pattern.exec(value);
+    }
+  }
+
+  const seen = new Set();
+  return matches
+    .sort((left, right) => left.index - right.index)
+    .map((match) => match.planetId)
+    .filter((planetId) => {
+      if (seen.has(planetId)) {
+        return false;
+      }
+      seen.add(planetId);
+      return true;
+    });
+}
+
+function parseDirectPlacementPlanetsFromQuestion(text) {
+  const value = String(text || '');
+  const followUpParts = value.split(/follow-up request:/i);
+  if (followUpParts.length > 1) {
+    const followUpPlanets = parsePlanetsFromQuestion(followUpParts[followUpParts.length - 1]);
+    if (followUpPlanets.length > 0) {
+      return followUpPlanets;
+    }
+  }
+
+  return parsePlanetsFromQuestion(value);
 }
 
 function parseTransitPlanetFromQuestion(text) {
@@ -4492,7 +4548,7 @@ async function resolveConversationTargets(identity, userText, route, activeProfi
     entries.findIndex((entry) => entry.profileId === profile.profileId) === index
   ));
   const nonActiveProfiles = allProfiles.filter((profile) => profile.profileId !== active?.profileId);
-  const pronounRefersToOther = detectThirdPartyPronoun(userText);
+  const pronounRefersToOther = !looksLikeFirstPersonPlacementQuestion(userText) && detectThirdPartyPronoun(userText);
   const requestedExternalProfileName = extractRequestedExternalProfileName(userText, route, active, allProfiles);
   const inferredElectionalRoute = inferElectionalRouteConfigFromQuestion(userText);
   const isExplicitWeddingQuestion = inferredElectionalRoute?.id === 'wedding_election_search';
@@ -7271,13 +7327,254 @@ function formatPlanetPlacementLine(locale, planet) {
   return parts.join(' • ');
 }
 
-function looksLikeDirectPlanetPlacementQuestion(text) {
+function looksLikeDirectPlanetPlacementQuestion(text, options = {}) {
   const value = normalizeMatchingText(text);
-  if (!parsePlanetFromQuestion(value)) {
+  if (parseDirectPlacementPlanetsFromQuestion(value).length === 0) {
     return false;
   }
 
-  return /\b(sign|signe|zeichen|signo|house|maison|haus|casa|where|ou|où|donde|dónde|welchem)\b/.test(value);
+  if (/\b(sign|signe|zeichen|signo|house|maison|haus|casa|where|ou|où|donde|dónde|welchem)\b/.test(value)) {
+    return true;
+  }
+
+  return options.allowPlanetOnly === true;
+}
+
+function looksLikeRisingPlacementQuestion(text) {
+  const value = normalizeMatchingText(text);
+  return /\b(rising sign|rising|ascendant|asc)\b/.test(value)
+    && /\b(what|which|sign|signe|zeichen|signo|mean|meaning|means|say|tell|interpret|quel|quelle|cual|cu[aá]l|was|ist)\b/.test(value);
+}
+
+function looksLikePlacementMeaningQuestion(text, options = {}) {
+  const value = normalizeMatchingText(text);
+  if (!value) {
+    return false;
+  }
+
+  if (options.forceMeaning === true) {
+    return true;
+  }
+
+  return /\b(what does|what do|mean|meaning|means|say about|says about|tell me about|interpret|emotion|emotionally|feelings?|personality|identity|about me|who am i|qui suis je|signifie|veut dire|parle moi|emotionnel|emocional|bedeutet|erzahl|erz[aä]hl|personalidad)\b/.test(value);
+}
+
+function looksLikeCurrentTransitCue(text) {
+  return /\b(right now|today|this month|current|currently|transits?|sky|now|aujourd'hui|aujourdhui|ce mois|actuel|actuelle|heute|dieser monat|hoy|este mes)\b/i.test(String(text || ''));
+}
+
+function getAngleByPoint(normalizedProfile, pointId) {
+  const angles = normalizedProfile?.angles || {};
+  const key = String(pointId || '').toLowerCase();
+
+  if (key === 'ascendant') {
+    return angles.asc || angles.ascendant || null;
+  }
+
+  if (key === 'descendant') {
+    return angles.desc || angles.dsc || angles.descendant || null;
+  }
+
+  if (key === 'midheaven') {
+    return angles.mc || angles.midheaven || null;
+  }
+
+  if (key === 'ic') {
+    return angles.ic || null;
+  }
+
+  return null;
+}
+
+function localizeHouseLabel(locale) {
+  return {
+    fr: 'maison',
+    de: 'Haus',
+    es: 'casa',
+    en: 'house'
+  }[locale] || 'house';
+}
+
+function buildSinglePlacementFactText(locale, placement) {
+  const houseText = placement.houseValue ? `, in ${localizeHouseLabel(locale)} ${placement.houseValue}` : '';
+
+  if (locale === 'fr') {
+    return `${placement.pointName || 'Le point demandé'} se trouve en ${placement.signName || 'signe inconnu'}${placement.houseValue ? `, en ${localizeHouseLabel(locale)} ${placement.houseValue}` : ''}.`;
+  }
+
+  if (locale === 'de') {
+    return `${placement.pointName || 'Der angefragte Punkt'} steht in ${placement.signName || 'einem unbekannten Zeichen'}${placement.houseValue ? `, in ${localizeHouseLabel(locale)} ${placement.houseValue}` : ''}.`;
+  }
+
+  if (locale === 'es') {
+    return `${placement.pointName || 'El punto solicitado'} está en ${placement.signName || 'un signo desconocido'}${placement.houseValue ? `, en la ${localizeHouseLabel(locale)} ${placement.houseValue}` : ''}.`;
+  }
+
+  return `${placement.pointName || 'The requested point'} is in ${placement.signName || 'an unknown sign'}${houseText}.`;
+}
+
+function buildDegreeText(locale, degree) {
+  if (!degree) {
+    return null;
+  }
+
+  if (locale === 'fr') {
+    return `Position exacte dans le signe : ${degree}°.`;
+  }
+
+  if (locale === 'de') {
+    return `Exakte Position im Zeichen: ${degree}°.`;
+  }
+
+  if (locale === 'es') {
+    return `Posición exacta en el signo: ${degree}°.`;
+  }
+
+  return `Exact position in the sign: ${degree}°.`;
+}
+
+const POINT_MEANINGS_EN = {
+  sun: 'Your Sun describes identity, vitality, and the way you grow into confidence.',
+  moon: 'Your Moon describes emotional needs, instinctive reactions, and what helps you feel safe.',
+  mercury: 'Mercury describes how you think, learn, speak, and process information.',
+  venus: 'Venus describes attraction, affection, taste, and how you seek ease or pleasure.',
+  mars: 'Mars describes drive, desire, anger, courage, and how you take action.',
+  jupiter: 'Jupiter describes growth, faith, opportunity, and the places where life asks you to expand.',
+  saturn: 'Saturn describes discipline, limits, responsibility, and the skills built through pressure.',
+  uranus: 'Uranus describes independence, disruption, originality, and where you need freedom.',
+  neptune: 'Neptune describes imagination, sensitivity, ideals, and places where boundaries can blur.',
+  pluto: 'Pluto describes intensity, transformation, power, and deep psychological renewal.',
+  chiron: 'Chiron describes a sensitive wound that can become wisdom through honest integration.',
+  ascendant: 'Your Ascendant describes first impressions, body language, and how you enter new situations.',
+  descendant: 'Your Descendant describes the qualities you meet through close one-to-one relationships.',
+  midheaven: 'Your Midheaven describes public direction, vocation, reputation, and visible ambition.',
+  ic: 'Your IC describes roots, home, privacy, and the inner foundation you return to.'
+};
+
+const SIGN_MEANINGS_EN = {
+  aries: 'Aries makes it direct, quick to initiate, and more comfortable moving through action than waiting.',
+  taurus: 'Taurus makes it steady, embodied, loyal, and oriented toward stability and tangible reassurance.',
+  gemini: 'Gemini makes it curious, verbal, adaptable, and more likely to process life through ideas and exchange.',
+  cancer: 'Cancer makes it protective, receptive, memory-rich, and strongly shaped by belonging and emotional safety.',
+  leo: 'Leo makes it expressive, proud, warm, and motivated by creative recognition.',
+  virgo: 'Virgo makes it observant, practical, improvement-oriented, and sensitive to usefulness and detail.',
+  libra: 'Libra makes it relational, diplomatic, aesthetic, and tuned to balance or mutual response.',
+  scorpio: 'Scorpio makes it intense, private, perceptive, and drawn toward emotional honesty and transformation.',
+  sagittarius: 'Sagittarius makes it exploratory, candid, meaning-seeking, and pulled toward wider horizons.',
+  capricorn: 'Capricorn makes it contained, responsible, self-controlled, and focused on competence and long-term trust.',
+  aquarius: 'Aquarius makes it independent, future-facing, principled, and more comfortable with difference.',
+  pisces: 'Pisces makes it porous, imaginative, compassionate, and responsive to subtle emotional or spiritual currents.'
+};
+
+const HOUSE_MEANINGS_EN = {
+  1: 'In the 1st house, this becomes visible in presence, self-image, and how you start things.',
+  2: 'In the 2nd house, it works through security, money, values, and self-worth.',
+  3: 'In the 3rd house, it shows through communication, learning, siblings, and everyday perception.',
+  4: 'In the 4th house, it roots itself in family, home, memory, and private emotional foundations.',
+  5: 'In the 5th house, it expresses through romance, creativity, play, pleasure, and being seen.',
+  6: 'In the 6th house, it becomes part of work rhythms, health habits, service, and daily craft.',
+  7: 'In the 7th house, it is activated through partnership, mirroring, and one-to-one bonds.',
+  8: 'In the 8th house, it moves through trust, intimacy, shared resources, and psychological depth.',
+  9: 'In the 9th house, it reaches through study, travel, faith, philosophy, and wider meaning.',
+  10: 'In the 10th house, it becomes visible through career, responsibility, reputation, and public contribution.',
+  11: 'In the 11th house, it works through friendships, communities, ideals, and future plans.',
+  12: 'In the 12th house, it is private, subtle, reflective, and often needs solitude to become clear.'
+};
+
+function buildPlacementMeaningText(locale, placement) {
+  if (locale !== 'en') {
+    return {
+      fr: 'Cette position décrit une dynamique personnelle importante. Interprétez-la avec le signe comme tonalité principale et la maison comme domaine de vie où elle se manifeste le plus.',
+      de: 'Diese Position beschreibt eine wichtige persönliche Dynamik. Das Zeichen zeigt die Grundfärbung, das Haus den Lebensbereich, in dem sie sich am deutlichsten zeigt.',
+      es: 'Esta posición describe una dinámica personal importante. El signo muestra el tono principal y la casa el área de vida donde se expresa con más claridad.'
+    }[locale] || 'This placement describes a personal pattern in the chart.';
+  }
+
+  const pointMeaning = POINT_MEANINGS_EN[placement.pointId] || 'This placement describes a personal pattern in the chart.';
+  const signMeaning = SIGN_MEANINGS_EN[placement.signId] || null;
+  const houseMeaning = placement.houseValue ? HOUSE_MEANINGS_EN[placement.houseValue] : null;
+
+  return [pointMeaning, signMeaning, houseMeaning].filter(Boolean).join(' ');
+}
+
+function normalizePlacement(locale, subjectProfile, pointId) {
+  const normalizedProfile = normalizeNatalProfile(
+    subjectProfile.rawNatalPayload,
+    subjectProfile.cityLabel,
+    { birthCountry: subjectProfile.birthCountry }
+  );
+  const normalizedPointId = String(pointId || '').toLowerCase();
+  const isAngle = ['ascendant', 'descendant', 'midheaven', 'ic'].includes(normalizedPointId);
+  const rawPoint = isAngle
+    ? getAngleByPoint(normalizedProfile, normalizedPointId)
+    : normalizedProfile.planetsById?.[normalizedPointId];
+
+  if (!rawPoint) {
+    return null;
+  }
+
+  const signId = String(rawPoint.sign_id || rawPoint.sign || '').toLowerCase();
+  return {
+    pointId: normalizedPointId,
+    pointName: localizeAstroPointName(locale, rawPoint.id || rawPoint.name || normalizedPointId),
+    signId,
+    signName: localizeSignName(locale, rawPoint.sign_id || rawPoint.sign || ''),
+    houseValue: Number.isFinite(Number(rawPoint.house)) ? Number(rawPoint.house) : null,
+    degree: Number.isFinite(Number(rawPoint.pos)) ? Number(rawPoint.pos).toFixed(2).replace(/\.?0+$/, '') : null,
+    rawPoint
+  };
+}
+
+function buildPointPlacementResponse(locale, subjectProfile, pointId, options = {}) {
+  const placement = normalizePlacement(locale, subjectProfile, pointId);
+  if (!placement) {
+    if (String(pointId || '').toLowerCase() === 'ascendant') {
+      return {
+        text: {
+          fr: 'Je ne peux pas déterminer l’ascendant de façon fiable sans une heure de naissance.',
+          de: 'Ohne Geburtszeit kann ich den Aszendenten nicht zuverlässig bestimmen.',
+          es: 'No puedo determinar el ascendente de forma fiable sin la hora de nacimiento.',
+          en: 'I cannot determine the rising sign reliably without a birth time.'
+        }[locale] || 'I cannot determine the rising sign reliably without a birth time.',
+        pointIds: ['ascendant'],
+        routeId: 'rising_sign',
+        answerStyle: 'planet_focus',
+        usedTools: []
+      };
+    }
+    return null;
+  }
+
+  const lines = [
+    buildSinglePlacementFactText(locale, placement),
+    buildDegreeText(locale, placement.degree)
+  ].filter(Boolean);
+
+  if (looksLikePlacementMeaningQuestion(options.userText, options)) {
+    lines.push(buildPlacementMeaningText(locale, placement));
+  }
+
+  const routeId = placement.pointId === 'moon' && lines.length > 2
+    ? 'moon_emotions'
+    : `${placement.pointId === 'ascendant' ? 'rising' : placement.pointId}_sign`;
+
+  return {
+    text: lines.join('\n\n'),
+    pointIds: [placement.pointId],
+    routeId,
+    answerStyle: 'planet_focus',
+    usedTools: [placement.pointId === 'ascendant' || placement.pointId === 'descendant' || placement.pointId === 'midheaven' || placement.pointId === 'ic'
+      ? {
+          name: 'get_cached_angle_info',
+          args: { angle: placement.pointId === 'ascendant' ? 'asc' : placement.pointId },
+          result: { angle: placement.rawPoint }
+        }
+      : {
+          name: 'get_cached_planet_placement',
+          args: { planet: placement.pointId },
+          result: { planet: placement.rawPoint }
+        }]
+  };
 }
 
 function buildPlacementIntegrityMap(subjectProfile) {
@@ -7343,13 +7640,13 @@ function validateNatalPlacementIntegrity(text, subjectProfile) {
   return true;
 }
 
-function buildDirectPlanetPlacementResponse(locale, subjectProfile, userText) {
-  if (!subjectProfile?.rawNatalPayload || !looksLikeDirectPlanetPlacementQuestion(userText)) {
+function buildDirectPlanetPlacementResponse(locale, subjectProfile, userText, options = {}) {
+  if (!subjectProfile?.rawNatalPayload || !looksLikeDirectPlanetPlacementQuestion(userText, options)) {
     return null;
   }
 
-  const planetId = parsePlanetFromQuestion(userText);
-  if (!planetId) {
+  const planetIds = parseDirectPlacementPlanetsFromQuestion(userText);
+  if (planetIds.length === 0) {
     return null;
   }
 
@@ -7358,41 +7655,235 @@ function buildDirectPlanetPlacementResponse(locale, subjectProfile, userText) {
     subjectProfile.cityLabel,
     { birthCountry: subjectProfile.birthCountry }
   );
-  const planet = normalizedProfile.planetsById?.[planetId] || null;
-  if (!planet) {
+  const placements = planetIds
+    .map((planetId) => ({
+      planetId,
+      planet: normalizedProfile.planetsById?.[planetId] || null
+    }))
+    .filter((entry) => entry.planet);
+  if (placements.length === 0) {
     return null;
   }
 
-  const planetName = localizeAstroPointName(locale, planet.id || planet.name || planetId);
-  const signName = localizeSignName(locale, planet.sign_id || planet.sign || '');
-  const houseValue = Number.isFinite(Number(planet.house)) ? Number(planet.house) : null;
-  const degree = Number.isFinite(Number(planet.pos)) ? Number(planet.pos).toFixed(2).replace(/\.?0+$/, '') : null;
+  const formatPlacement = ({ planetId, planet }) => ({
+    planetName: localizeAstroPointName(locale, planet.id || planet.name || planetId),
+    signName: localizeSignName(locale, planet.sign_id || planet.sign || ''),
+    houseValue: Number.isFinite(Number(planet.house)) ? Number(planet.house) : null,
+    degree: Number.isFinite(Number(planet.pos)) ? Number(planet.pos).toFixed(2).replace(/\.?0+$/, '') : null
+  });
+
+  if (placements.length > 1) {
+    const houseLabel = {
+      fr: 'maison',
+      de: 'Haus',
+      es: 'casa',
+      en: 'house'
+    }[locale] || 'house';
+
+    return placements
+      .map(formatPlacement)
+      .map(({ planetName, signName, houseValue, degree }) => {
+        const degreeText = degree ? `, ${degree}°` : '';
+        return `${planetName || 'Planet'}: ${signName || '?'}${houseValue ? `, ${houseLabel} ${houseValue}` : ''}${degreeText}.`;
+      })
+      .join('\n');
+  }
+
+  const { planetName, signName, houseValue, degree } = formatPlacement(placements[0]);
+  const meaningText = looksLikePlacementMeaningQuestion(userText, options)
+    ? buildPlacementMeaningText(locale, {
+        pointId: placements[0].planetId,
+        signId: String(placements[0].planet.sign_id || placements[0].planet.sign || '').toLowerCase(),
+        houseValue
+      })
+    : null;
 
   if (locale === 'fr') {
     return [
       `${planetName || 'La planète demandée'} se trouve en ${signName || 'signe inconnu'}${houseValue ? `, en maison ${houseValue}` : ''}.`,
-      degree ? `Position exacte dans le signe : ${degree}°.` : null
+      degree ? `Position exacte dans le signe : ${degree}°.` : null,
+      meaningText
     ].filter(Boolean).join('\n\n');
   }
 
   if (locale === 'de') {
     return [
       `${planetName || 'Der angefragte Planet'} steht in ${signName || 'einem unbekannten Zeichen'}${houseValue ? `, in Haus ${houseValue}` : ''}.`,
-      degree ? `Exakte Position im Zeichen: ${degree}°.` : null
+      degree ? `Exakte Position im Zeichen: ${degree}°.` : null,
+      meaningText
     ].filter(Boolean).join('\n\n');
   }
 
   if (locale === 'es') {
     return [
       `${planetName || 'El planeta solicitado'} está en ${signName || 'un signo desconocido'}${houseValue ? `, en la casa ${houseValue}` : ''}.`,
-      degree ? `Posición exacta en el signo: ${degree}°.` : null
+      degree ? `Posición exacta en el signo: ${degree}°.` : null,
+      meaningText
     ].filter(Boolean).join('\n\n');
   }
 
   return [
     `${planetName || 'The requested planet'} is in ${signName || 'an unknown sign'}${houseValue ? `, in house ${houseValue}` : ''}.`,
-    degree ? `Exact position in the sign: ${degree}°.` : null
+    degree ? `Exact position in the sign: ${degree}°.` : null,
+    meaningText
   ].filter(Boolean).join('\n\n');
+}
+
+function buildDirectPlanetPlacementTools(subjectProfile, userText) {
+  if (!subjectProfile?.rawNatalPayload) {
+    return [];
+  }
+
+  const normalizedProfile = normalizeNatalProfile(subjectProfile.rawNatalPayload, subjectProfile.cityLabel, {
+    birthCountry: subjectProfile.birthCountry
+  });
+
+  return parseDirectPlacementPlanetsFromQuestion(userText)
+    .map((planetId) => ({
+      name: 'get_cached_planet_placement',
+      args: { planet: planetId },
+      result: {
+        planet: findPlanet(normalizedProfile, planetId)
+      }
+    }))
+    .filter((tool) => tool.result.planet);
+}
+
+function hasRecentPlanetPlacementTool(toolResults = []) {
+  return asArray(toolResults).some((tool) => tool?.name === 'get_cached_planet_placement');
+}
+
+function looksLikePlanetOnlyPlacementFollowUp(text, toolResults = [], conversationContext = {}) {
+  const value = normalizeMatchingText(text);
+  if (!value || value.length > 80 || parsePlanetsFromQuestion(value).length === 0) {
+    return false;
+  }
+
+  const hasPlacementContext = hasRecentPlanetPlacementTool(toolResults)
+    || conversationContext?.lastIntentId === 'planet_placement';
+  if (!hasPlacementContext) {
+    return false;
+  }
+
+  const withoutPlanets = parsePlanetsFromQuestion(value).reduce((nextValue, planetId) => {
+    const terms = [
+      planetId,
+      ...Object.entries(PLANET_SYNONYMS)
+        .filter(([, mappedPlanet]) => mappedPlanet === planetId)
+        .map(([term]) => normalizeMatchingText(term))
+    ];
+    return terms.reduce((textValue, term) => (
+      textValue.replace(new RegExp(`\\b${escapeRegExp(term)}\\b`, 'gi'), ' ')
+    ), nextValue);
+  }, value);
+
+  const residue = withoutPlanets
+    .replace(/\b(et|and|y|und|mon|ma|mes|my|mi|mein|meine|meinen|meiner|le|la|les|the|el|la|los|las|et aussi|also|tambien|también|auch|alors|aussi|stp|svp|please|pls|niveau)\b/gi, ' ')
+    .replace(/[?!.,;:\s]+/g, '');
+
+  return residue.length === 0;
+}
+
+function normalizeToolAngleId(angle) {
+  const value = String(angle || '').toLowerCase();
+  if (value === 'asc') {
+    return 'ascendant';
+  }
+  if (value === 'desc' || value === 'dsc') {
+    return 'descendant';
+  }
+  if (value === 'mc') {
+    return 'midheaven';
+  }
+  return value || null;
+}
+
+function getRecentPlacementPointId(toolResults = [], conversationContext = {}) {
+  const tools = asArray(toolResults).slice().reverse();
+
+  for (const tool of tools) {
+    if (tool?.name === 'get_cached_planet_placement') {
+      const planetId = String(tool?.result?.planet?.id || tool?.args?.planet || '').toLowerCase();
+      if (planetId) {
+        return planetId;
+      }
+    }
+
+    if (tool?.name === 'get_cached_angle_info') {
+      const angleId = normalizeToolAngleId(tool?.args?.angle || tool?.result?.angle?.id || tool?.result?.angle?.name);
+      if (angleId) {
+        return angleId;
+      }
+    }
+  }
+
+  const lastRouteId = String(conversationContext?.lastCommonRouteId || conversationContext?.lastQueryState?.canonicalRouteId || '');
+  if (lastRouteId === 'rising_sign') {
+    return 'ascendant';
+  }
+  if (lastRouteId === 'moon_sign' || lastRouteId === 'moon_emotions') {
+    return 'moon';
+  }
+  if (lastRouteId === 'sun_sign') {
+    return 'sun';
+  }
+
+  return null;
+}
+
+function buildDeterministicNatalResponse(locale, subjectProfile, userText, options = {}) {
+  if (!subjectProfile?.rawNatalPayload) {
+    return null;
+  }
+
+  if (
+    (looksLikeReferentialFollowUp(userText) || /\b(this|that|it|ce|cela|ça|ca|das|eso|esto)\b/i.test(String(userText || ''))) &&
+    looksLikePlacementMeaningQuestion(userText) &&
+    !looksLikeCurrentTransitCue(userText)
+  ) {
+    const recentPointId = getRecentPlacementPointId(options.toolResults, options.conversationContext);
+    if (recentPointId) {
+      return buildPointPlacementResponse(locale, subjectProfile, recentPointId, {
+        userText,
+        forceMeaning: true
+      });
+    }
+  }
+
+  if (looksLikeRisingPlacementQuestion(userText)) {
+    return buildPointPlacementResponse(locale, subjectProfile, 'ascendant', {
+      userText
+    });
+  }
+
+  const directPlacementFollowUp = looksLikePlanetOnlyPlacementFollowUp(
+    userText,
+    options.toolResults,
+    options.conversationContext
+  );
+  const directPlacementQuestionText = directPlacementFollowUp
+    ? userText
+    : (options.effectiveUserQuestion || options.plannerQuestionText || userText);
+  const text = buildDirectPlanetPlacementResponse(locale, subjectProfile, directPlacementQuestionText, {
+    allowPlanetOnly: directPlacementFollowUp
+  });
+
+  if (!text) {
+    return null;
+  }
+
+  const pointIds = parseDirectPlacementPlanetsFromQuestion(directPlacementQuestionText);
+  const firstPointId = pointIds[0] || null;
+  const hasMeaning = looksLikePlacementMeaningQuestion(directPlacementQuestionText);
+  return {
+    text,
+    pointIds,
+    routeId: firstPointId === 'moon' && hasMeaning
+      ? 'moon_emotions'
+      : (firstPointId ? `${firstPointId}_sign` : null),
+    answerStyle: 'planet_focus',
+    usedTools: buildDirectPlanetPlacementTools(subjectProfile, directPlacementQuestionText)
+  };
 }
 
 function formatAspectLine(locale, aspect) {
@@ -9982,7 +10473,18 @@ async function answerConversation(identity, userText) {
   const locale = getLocale(chatState);
   const responseMode = 'interpreted';
   const conversationContext = getConversationContext(identity);
-  const shouldBypassFollowUpInheritance = isBroadRelocationRecommendationQuestion(userText) || looksLikeStandaloneAstrologyQuery(userText);
+  const isDeterministicPlacementMeaningFollowUp = (
+    (looksLikeReferentialFollowUp(userText) || /\b(this|that|it|ce|cela|ça|ca|das|eso|esto)\b/i.test(String(userText || ''))) &&
+    looksLikePlacementMeaningQuestion(userText) &&
+    !looksLikeCurrentTransitCue(userText) &&
+    Boolean(getRecentPlacementPointId(chatState.lastToolResults, conversationContext))
+  );
+  const shouldBypassFollowUpInheritance = isBroadRelocationRecommendationQuestion(userText)
+    || looksLikeStandaloneAstrologyQuery(userText)
+    || looksLikeDirectPlanetPlacementQuestion(userText)
+    || looksLikeRisingPlacementQuestion(userText)
+    || looksLikePlanetOnlyPlacementFollowUp(userText, chatState.lastToolResults, conversationContext)
+    || isDeterministicPlacementMeaningFollowUp;
   let explicitFollowUp = shouldBypassFollowUpInheritance
     ? null
     : detectExplicitFollowUp(userText, conversationContext, chatState.history);
@@ -10004,10 +10506,6 @@ async function answerConversation(identity, userText) {
   let executionIntent = null;
   let plannerQuestionText = explicitFollowUp?.rewrittenQuestion || resolveQuestionForPlanner(route, userText, chatState.history);
   const stateKey = chatState.stateKey || `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`;
-
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('Missing GEMINI_API_KEY. Conversational mode is disabled.');
-  }
 
   await profiles.ensureHydrated(identity);
   const activeProfile = await profiles.getActiveProfile(identity);
@@ -10130,29 +10628,46 @@ async function answerConversation(identity, userText) {
     };
   }
 
-  const directPlacementText = buildDirectPlanetPlacementResponse(locale, subjectProfile, userText);
-  if (directPlacementText) {
-    const usedTools = [{
-      name: 'get_cached_planet_placement',
-      args: { planet: parsePlanetFromQuestion(userText) },
-      result: {
-        planet: findPlanet(normalizeNatalProfile(subjectProfile.rawNatalPayload, subjectProfile.cityLabel, {
-          birthCountry: subjectProfile.birthCountry
-        }), parsePlanetFromQuestion(userText))
+  const deterministicNatalResult = buildDeterministicNatalResponse(locale, subjectProfile, userText, {
+    effectiveUserQuestion,
+    plannerQuestionText,
+    toolResults: chatState.lastToolResults,
+    conversationContext
+  });
+  if (deterministicNatalResult?.text) {
+    const usedTools = deterministicNatalResult.usedTools || [];
+    const deterministicRoute = {
+      ...route,
+      kind: 'astrology_natal',
+      answerStyle: deterministicNatalResult.answerStyle || route.answerStyle,
+      commonRouteId: deterministicNatalResult.routeId || route.commonRouteId || null
+    };
+    const deterministicQueryState = {
+      ...(currentQueryState || {}),
+      canonicalRouteId: deterministicNatalResult.routeId || currentQueryState?.canonicalRouteId || null,
+      routeKind: 'astrology_natal',
+      baseQuestion: plannerQuestionText || userText,
+      parameters: {
+        ...(currentQueryState?.parameters || {}),
+        points: deterministicNatalResult.pointIds || []
       }
-    }];
+    };
     pushHistory(identity, 'user', userText);
-    pushHistory(identity, 'model', directPlacementText);
+    pushHistory(identity, 'model', deterministicNatalResult.text);
     setLastToolResults(identity, usedTools);
-    persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, {
+    persistConversationAnswerState(identity, deterministicRoute, subjectProfile, secondaryProfile, plannerQuestionText, deterministicQueryState, {
       target: 'indexed_facts',
       family: 'indexed_natal'
-    }, directPlacementText, usedTools);
+    }, deterministicNatalResult.text, usedTools);
     return {
-      text: directPlacementText,
+      text: deterministicNatalResult.text,
       usedTools,
-      intent: route.kind
+      intent: deterministicRoute.kind
     };
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('Missing GEMINI_API_KEY. Conversational mode is disabled.');
   }
 
   if (
@@ -10901,17 +11416,15 @@ async function answerConversation(identity, userText) {
     ? validateRawAnswer(result.text, locale)
     : validateFinalAnswer(result.text, route, locale);
   if (!validateNatalPlacementIntegrity(finalText, subjectProfile)) {
-    const fallbackPlacementText = buildDirectPlanetPlacementResponse(locale, subjectProfile, effectiveUserQuestion || userText);
+    const fallbackPlacementFollowUp = looksLikePlanetOnlyPlacementFollowUp(userText, chatState.lastToolResults, conversationContext);
+    const fallbackPlacementQuestionText = fallbackPlacementFollowUp
+      ? userText
+      : effectiveUserQuestion || plannerQuestionText || userText;
+    const fallbackPlacementText = buildDirectPlanetPlacementResponse(locale, subjectProfile, fallbackPlacementQuestionText, {
+      allowPlanetOnly: fallbackPlacementFollowUp
+    });
     if (fallbackPlacementText) {
-      const planetId = parsePlanetFromQuestion(effectiveUserQuestion || userText);
-      const normalizedProfile = normalizeNatalProfile(subjectProfile.rawNatalPayload, subjectProfile.cityLabel, {
-        birthCountry: subjectProfile.birthCountry
-      });
-      const usedTools = [{
-        name: 'get_cached_planet_placement',
-        args: { planet: planetId },
-        result: { planet: findPlanet(normalizedProfile, planetId) }
-      }];
+      const usedTools = buildDirectPlanetPlacementTools(subjectProfile, fallbackPlacementQuestionText);
       pushHistory(identity, 'model', fallbackPlacementText);
       setLastToolResults(identity, usedTools);
       persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, {
@@ -10960,6 +11473,7 @@ module.exports = {
     extractRequestedExternalProfileName,
     parseExplicitSingleDateFromQuestion,
     buildDirectPlanetPlacementResponse,
+    buildDeterministicNatalResponse,
     validateNatalPlacementIntegrity
   }
 };
