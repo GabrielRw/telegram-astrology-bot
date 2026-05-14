@@ -76,6 +76,18 @@ function createTelegramChannelApi(ctx) {
 
       return messageRef;
     },
+    async deleteMessage(event, messageRef) {
+      if (!messageRef?.messageId) {
+        return false;
+      }
+
+      await ctx.telegram.deleteMessage(
+        Number(messageRef.chatId || ctx.chat.id),
+        messageRef.messageId
+      );
+
+      return true;
+    },
     async sendImage(event, buffer, options = {}) {
       const message = await ctx.replyWithPhoto(
         {

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Monthly Transit Timeline</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Playfair+Display:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script>
+      window.PagedConfig = {
+        auto: false
+      };
+    </script>
+    <script defer src="https://unpkg.com/pagedjs/dist/paged.polyfill.js"></script>
+    <script type="module" src="/src/main.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="screen-panel">
+        <p class="panel-kicker">Paged.js preview</p>
+        <h1>Monthly Transit Timeline</h1>
+        <p class="panel-copy">
+          A3 portrait monthly transit chart built from the FreeAstro timeline endpoint.
+        </p>
+        <form id="chart-form" class="chart-form">
+          <section class="form-section">
+            <label class="field">
+              <span class="field-label">Range</span>
+              <select id="period-mode-input" name="periodMode">
+                <option value="month">Single month</option>
+                <option value="month_insights">Single month insights</option>
+                <option value="year">Whole year</option>
+                <option value="year_single">Yearly overview (1 page)</option>
+                <option value="year_single_portrait">Yearly overview portrait (1 page)</option>
+                <option value="cover_only">Cover page only</option>
+              </select>
+            </label>
+            <label class="field" id="month-field">
+              <span class="field-label">Month</span>
+              <input id="month-input" name="month" type="month" required />
+            </label>
+            <label class="field" id="year-field" hidden>
+              <span class="field-label">Year</span>
+              <input id="year-input" name="year" type="number" min="1900" max="2100" step="1" />
+            </label>
+            <label class="field">
+              <span class="field-label">Name</span>
+              <input id="name-input" name="name" type="text" required />
+            </label>
+            <label class="field">
+              <span class="field-label">Date of birth</span>
+              <input id="birth-date-input" name="birthDate" type="date" required />
+            </label>
+            <label class="field">
+              <span class="field-label">Hour of birth</span>
+              <input id="birth-time-input" name="birthTime" type="time" step="60" />
+            </label>
+            <label class="field">
+              <span class="field-label">City</span>
+              <input id="city-input" name="city" type="text" required />
+            </label>
+            <div id="city-results" class="city-results" hidden></div>
+            <p id="city-status" class="field-note"></p>
+          </section>
+
+          <section class="form-section">
+            <p class="form-label">Transit speeds</p>
+            <div class="checkbox-grid">
+              <label class="checkbox-item">
+                <input id="category-fast" name="category-fast" type="checkbox" />
+                <span>Fast</span>
+              </label>
+              <label class="checkbox-item">
+                <input id="category-medium" name="category-medium" type="checkbox" />
+                <span>Medium</span>
+              </label>
+              <label class="checkbox-item">
+                <input id="category-slow" name="category-slow" type="checkbox" />
+                <span>Slow</span>
+              </label>
+              <label class="checkbox-item checkbox-item-wide">
+                <input id="include-moon" name="includeMoon" type="checkbox" />
+                <span>Include Moon</span>
+              </label>
+              <label class="checkbox-item checkbox-item-wide">
+                <input id="show-retrograde-markers" name="showRetrogradeMarkers" type="checkbox" />
+                <span>Show retrograde markers</span>
+              </label>
+              <label class="checkbox-item checkbox-item-wide">
+                <input id="include-house-labels" name="includeHouseLabels" type="checkbox" />
+                <span>Append house to transit labels</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="form-section">
+            <p class="form-label">Orb tightness</p>
+            <div class="orb-grid">
+              <label class="field field-compact">
+                <span class="field-label">Conj.</span>
+                <input id="orb-conjunction" name="orbConjunction" type="number" min="0" step="0.5" />
+              </label>
+              <label class="field field-compact">
+                <span class="field-label">Opp.</span>
+                <input id="orb-opposition" name="orbOpposition" type="number" min="0" step="0.5" />
+              </label>
+              <label class="field field-compact">
+                <span class="field-label">Square</span>
+                <input id="orb-square" name="orbSquare" type="number" min="0" step="0.5" />
+              </label>
+              <label class="field field-compact">
+                <span class="field-label">Trine</span>
+                <input id="orb-trine" name="orbTrine" type="number" min="0" step="0.5" />
+              </label>
+              <label class="field field-compact">
+                <span class="field-label">Sextile</span>
+                <input id="orb-sextile" name="orbSextile" type="number" min="0" step="0.5" />
+              </label>
+            </div>
+          </section>
+
+          <section class="form-section">
+            <label class="field">
+              <span class="field-label">PDF mode</span>
+              <select id="render-mode-input" name="renderMode">
+                <option value="filtered">Curated</option>
+                <option value="full">Full</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="form-section">
+            <p class="form-label">Saved People</p>
+            <div class="preset-row">
+              <label class="field">
+                <span class="field-label">Profiles</span>
+                <select id="people-preset-select">
+                  <option value="">No saved profile</option>
+                </select>
+              </label>
+              <div class="preset-actions">
+                <button id="save-person-button" class="secondary-button" type="button">Save New</button>
+                <button id="overwrite-person-button" class="secondary-button" type="button">Overwrite</button>
+                <button id="delete-person-button" class="secondary-button" type="button">Delete</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="form-section">
+            <p class="form-label">Theme</p>
+            <div class="theme-grid">
+              <label class="field field-compact"><span class="field-label">Page BG</span><input id="theme-page-background" name="themePageBackground" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Page Text</span><input id="theme-page-text" name="themePageText" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Title</span><input id="theme-title-text" name="themeTitleText" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Glyphs</span><input id="theme-glyph-color" name="themeGlyphColor" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Transit</span><input id="theme-transit-line-color" name="themeTransitLineColor" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Separators</span><input id="theme-separator-color" name="themeSeparatorColor" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Dot Stroke</span><input id="theme-exact-dot-stroke" name="themeExactDotStroke" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Dot Fill</span><input id="theme-exact-dot-fill" name="themeExactDotFill" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Legend</span><input id="theme-legend-color" name="themeLegendColor" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Panel BG</span><input id="theme-panel-background" name="themePanelBackground" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Panel Text</span><input id="theme-panel-text" name="themePanelText" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Panel Muted</span><input id="theme-panel-muted" name="themePanelMuted" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Natal SVG</span><input id="theme-natal-svg-mono" name="themeNatalSvgMono" type="color" /></label>
+              <label class="field field-compact"><span class="field-label">Degree Outline</span><input id="theme-degree-outline-color" name="themeDegreeOutlineColor" type="color" /></label>
+            </div>
+          </section>
+
+          <section class="form-section">
+            <p class="form-label">Saved Themes</p>
+            <div class="preset-row">
+              <label class="field">
+                <span class="field-label">Themes</span>
+                <select id="theme-preset-select">
+                  <option value="">No saved theme</option>
+                </select>
+              </label>
+              <div class="preset-actions">
+                <button id="save-theme-button" class="secondary-button" type="button">Save New</button>
+                <button id="overwrite-theme-button" class="secondary-button" type="button">Overwrite</button>
+                <button id="delete-theme-button" class="secondary-button" type="button">Delete</button>
+              </div>
+            </div>
+          </section>
+
+          <div class="panel-actions">
+            <button id="render-button" class="primary-button" type="submit">Update chart</button>
+            <button id="print-button" type="button">Print / Save PDF</button>
+            <span id="status-pill" class="status-pill">Loading chart...</span>
+          </div>
+        </form>
+        <dl class="panel-meta" id="panel-meta"></dl>
+        <button id="copy-json-button" class="secondary-button debug-button" type="button">
+          Copy JSON for Ai pasting
+        </button>
+      </aside>
+      <main class="preview-shell">
+        <div id="document-root"></div>
+      </main>
+    </div>
+  </body>
+</html>

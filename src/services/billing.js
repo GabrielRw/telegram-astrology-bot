@@ -287,7 +287,29 @@ function hasUnlimitedAccess(profile) {
   return ACTIVE_STATUSES.has(String(profile?.subscription_status || '').toLowerCase());
 }
 
+function isSimulatorIdentity(identity) {
+  return resolveIdentity(identity).channel === 'simulator';
+}
+
+function getSimulatorAccessSummary(identity) {
+  return {
+    profile: normalizeBillingProfile(identity, {
+      subscription_status: 'active',
+      stripe_subscription_id: 'simulator_unlimited',
+      stripe_price_id: 'simulator'
+    }),
+    usedToday: 0,
+    remainingFreeQuestions: null,
+    unlimited: true,
+    limitReached: false
+  };
+}
+
 async function getAccessSummary(identity) {
+  if (isSimulatorIdentity(identity)) {
+    return getSimulatorAccessSummary(identity);
+  }
+
   const [profile, usedToday] = await Promise.all([
     getBillingProfile(identity),
     getUsageCount(identity)
@@ -307,6 +329,10 @@ async function getAccessSummary(identity) {
 }
 
 async function recordAnsweredQuestion(identity) {
+  if (isSimulatorIdentity(identity)) {
+    return getSimulatorAccessSummary(identity);
+  }
+
   const access = await getAccessSummary(identity);
 
   if (access.unlimited) {

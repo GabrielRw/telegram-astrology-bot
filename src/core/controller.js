@@ -3,6 +3,11 @@ const { renderAstrocartographyMap } = require('../services/astroMap');
 const { registerInteractiveAstroMap } = require('../services/interactiveAstroMap');
 const billing = require('../services/billing');
 const { FreeAstroError, getNatal, getNatalChart, searchCities } = require('../services/freeastro');
+const {
+  buildEphemerisWebAppUrl,
+  renderEphemerisMonthPng
+} = require('../services/ephemerisTable');
+const { renderNatalAspectsPng } = require('../services/natalAspectTable');
 const { getGeminiErrorMessage } = require('../services/gemini');
 const profiles = require('../services/profiles');
 const {
@@ -430,8 +435,25 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
 
   const loadingRef = options.loadingRef || await sendEditablePrompt(event, channelApi, t(event, 'prompts.readingChart'));
 
+  let progressiveDelivered = false;
+
   try {
-    const result = await answerConversation(event, userText);
+    const result = await answerConversation(event, userText, {
+      onProgressSection: async (sectionText) => {
+        const text = String(sectionText || '').trim();
+        if (!text) {
+          return;
+        }
+
+        if (!progressiveDelivered) {
+          await channelApi.editText(event, loadingRef, text);
+          progressiveDelivered = true;
+          return;
+        }
+
+        await channelApi.sendText(event, text);
+      }
+    });
 
     if (result?.requiresSynastryProfileSelection) {
       setPendingSynastryQuestion(event, userText);
@@ -512,6 +534,7 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
     if (result?.renderMode === 'telegram_pre' && event.channel === 'telegram') {
       await channelApi.editText(event, loadingRef, result.text, { html: true });
       await billing.recordAnsweredQuestion(event);
+      await maybeSendRouteMediaAttachments(event, channelApi, result);
       await maybeSendAstroMap(event, channelApi, userText, result);
       return true;
     }
@@ -527,6 +550,26 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
         await channelApi.editText(event, loadingRef, result.text, { html: true });
       }
       await billing.recordAnsweredQuestion(event);
+      await maybeSendRouteMediaAttachments(event, channelApi, result);
+      await maybeSendAstroMap(event, channelApi, userText, result);
+      return true;
+    }
+
+    if (result?.alreadyDelivered) {
+      await billing.recordAnsweredQuestion(event);
+      await maybeSendRouteMediaAttachments(event, channelApi, result);
+      await maybeSendAstroMap(event, channelApi, userText, result);
+      return true;
+    }
+
+    if (result?.suppressTextResponse) {
+      if (typeof channelApi.deleteMessage === 'function') {
+        await channelApi.deleteMessage(event, loadingRef);
+      } else if (loadingRef && event.channel !== 'whatsapp') {
+        await channelApi.editText(event, loadingRef, String(result.text || '').trim() || 'Done.');
+      }
+      await billing.recordAnsweredQuestion(event);
+      await maybeSendRouteMediaAttachments(event, channelApi, result);
       await maybeSendAstroMap(event, channelApi, userText, result);
       return true;
     }
@@ -539,6 +582,7 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
       }
 
       await billing.recordAnsweredQuestion(event);
+      await maybeSendRouteMediaAttachments(event, channelApi, result);
       await maybeSendAstroMap(event, channelApi, userText, result);
       return true;
     }
@@ -557,16 +601,22 @@ async function answerPaidConversation(event, channelApi, userText, options = {})
     }
 
     await billing.recordAnsweredQuestion(event);
+    await maybeSendRouteMediaAttachments(event, channelApi, result);
     await maybeSendAstroMap(event, channelApi, userText, result);
   } catch (error) {
     const errorMessage = error?.name === 'FreeAstroError'
       ? translateUserError(getLocale(event), error)
       : getGeminiErrorMessage(error, getLocale(event));
-    await channelApi.editText(
-      event,
-      loadingRef,
-      `${t(event, 'errors.conversationUnavailable')}\n${errorMessage}`
-    );
+    const message = `${t(event, 'errors.conversationUnavailable')}\n${errorMessage}`;
+    if (progressiveDelivered) {
+      await channelApi.sendText(event, message);
+    } else {
+      await channelApi.editText(
+        event,
+        loadingRef,
+        message
+      );
+    }
   }
 
   return true;
@@ -597,14 +647,17 @@ async function promptForCityConfirmation(event, channelApi, candidates) {
 
 async function promptForBirthTimeKnown(event, channelApi) {
   const locale = getLocale(event);
+  const choices = [
+    { id: ACTIONS.TIME_YES, title: t(locale, 'buttons.yes') },
+    { id: ACTIONS.TIME_NO, title: t(locale, 'buttons.no') }
+  ];
+
   await channelApi.sendChoices(
     event,
     t(locale, 'prompts.cityAccepted'),
-    [
-      { id: ACTIONS.TIME_YES, title: t(locale, 'buttons.yes') },
-      { id: ACTIONS.TIME_NO, title: t(locale, 'buttons.no') }
-    ]
+    choices
   );
+  setChoiceMap(event, Object.fromEntries(choices.map((choice, index) => [String(index + 1), choice.id])));
 }
 
 async function promptForBirthTime(event, channelApi) {
@@ -654,6 +707,71 @@ async function maybeSendAstroMap(event, channelApi, userText, conversationResult
     }
   } catch (error) {
     return;
+  }
+}
+
+async function maybeSendRouteMediaAttachments(event, channelApi, conversationResult) {
+  const attachments = Array.isArray(conversationResult?.mediaAttachments)
+    ? conversationResult.mediaAttachments
+    : [];
+
+  if (attachments.includes('natal_chart_png')) {
+    const chatState = getChatState(event);
+    const chartPayload = chatState.chartRequestPayload;
+    if (!chartPayload || !chatState.rawNatalPayload) {
+      await channelApi.sendText(event, t(event, 'profile.chartUnavailable'));
+    } else {
+      try {
+        const chart = await getNatalChart(chartPayload);
+        await channelApi.sendImage(event, chart.buffer, {
+          caption: t(event, 'prompts.chartCaption'),
+          filename: 'natal-chart.png'
+        });
+      } catch (error) {
+        await channelApi.sendText(event, translateUserError(getLocale(event), error));
+      }
+    }
+  }
+
+  const ephemerisTool = Array.isArray(conversationResult?.usedTools)
+    ? conversationResult.usedTools.find((tool) => tool?.name === 'rest_ephemeris' || tool?.name === 'v1_ephemeris')
+    : null;
+  const ephemerisPayload = ephemerisTool?.result?.structuredContent || ephemerisTool?.result || null;
+
+  if (attachments.includes('ephemeris_month_png') && ephemerisPayload) {
+    try {
+      const buffer = await renderEphemerisMonthPng(ephemerisPayload);
+      await channelApi.sendImage(event, buffer, {
+        caption: 'Full month ephemeris table',
+        filename: 'ephemeris-month.png'
+      });
+    } catch (error) {
+      await channelApi.sendText(event, translateUserError(getLocale(event), error));
+    }
+  }
+
+  if (attachments.includes('natal_aspects_png')) {
+    const payload = conversationResult?.mediaPayload?.natalAspects || null;
+    if (payload?.lines?.length > 0) {
+      try {
+        const buffer = await renderNatalAspectsPng(payload);
+        await channelApi.sendImage(event, buffer, {
+          caption: '',
+          filename: 'natal-aspects.png'
+        });
+      } catch (error) {
+        await channelApi.sendText(event, translateUserError(getLocale(event), error));
+      }
+    }
+  }
+
+  const links = Array.isArray(conversationResult?.externalLinks) && conversationResult.externalLinks.length > 0
+    ? conversationResult.externalLinks
+    : (ephemerisPayload ? [{ label: 'Customize table', url: buildEphemerisWebAppUrl(ephemerisPayload) }] : []);
+  for (const link of links) {
+    if (link?.url && typeof channelApi.sendLink === 'function') {
+      await channelApi.sendLink(event, 'Open the interactive ephemeris table to customize bodies, zodiac mode, and local points.', link.label || 'Open table', link.url);
+    }
   }
 }
 
@@ -1442,6 +1560,19 @@ async function handleActiveFlowText(event, channelApi, text) {
 
   if (session.step === 'time_known') {
     const normalized = String(text || '').trim().toLowerCase();
+    const mappedAction = getChoiceMap(event)[normalized];
+
+    if (mappedAction === ACTIONS.TIME_YES || mappedAction === ACTIONS.TIME_NO) {
+      return handleIncomingAction({ ...event, actionId: mappedAction, type: 'action' }, channelApi);
+    }
+
+    if (normalized === '1') {
+      return handleIncomingAction({ ...event, actionId: ACTIONS.TIME_YES, type: 'action' }, channelApi);
+    }
+
+    if (normalized === '2') {
+      return handleIncomingAction({ ...event, actionId: ACTIONS.TIME_NO, type: 'action' }, channelApi);
+    }
 
     if (['yes', 'y', 'oui', 'ja', 'si', 'sí'].includes(normalized)) {
       return handleIncomingAction({ ...event, actionId: ACTIONS.TIME_YES, type: 'action' }, channelApi);
@@ -1521,7 +1652,11 @@ async function handleIncomingText(event, channelApi) {
     mappedAction.startsWith(ACTIONS.WEDDING_SPOUSE_B_PREFIX) ||
     mappedAction === ACTIONS.WEDDING_SPOUSE_B_NEW ||
     mappedAction.startsWith(ACTIONS.PROFILE_SWITCH_PREFIX) ||
-    mappedAction.startsWith(ACTIONS.CITY_PREFIX)
+    (!chatState.activeFlow && (
+      mappedAction === ACTIONS.TIME_YES ||
+      mappedAction === ACTIONS.TIME_NO ||
+      mappedAction.startsWith(ACTIONS.CITY_PREFIX)
+    ))
   )) {
     return handleIncomingAction({ ...event, actionId: mappedAction, type: 'action' }, channelApi);
   }

@@ -487,6 +487,7 @@ module.exports = {
   generatePlainText,
   getConversationModelCandidates,
   getFastPathModelName,
+  getGeminiClient,
   getGeminiErrorMessage,
   runFunctionCallingLoop
 };

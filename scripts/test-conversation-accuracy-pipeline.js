@@ -4,6 +4,11 @@ const path = require('node:path');
 const repoRoot = path.resolve(__dirname, '..');
 
 const testScripts = [
+  'scripts/test-route-embeddings.js',
+  'scripts/test-route-overrides.js',
+  'scripts/test-answer-style-overrides.js',
+  'scripts/test-response-shape-overrides.js',
+  'scripts/test-routing-editor.js',
   'scripts/test-direct-planet-placement.js',
   'scripts/test-artifact-followups.js',
   'scripts/test-canonical-renderers.js',

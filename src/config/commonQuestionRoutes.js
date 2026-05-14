@@ -1,4 +1,5 @@
 const factIndex = require('../services/factIndex');
+const { applyRouteOverrides } = require('./routeOverrides');
 
 const TYPO_REPLACEMENTS = new Map([
   ['waht', 'what'],
@@ -72,14 +73,77 @@ function buildCommonRoute(input) {
     intentSample: input.intentSample,
     routeKind: input.routeKind,
     answerStyle: input.answerStyle,
+    responseShape: input.responseShape || null,
+    cacheStrategy: input.cacheStrategy || null,
+    cardLimit: input.cardLimit || null,
+    factLimit: input.factLimit || null,
+    responseInstructions: input.responseInstructions || null,
+    mcpLoadingMode: input.mcpLoadingMode || 'auto',
+    deliveryMode: input.deliveryMode || 'standard',
+    mediaAttachments: Array.isArray(input.mediaAttachments) ? input.mediaAttachments : [],
+    followUpPolicy: input.followUpPolicy || 'auto',
+    blockedPhrases: Array.isArray(input.blockedPhrases) ? input.blockedPhrases : [],
     sourceKinds: input.sourceKinds,
+    factSourceTools: Array.isArray(input.factSourceTools) ? input.factSourceTools : [],
     categories: input.categories || [],
     tags: input.tags || [],
+    matchHint: input.matchHint || null,
     aliases: buildAliases(input.localized)
   };
 }
 
-const COMMON_QUESTION_ROUTES = [
+const CURRENT_TRANSIT_BODY_CATEGORIES = [
+  'structure',
+  'transformation',
+  'identity',
+  'growth',
+  'relationships',
+  'mind',
+  'emotions',
+  'drive',
+  'chart_pattern'
+];
+
+const CURRENT_TRANSIT_BODY_CONFIGS = [
+  { id: 'current_sun_transits', name: 'Sun', tag: 'planet:sun', verb: 'doing', aliases: ['what is the sun doing to me right now', 'tell me about my sun transits'] },
+  { id: 'current_moon_transits', name: 'Moon', tag: 'planet:moon', verb: 'doing', aliases: ['what is the moon doing to me right now', 'tell me about my moon transits'] },
+  { id: 'current_mercury_transits', name: 'Mercury', tag: 'planet:mercury', verb: 'doing', aliases: ['what is mercury doing to me right now', 'tell me about my mercury transits'] },
+  { id: 'current_venus_transits', name: 'Venus', tag: 'planet:venus', verb: 'doing', aliases: ['what is venus doing to me right now', 'tell me about my venus transits'] },
+  { id: 'current_mars_transits', name: 'Mars', tag: 'planet:mars', verb: 'doing', aliases: ['what is mars doing to me right now', 'tell me about my mars transits'] },
+  { id: 'current_jupiter_transits', name: 'Jupiter', tag: 'planet:jupiter', verb: 'doing', aliases: ['what is jupiter doing to me right now', 'tell me about my jupiter transits'] },
+  { id: 'current_saturn_transits', name: 'Saturn', tag: 'planet:saturn', verb: 'doing', aliases: ['what is saturn doing to me right now', 'tell me about my saturn transits'] },
+  { id: 'current_uranus_transits', name: 'Uranus', tag: 'planet:uranus', verb: 'doing', aliases: ['what is uranus doing to me right now', 'tell me about my uranus transits'] },
+  { id: 'current_neptune_transits', name: 'Neptune', tag: 'planet:neptune', verb: 'doing', aliases: ['what is neptune doing to me right now', 'tell me about my neptune transits'] },
+  { id: 'current_pluto_transits', name: 'Pluto', tag: 'planet:pluto', verb: 'doing', aliases: ['what is pluto doing to me right now', 'tell me about my pluto transits'] },
+  { id: 'current_chiron_transits', name: 'Chiron', tag: 'planet:chiron', verb: 'activating', aliases: ['what is chiron activating for me now', 'tell me about my chiron transits'] },
+  { id: 'current_true_node_transits', name: 'True Node', tag: 'planet:true_node', verb: 'activating', aliases: ['what is the true node activating for me now', 'tell me about my true node transits'] },
+  { id: 'current_ascendant_transits', name: 'Ascendant', tag: 'planet:ascendant', verb: 'activating', aliases: ['what is activating my ascendant right now', 'tell me about my ascendant transits'] },
+  { id: 'current_descendant_transits', name: 'Descendant', tag: 'planet:descendant', verb: 'activating', aliases: ['what is activating my descendant right now', 'tell me about my descendant transits'] },
+  { id: 'current_midheaven_transits', name: 'Midheaven', tag: 'planet:midheaven', verb: 'activating', aliases: ['what is activating my midheaven right now', 'tell me about my midheaven transits'] }
+];
+
+function buildCurrentTransitBodyRoute(body) {
+  return buildCommonRoute({
+    id: body.id,
+    intentSample: `${body.name.toLowerCase()} transits now`,
+    routeKind: 'astrology_transits',
+    answerStyle: 'personal_transits',
+    responseShape: 'factual_cards',
+    cardLimit: 4,
+    factLimit: 8,
+    responseInstructions: `Return exactly 4 short sections. Do not write "Card 1", "Card 2", etc.\n\nUse only cached monthly transit insight facts that explicitly include ${body.name}. Every section must name the exact source fact behind the interpretation. Do not use broad monthly transit facts that do not include ${body.name}. Do not mention a date, peak, house, aspect, planet, or life area unless it appears in the returned cached fact.\n\nSource rule:\nEvery section must cite the source evidence in plain language. If mentioning a peak or timing window, include the source fact title plus its window and peak if available. If mentioning an aspect, include the aspect type only if the cached fact provides it. Do not say "around a date" or "a pressure window" without naming what creates it.\n\nCurrent ${body.name} weather:\nStart with the strongest ${body.name}-specific fact currently available. Prefer a fact whose title directly names ${body.name}, or a ${body.name}-including house/sign stellium if it is the clearest current window. Name the house, involved planets, window, and peak if provided.\n\nWhat ${body.name} is asking:\nExplain the concrete ${body.name} theme based only on the returned evidence. Tie each interpretation to the named source fact.\n\nHow to work with it:\nGive practical advice based only on the returned ${body.name} facts. Keep it grounded in the named house, aspect type, pressure/support window, or activation cluster.\n\nWatch point:\nEnd with the main ${body.name} pressure or sensitivity. Explicitly name the source fact, the involved planets, aspect types, house, window, and peak if available. If the returned facts do not provide a ${body.name} pressure fact, say which ${body.name} support or background fact is available instead.`,
+    mcpLoadingMode: 'never',
+    sourceKinds: [factIndex.MONTHLY_TRANSIT_SOURCE_KIND],
+    factSourceTools: ['rest_western_transits_insights'],
+    categories: CURRENT_TRANSIT_BODY_CATEGORIES,
+    tags: [body.tag],
+    localized: {
+      en: body.aliases
+    }
+  });
+}
+
+const BASE_COMMON_QUESTION_ROUTES = [
   buildCommonRoute({
     id: 'current_sky_today',
     intentSample: 'current sky today',
@@ -228,46 +292,28 @@ const COMMON_QUESTION_ROUTES = [
       es: ['cuales son las fechas mas importantes para mi este mes', 'cual es la ventana temporal principal de este mes']
     }
   }),
-  buildCommonRoute({
-    id: 'current_saturn_transits',
-    intentSample: 'saturn transits now',
-    routeKind: 'astrology_transits',
-    answerStyle: 'personal_transits',
-    sourceKinds: [factIndex.MONTHLY_TRANSIT_SOURCE_KIND],
-    categories: ['transit_event', 'transit_theme'],
-    tags: ['current', 'planet:saturn', 'transit'],
-    localized: {
-      en: ['what is saturn doing to me right now', 'tell me about my saturn transits'],
-      fr: ['que fait saturne pour moi en ce moment', 'parle moi de mes transits de saturne'],
-      de: ['was macht saturn gerade mit mir', 'erzahl mir von meinen saturntransiten'],
-      es: ['que esta haciendo saturno conmigo ahora', 'hablame de mis transitos de saturno']
-    }
-  }),
-  buildCommonRoute({
-    id: 'current_chiron_transits',
-    intentSample: 'chiron transits now',
-    routeKind: 'astrology_transits',
-    answerStyle: 'personal_transits',
-    sourceKinds: [factIndex.MONTHLY_TRANSIT_SOURCE_KIND],
-    categories: ['transit_event', 'transit_theme'],
-    tags: ['current', 'planet:chiron', 'transit'],
-    localized: {
-      en: ['what is chiron activating for me now', 'tell me about my chiron transits'],
-      fr: ['que chiron active t il pour moi en ce moment', 'parle moi de mes transits de chiron'],
-      de: ['was aktiviert chiron gerade fur mich', 'erzahl mir von meinen chirontransiten'],
-      es: ['que esta activando quiron para mi ahora', 'hablame de mis transitos de quiron']
-    }
-  }),
+  ...CURRENT_TRANSIT_BODY_CONFIGS.map(buildCurrentTransitBodyRoute),
   buildCommonRoute({
     id: 'natal_overview',
     intentSample: 'my natal chart overview',
     routeKind: 'astrology_natal',
     answerStyle: 'natal_theme',
+    followUpPolicy: 'standalone',
     sourceKinds: [factIndex.NATAL_SOURCE_KIND],
     categories: ['identity', 'life_path', 'chart_pattern'],
     tags: [],
+    blockedPhrases: ['currently', 'right now', 'this period', 'this season', 'current atmosphere'],
     localized: {
-      en: ['tell me about my natal chart and its specificities', 'what are the main themes of my chart'],
+      en: [
+        'tell me about my natal chart and its specificities',
+        'tell me about my chart',
+        'tell me about my chart please',
+        'tell me about my astro theme',
+        'tell me about by astro theme',
+        'tell me about my astrology theme',
+        'what is my chart about',
+        'what are the main themes of my chart'
+      ],
       fr: ['parle moi de mon theme natal et ses specificites', 'quelles sont les grandes lignes de mon theme', 'parle de mon theme astro', 'parle moi de mon theme astro'],
       de: ['erzahl mir von meinem geburtshoroskop und seinen besonderheiten', 'was sind die hauptthemen meines horoskops'],
       es: ['hablame de mi carta natal y sus particularidades', 'cuales son los temas principales de mi carta']
@@ -654,8 +700,8 @@ const COMMON_QUESTION_ROUTES = [
     routeKind: 'astrology_natal',
     answerStyle: 'life_area_theme',
     sourceKinds: [factIndex.NATAL_SOURCE_KIND],
-    categories: ['chart_pattern', 'identity', 'life_path'],
-    tags: ['chart_pattern', 'signature', 'rare', 'stellium', 'interceptions'],
+    categories: ['chart_pattern'],
+    tags: [],
     localized: {
       en: ['what special structures are in my chart', 'what unusual patterns are in my chart'],
       fr: ['quelles structures speciales sont dans mon theme', 'quels motifs astrologiques particuliers ai je'],
@@ -721,21 +767,6 @@ const COMMON_QUESTION_ROUTES = [
       fr: ['que dit le maitre de ma maison 12 sur moi', 'que revele le maitre de ma maison 12'],
       de: ['was sagt der herrscher meines zwolften hauses uber mich', 'was zeigt der herrscher von haus 12'],
       es: ['que dice el regente de mi casa 12 sobre mi', 'que revela el regente de mi casa 12']
-    }
-  }),
-  buildCommonRoute({
-    id: 'astro_weather_today',
-    intentSample: 'astro weather today',
-    routeKind: 'astrology_transits',
-    answerStyle: 'current_sky',
-    sourceKinds: [factIndex.MONTHLY_TRANSIT_SOURCE_KIND],
-    categories: ['transit_theme', 'timing_window'],
-    tags: ['astro_weather', 'current', 'today', 'sky'],
-    localized: {
-      en: ['what is the astro weather today', 'tell me the astrological weather today'],
-      fr: ['quelle est la meteo astro du jour', 'quelle est la meteo astrologique aujourdhui'],
-      de: ['wie ist das astrologische wetter heute', 'was ist das astro wetter heute'],
-      es: ['cual es el clima astrologico de hoy', 'como esta el tiempo astrologico hoy']
     }
   }),
   buildCommonRoute({
@@ -890,6 +921,14 @@ const COMMON_QUESTION_ROUTES = [
   })
 ];
 
+const COMMON_QUESTION_ROUTES = applyRouteOverrides(BASE_COMMON_QUESTION_ROUTES);
+
+function reloadCommonQuestionRouteOverrides() {
+  const refreshed = applyRouteOverrides(BASE_COMMON_QUESTION_ROUTES);
+  COMMON_QUESTION_ROUTES.splice(0, COMMON_QUESTION_ROUTES.length, ...refreshed);
+  return COMMON_QUESTION_ROUTES;
+}
+
 function normalizeQuestion(text) {
   return String(text || '')
     .normalize('NFD')
@@ -1039,5 +1078,6 @@ module.exports = {
   getCommonQuestionRouteById,
   listCommonQuestionRoutes,
   matchCommonQuestionRoute,
-  normalizeQuestion
+  normalizeQuestion,
+  reloadCommonQuestionRouteOverrides
 };

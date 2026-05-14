@@ -10,7 +10,10 @@
   "scripts": {
     "start": "node src/bot.js",
     "dev": "node --watch src/bot.js",
-    "simulate": "node scripts/simulate-chat.js"
+    "simulate": "node scripts/simulate-chat.js",
+    "routing:embed": "node scripts/build-route-embedding-index.js",
+    "routing:editor": "node scripts/route-examples-editor.js",
+    "routing:test": "node scripts/test-routing-eval.js"
   },
   "keywords": [
     "telegram",

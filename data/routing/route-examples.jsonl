@@ -1,0 +1,167 @@
+{"id":"moon_emotions_001","text":"What does my Moon sign say about me?","routeId":"moon_emotions","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"moon_emotions_002","text":"Why am I so emotionally guarded?","routeId":"moon_emotions","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"moon_emotions_003","text":"Tell me what my Moon means emotionally.","routeId":"moon_emotions","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"moon_emotions_004","text":"What does that mean emotionally?","routeId":"moon_emotions","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"moon_emotions_005","text":"How does my Moon affect my feelings?","routeId":"moon_emotions","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"moon_emotions_006","text":"What are my emotional needs in my chart?","routeId":"moon_emotions","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"moon_emotions_007","text":"Parle moi de ma lune sur le plan emotionnel.","routeId":"moon_emotions","locale":"fr","expectedFamily":"indexed_natal"}
+{"id":"moon_emotions_008","text":"Que dit ma lune sur mes emotions ?","routeId":"moon_emotions","locale":"fr","expectedFamily":"indexed_natal"}
+{"id":"rising_sign_001","text":"What's my rising sign?","routeId":"rising_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"rising_sign_002","text":"What's my asc?","routeId":"rising_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"rising_sign_003","text":"Tell me my ascendant.","routeId":"rising_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"rising_sign_004","text":"What first impression does my chart show?","routeId":"rising_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"rising_sign_005","text":"Quel est mon ascendant ?","routeId":"rising_sign","locale":"fr","expectedFamily":"indexed_natal"}
+{"id":"rising_sign_006","text":"Donne moi mon signe ascendant.","routeId":"rising_sign","locale":"fr","expectedFamily":"indexed_natal"}
+{"id":"natal_overview_001","text":"Tell me about my natal chart.","routeId":"natal_overview","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"natal_overview_002","text":"What are the main themes in my birth chart?","routeId":"natal_overview","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"natal_overview_003","text":"Give me a big picture reading of my chart.","routeId":"natal_overview","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"natal_overview_004","text":"What stands out most in my chart?","routeId":"natal_overview","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"natal_overview_005","text":"Parle moi de mon theme natal.","routeId":"natal_overview","locale":"fr","expectedFamily":"indexed_natal"}
+{"id":"relationship_patterns_001","text":"What are my relationship patterns?","routeId":"relationship_patterns","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"relationship_patterns_002","text":"How do I behave in relationships?","routeId":"relationship_patterns","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"relationship_patterns_003","text":"Why do I repeat the same love patterns?","routeId":"relationship_patterns","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"relationship_patterns_004","text":"What does my chart say about partnership?","routeId":"relationship_patterns","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"relationship_patterns_005","text":"Quels sont mes schemas amoureux ?","routeId":"relationship_patterns","locale":"fr","expectedFamily":"indexed_natal"}
+{"id":"venus_love_001","text":"What does Venus say about my love style?","routeId":"venus_love","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"venus_love_002","text":"How do I love according to Venus?","routeId":"venus_love","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"venus_love_003","text":"Tell me about Venus in my chart.","routeId":"venus_love","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"venus_love_004","text":"What kind of affection do I need?","routeId":"venus_love","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"mars_desire_001","text":"What does Mars say about my desire nature?","routeId":"mars_desire","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"mars_desire_002","text":"How do I pursue what I want?","routeId":"mars_desire","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"mars_desire_003","text":"Tell me about my drive and anger.","routeId":"mars_desire","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"mercury_mind_001","text":"What does Mercury say about my mind?","routeId":"mercury_mind","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"mercury_mind_002","text":"How do I think and communicate?","routeId":"mercury_mind","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"mercury_mind_003","text":"Tell me about my mental style.","routeId":"mercury_mind","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"career_signature_001","text":"What does my chart say about career?","routeId":"career_signature","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"career_signature_002","text":"What kind of work suits me?","routeId":"career_signature","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"career_signature_003","text":"Where is my professional strength?","routeId":"career_signature","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"career_signature_004","text":"Que dit mon theme sur ma carriere ?","routeId":"career_signature","locale":"fr","expectedFamily":"indexed_natal"}
+{"id":"money_pattern_001","text":"What are my money patterns?","routeId":"money_pattern","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"money_pattern_002","text":"How do I handle resources and security?","routeId":"money_pattern","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"money_pattern_003","text":"What blocks my relationship with money?","routeId":"money_pattern","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"spiritual_path_001","text":"What is my spiritual path?","routeId":"spiritual_path","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"spiritual_path_002","text":"Where does my chart show inner growth?","routeId":"spiritual_path","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"shadow_pattern_001","text":"What is my shadow pattern?","routeId":"shadow_pattern","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"shadow_pattern_002","text":"What unconscious pattern keeps repeating?","routeId":"shadow_pattern","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"rare_signatures_001","text":"Do I have rare signatures in my chart?","routeId":"rare_signatures","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"rare_signatures_002","text":"What makes my chart unusual?","routeId":"rare_signatures","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"stellium_meaning_001","text":"Do I have a stellium?","routeId":"stellium_meaning","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"stellium_meaning_002","text":"What does my stellium mean?","routeId":"stellium_meaning","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"dominant_element_001","text":"What is my dominant element?","routeId":"dominant_element","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"dominant_element_002","text":"Am I more fire earth air or water?","routeId":"dominant_element","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"dominant_modality_001","text":"What is my dominant modality?","routeId":"dominant_modality","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"life_purpose_nodes_001","text":"What do my nodes say about life purpose?","routeId":"life_purpose_nodes","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"life_purpose_nodes_002","text":"Tell me about my north node path.","routeId":"life_purpose_nodes","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"wound_chiron_001","text":"What is my Chiron wound?","routeId":"wound_chiron","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"wound_chiron_002","text":"How do I heal according to Chiron?","routeId":"wound_chiron","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"saturn_lesson_001","text":"What are Saturn's lessons in my chart?","routeId":"saturn_lesson","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"saturn_lesson_002","text":"Where does life ask me to mature?","routeId":"saturn_lesson","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"jupiter_growth_001","text":"Where does Jupiter bring growth for me?","routeId":"jupiter_growth","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"jupiter_growth_002","text":"Where is my luck or expansion?","routeId":"jupiter_growth","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"pluto_transformation_001","text":"How does Pluto transform me?","routeId":"pluto_transformation","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"pluto_transformation_002","text":"Where is my deepest transformation?","routeId":"pluto_transformation","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"strongest_aspect_001","text":"What is my strongest aspect?","routeId":"strongest_aspect","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"strongest_aspect_002","text":"Tell me my most important aspect.","routeId":"strongest_aspect","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"tenth_house_career_001","text":"What does my 10th house say about career?","routeId":"tenth_house_career","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"tenth_house_career_002","text":"Tell me about my tenth house and vocation.","routeId":"tenth_house_career","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"seventh_house_relationship_001","text":"What does my 7th house say about relationships?","routeId":"seventh_house_relationship","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"seventh_house_relationship_002","text":"Tell me about my seventh house in love.","routeId":"seventh_house_relationship","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"twelfth_house_inner_life_001","text":"What does my 12th house mean?","routeId":"twelfth_house_inner_life","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"twelfth_house_inner_life_002","text":"Tell me about my hidden inner life.","routeId":"twelfth_house_inner_life","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"midheaven_calling_001","text":"What does my Midheaven say about my calling?","routeId":"midheaven_calling","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"midheaven_calling_002","text":"What is my public vocation?","routeId":"midheaven_calling","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"chart_ruler_meaning_001","text":"What does my chart ruler mean?","routeId":"chart_ruler_meaning","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"seventh_ruler_meaning_001","text":"What does my seventh house ruler mean?","routeId":"seventh_ruler_meaning","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"tenth_ruler_meaning_001","text":"What does my tenth house ruler mean?","routeId":"tenth_ruler_meaning","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"twelfth_ruler_meaning_001","text":"What does my twelfth house ruler mean?","routeId":"twelfth_ruler_meaning","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"attachment_style_001","text":"What is my attachment style astrologically?","routeId":"attachment_style","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"attachment_style_002","text":"Why do I get anxious or avoidant in love?","routeId":"attachment_style","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"family_pattern_001","text":"What family patterns show in my chart?","routeId":"family_pattern","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"hidden_strength_001","text":"What hidden strength does my chart show?","routeId":"hidden_strength","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"soulmate_pattern_001","text":"What does my chart say about soulmate patterns?","routeId":"soulmate_pattern","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"current_emotional_transits_001","text":"What is happening emotionally for me right now?","routeId":"current_emotional_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_emotional_transits_002","text":"What are my emotional transits now?","routeId":"current_emotional_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_emotional_transits_003","text":"Why do I feel so much today astrologically?","routeId":"current_emotional_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_emotional_transits_004","text":"Que se passe emotionnellement pour moi en ce moment ?","routeId":"current_emotional_transits","locale":"fr","expectedFamily":"indexed_monthly_transits"}
+{"id":"today_transits_me_001","text":"What are my transits today?","routeId":"today_transits_me","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"today_transits_me_002","text":"What is active for me today?","routeId":"today_transits_me","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"today_transits_me_003","text":"Give me today's astrology for my chart.","routeId":"today_transits_me","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_sky_today_001","text":"Tell me about the current sky.","routeId":"current_sky_today","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_sky_today_002","text":"What is happening in the sky today?","routeId":"current_sky_today","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"month_ahead_transits_001","text":"What are my transits this month?","routeId":"month_ahead_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"month_ahead_transits_002","text":"What is the theme of my month astrologically?","routeId":"month_ahead_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"month_ahead_transits_003","text":"Give me the monthly forecast from my chart.","routeId":"month_ahead_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_relationship_transits_001","text":"What is happening in love for me right now?","routeId":"current_relationship_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_relationship_transits_002","text":"What are my current relationship transits?","routeId":"current_relationship_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_career_transits_001","text":"What is happening in my career right now?","routeId":"current_career_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_career_transits_002","text":"What are my current work transits?","routeId":"current_career_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_mental_transits_001","text":"What is happening mentally for me right now?","routeId":"current_mental_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"pressure_window_now_001","text":"Where is the pressure for me right now?","routeId":"pressure_window_now","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"timing_window_month_001","text":"What are the most important dates for me this month?","routeId":"timing_window_month","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_sun_transits_001","text":"What is the Sun doing to me right now?","routeId":"current_sun_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_moon_transits_001","text":"What is the Moon doing to me right now?","routeId":"current_moon_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_mercury_transits_001","text":"What is Mercury doing to me right now?","routeId":"current_mercury_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_venus_transits_001","text":"What is Venus doing to me right now?","routeId":"current_venus_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_mars_transits_001","text":"What is Mars doing to me right now?","routeId":"current_mars_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_jupiter_transits_001","text":"What is Jupiter doing to me right now?","routeId":"current_jupiter_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_saturn_transits_001","text":"What is Saturn doing to me right now?","routeId":"current_saturn_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_uranus_transits_001","text":"What is Uranus doing to me right now?","routeId":"current_uranus_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_neptune_transits_001","text":"What is Neptune doing to me right now?","routeId":"current_neptune_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_pluto_transits_001","text":"What is Pluto doing to me right now?","routeId":"current_pluto_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_chiron_transits_001","text":"What is Chiron activating for me now?","routeId":"current_chiron_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_true_node_transits_001","text":"What is the True Node activating for me now?","routeId":"current_true_node_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_ascendant_transits_001","text":"What is activating my Ascendant right now?","routeId":"current_ascendant_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_descendant_transits_001","text":"What is activating my Descendant right now?","routeId":"current_descendant_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"current_midheaven_transits_001","text":"What is activating my Midheaven right now?","routeId":"current_midheaven_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"monthly_transits_for_planet_001","text":"Show me all monthly transits related to Pluto.","routeId":"monthly_transits_for_planet","locale":"en","expectedFamily":"mcp_transits"}
+{"id":"monthly_transits_for_planet_002","text":"Return the 3 strongest Saturn transits this month.","routeId":"monthly_transits_for_planet","locale":"en","expectedFamily":"mcp_transits"}
+{"id":"all_monthly_transits_001","text":"List all monthly transits.","routeId":"all_monthly_transits","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"transit_search_exact_001","text":"Show me exact Saturn transits to my Moon.","routeId":"transit_search_exact","locale":"en","expectedFamily":"mcp_transits"}
+{"id":"transit_search_exact_002","text":"Return all squares between my Sun and Saturn since birth.","routeId":"transit_search_exact","locale":"en","expectedFamily":"mcp_transits"}
+{"id":"transit_search_exact_003","text":"Find exact transits of Uranus to my Venus next year.","routeId":"transit_search_exact","locale":"en","expectedFamily":"mcp_transits"}
+{"id":"synastry_summary_001","text":"Compare me with Elie.","routeId":"synastry_summary","locale":"en","expectedFamily":"mcp_synastry"}
+{"id":"synastry_summary_002","text":"Are we compatible astrologically?","routeId":"synastry_summary","locale":"en","expectedFamily":"mcp_synastry"}
+{"id":"synastry_summary_003","text":"Give me compatibility with Sarah.","routeId":"synastry_summary","locale":"en","expectedFamily":"mcp_synastry"}
+{"id":"synastry_detailed_001","text":"Give me detailed synastry with Elie.","routeId":"synastry_detailed","locale":"en","expectedFamily":"mcp_synastry"}
+{"id":"couples_horoscope_001","text":"Give me a couples horoscope with Elie.","routeId":"couples_horoscope","locale":"en","expectedFamily":"mcp_synastry"}
+{"id":"relocation_recommendations_001","text":"Where should I relocate for career?","routeId":"relocation_recommendations","locale":"en","expectedFamily":"mcp_relocation"}
+{"id":"relocation_recommendations_002","text":"Best places to live for love.","routeId":"relocation_recommendations","locale":"en","expectedFamily":"mcp_relocation"}
+{"id":"relocation_city_check_001","text":"Check Tokyo for me.","routeId":"relocation_city_check","locale":"en","expectedFamily":"mcp_relocation"}
+{"id":"relocation_city_check_002","text":"What about living in Paris?","routeId":"relocation_city_check","locale":"en","expectedFamily":"mcp_relocation"}
+{"id":"astrocartography_lines_001","text":"Show my astrocartography lines.","routeId":"astrocartography_lines","locale":"en","expectedFamily":"mcp_relocation"}
+{"id":"secondary_progressions_001","text":"Tell me about my secondary progressions.","routeId":"secondary_progressions","locale":"en","expectedFamily":"mcp_progressions"}
+{"id":"secondary_progressions_exact_aspects_001","text":"Show exact progressed aspects for next year.","routeId":"secondary_progressions_exact_aspects","locale":"en","expectedFamily":"mcp_progressions"}
+{"id":"annual_profections_001","text":"What is my annual profection year?","routeId":"annual_profections","locale":"en","expectedFamily":"mcp_progressions"}
+{"id":"solar_return_001","text":"Read my solar return.","routeId":"solar_return","locale":"en","expectedFamily":"mcp_progressions"}
+{"id":"planet_return_001","text":"When is my Venus return?","routeId":"planet_return","locale":"en","expectedFamily":"mcp_progressions"}
+{"id":"daily_ephemeris_001","text":"Give me the ephemeris for May 5 2027.","routeId":"daily_ephemeris","locale":"en","expectedFamily":"mcp_ephemeris"}
+{"id":"ephemeris_001","text":"Give me the ephemeris for May 2027.","routeId":"ephemeris","locale":"en","expectedFamily":"mcp_ephemeris"}
+{"id":"personal_horoscope_001","text":"Give me my horoscope today.","routeId":"personal_horoscope","locale":"en","expectedFamily":"mcp_horoscope"}
+{"id":"personal_horoscope_002","text":"My personal horoscope for today please.","routeId":"personal_horoscope","locale":"en","expectedFamily":"mcp_horoscope"}
+{"id":"sign_horoscope_001","text":"Aries horoscope today.","routeId":"sign_horoscope","locale":"en","expectedFamily":"mcp_horoscope"}
+{"id":"wedding_election_search_001","text":"What is the best wedding date for me this year?","routeId":"wedding_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"making_contracts_election_search_001","text":"What is the best date to sign a contract?","routeId":"making_contracts_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"job_audition_election_search_001","text":"Best date for a job interview.","routeId":"job_audition_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"purchase_property_election_search_001","text":"When should I buy a house?","routeId":"purchase_property_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"purchase_car_election_search_001","text":"When should I buy a car?","routeId":"purchase_car_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"move_into_new_home_election_search_001","text":"What is the best date to move into my new home?","routeId":"move_into_new_home_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"starting_journey_election_search_001","text":"When should I start traveling?","routeId":"starting_journey_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"legal_proceedings_election_search_001","text":"Best timing for a court case.","routeId":"legal_proceedings_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"physical_examination_election_search_001","text":"Best date for a medical checkup.","routeId":"physical_examination_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"invest_money_election_search_001","text":"What is the best time to invest money?","routeId":"invest_money_election_search","locale":"en","expectedFamily":"mcp_electional"}
+{"id":"sun_sign_001","text":"What sign is my Sun in?","routeId":"sun_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"sun_sign_002","text":"Tell me my Sun sign.","routeId":"sun_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"moon_sign_001","text":"What sign is my Moon in?","routeId":"moon_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"moon_sign_002","text":"Tell me my Moon sign and house.","routeId":"moon_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"midheaven_sign_001","text":"What sign is my MC in?","routeId":"midheaven_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"midheaven_sign_002","text":"Tell me my Midheaven sign.","routeId":"midheaven_sign","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"all_natal_aspects_001","text":"List all my natal aspects.","routeId":"all_natal_aspects","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"all_natal_aspects_002","text":"Show me every aspect in my birth chart.","routeId":"all_natal_aspects","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"chart_structures_001","text":"What special chart structures do I have?","routeId":"chart_structures","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"chart_structures_002","text":"Do I have a grand trine or t-square?","routeId":"chart_structures","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"interceptions_meaning_001","text":"Do I have interceptions in my chart?","routeId":"interceptions_meaning","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"special_structures_001","text":"What special structures are in my chart?","routeId":"special_structures","locale":"en","expectedFamily":"indexed_natal"}
+{"id":"current_stellium_001","text":"Is there a stellium happening in the sky right now?","routeId":"current_stellium","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"dominant_transit_now_001","text":"What is the dominant transit for me now?","routeId":"dominant_transit_now","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"love_timing_month_001","text":"What is the love timing this month?","routeId":"love_timing_month","locale":"en","expectedFamily":"indexed_monthly_transits"}
+{"id":"career_timing_month_001","text":"What career timing is active this month?","routeId":"career_timing_month","locale":"en","expectedFamily":"indexed_monthly_transits"}

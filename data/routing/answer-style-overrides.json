@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "styles": {
+    "natal_theme": {
+      "instructions": []
+    },
+    "personal_transits": {
+      "instructions": [
+        "Start with the dominant personal event of the day or period.",
+        "Add at most two secondary activations and one short practical takeaway."
+      ]
+    },
+    "aspect_focus": {
+      "instructions": []
+    }
+  }
+}

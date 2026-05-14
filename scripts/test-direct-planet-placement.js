@@ -110,7 +110,7 @@ function testEnglishMoonPlacementMeaning() {
   assert.doesNotMatch(text, /Taurus/i);
 }
 
-function testEnglishMoonMeaningFollowUp() {
+function testEnglishMoonMeaningFollowUpDisabledByDefault() {
   const first = __test.buildDeterministicNatalResponse(
     'en',
     profile,
@@ -131,9 +131,7 @@ function testEnglishMoonMeaningFollowUp() {
     }
   );
 
-  assert.match(followUp.text, /Moon is in Capricorn, in house 12/i);
-  assert.match(followUp.text, /emotional needs/i);
-  assert.equal(followUp.routeId, 'moon_emotions');
+  assert.equal(followUp, null);
 }
 
 function testEnglishRisingSign() {
@@ -146,6 +144,30 @@ function testEnglishRisingSign() {
   assert.match(text, /Ascendant is in Cancer/i);
   assert.match(text, /Exact position in the sign: 2\.42°/i);
   assert.doesNotMatch(text, /relationships and how you engage/i);
+}
+
+function testStandaloneAstroThemeDoesNotInheritMoon() {
+  const first = __test.buildDeterministicNatalResponse(
+    'en',
+    profile,
+    'What sign is my Moon?'
+  );
+  const standalone = __test.buildDeterministicNatalResponse(
+    'en',
+    profile,
+    'tell me about by astro theme',
+    {
+      toolResults: first.usedTools,
+      conversationContext: {
+        lastCommonRouteId: first.routeId,
+        lastQueryState: {
+          canonicalRouteId: first.routeId
+        }
+      }
+    }
+  );
+
+  assert.equal(standalone, null);
 }
 
 function testGermanMoonPlacement() {
@@ -281,8 +303,9 @@ function testNoisyPlanetOnlyFollowUpPlacement() {
 testFrenchMoonPlacement();
 testEnglishMoonPlacement();
 testEnglishMoonPlacementMeaning();
-testEnglishMoonMeaningFollowUp();
+testEnglishMoonMeaningFollowUpDisabledByDefault();
 testEnglishRisingSign();
+testStandaloneAstroThemeDoesNotInheritMoon();
 testGermanMoonPlacement();
 testSpanishMoonPlacement();
 testPlacementIntegrityGuard();

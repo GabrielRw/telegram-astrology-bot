@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 
 const { __test } = require('../src/services/conversation');
+const { getCommonQuestionRouteById, matchCommonQuestionRoute } = require('../src/config/commonQuestionRoutes');
 
 function buildContext({ routeKind, routeId, family, baseQuestion, summary }) {
   return {
@@ -83,9 +84,24 @@ function testStandaloneQuestionDoesNotInherit() {
   assert.equal(followUp, null);
 }
 
+function testBroadNatalOverviewRouteIsStandalone() {
+  const route = getCommonQuestionRouteById('natal_overview');
+  assert.equal(route.followUpPolicy, 'standalone');
+  assert.deepEqual(route.blockedPhrases, ['currently', 'right now', 'this period', 'this season', 'current atmosphere']);
+
+  const matched = matchCommonQuestionRoute('tell me about my chart please');
+  assert.equal(matched?.id, 'natal_overview');
+  assert.equal(matched?.followUpPolicy, 'standalone');
+
+  const typoMatched = matchCommonQuestionRoute('tell me about by astro theme');
+  assert.equal(typoMatched?.id, 'natal_overview');
+  assert.equal(typoMatched?.followUpPolicy, 'standalone');
+}
+
 testElectionalArtifactFollowUp();
 testTransitArtifactFollowUp();
 testRelocationArtifactFollowUp();
 testStandaloneQuestionDoesNotInherit();
+testBroadNatalOverviewRouteIsStandalone();
 
 console.log('ok');

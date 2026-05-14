@@ -1,0 +1,43 @@
+{
+  "month": "2026-03",
+  "title": "March 2026 Transit Timeline",
+  "natal": {
+    "name": "Gabriel",
+    "year": 1995,
+    "month": 9,
+    "day": 5,
+    "hour": 20,
+    "minute": 0,
+    "time_known": true,
+    "city": "Paris",
+    "lat": 48.8566,
+    "lng": 2.3522,
+    "tz_str": "Europe/Paris"
+  },
+  "filters": {
+    "transit_categories": [
+      "fast",
+      "medium",
+      "slow"
+    ],
+    "includeMoon": false,
+    "aspect_types": [
+      "conjunction",
+      "square",
+      "opposition",
+      "trine",
+      "sextile"
+    ],
+    "orb_settings": {
+      "Conjunction": 5,
+      "Opposition": 5,
+      "Square": 4,
+      "Trine": 4,
+      "Sextile": 3
+    }
+  },
+  "theme": {
+    "titleAccent": "#d3bd8a",
+    "pageTint": "#0a1220"
+  }
+}

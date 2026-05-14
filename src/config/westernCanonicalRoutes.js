@@ -1,4 +1,6 @@
 const { normalizeQuestion } = require('./commonQuestionRoutes');
+const { applyRouteOverrides } = require('./routeOverrides');
+const { getRouteResponseRendererShapeId } = require('./responseRenderers');
 
 function buildAliases(localized = {}) {
   return ['en', 'fr', 'de', 'es']
@@ -6,19 +8,41 @@ function buildAliases(localized = {}) {
     .filter(Boolean);
 }
 
+function resolveResponseShape(input) {
+  const rendererShapeId = getRouteResponseRendererShapeId(input.id);
+  if (rendererShapeId && (!input.responseShape || input.responseShape === 'factual_cards')) {
+    return rendererShapeId;
+  }
+  return input.responseShape || rendererShapeId || 'synthesis';
+}
+
 function buildCanonicalRoute(input) {
   return {
     id: input.id,
+    displayName: input.displayName || null,
     family: input.family,
     routeKind: input.routeKind,
     answerStyle: input.answerStyle,
     toolTarget: input.toolTarget || null,
+    toolTargets: Array.isArray(input.toolTargets) ? input.toolTargets : (input.toolTarget ? [input.toolTarget] : []),
     commonRouteId: input.commonRouteId || null,
     requiredArgs: input.requiredArgs || [],
     optionalArgs: input.optionalArgs || [],
     cacheStrategy: input.cacheStrategy || 'none',
     supportsRaw: input.supportsRaw !== false,
-    responseShape: input.responseShape || 'synthesis',
+    responseShape: resolveResponseShape(input),
+    cardLimit: input.cardLimit || null,
+    factLimit: input.factLimit || null,
+    responseInstructions: input.responseInstructions || null,
+    mcpLoadingMode: input.mcpLoadingMode || 'auto',
+    deliveryMode: input.deliveryMode || 'standard',
+    mediaAttachments: Array.isArray(input.mediaAttachments) ? input.mediaAttachments : [],
+    followUpPolicy: input.followUpPolicy || 'auto',
+    blockedPhrases: Array.isArray(input.blockedPhrases) ? input.blockedPhrases : [],
+    sourceKinds: Array.isArray(input.sourceKinds) ? input.sourceKinds : [],
+    factSourceTools: Array.isArray(input.factSourceTools) ? input.factSourceTools : [],
+    categories: Array.isArray(input.categories) ? input.categories : [],
+    tags: Array.isArray(input.tags) ? input.tags : [],
     scope: input.scope || null,
     intentSample: input.intentSample,
     matchHint: input.matchHint || null,
@@ -35,6 +59,41 @@ function buildElectionalCanonicalRoute(input) {
     cacheStrategy: 'tool_only',
     responseShape: 'factual_cards',
     ...input
+  });
+}
+
+const CURRENT_TRANSIT_BODY_CANONICAL_CONFIGS = [
+  { id: 'current_sun_transits', name: 'Sun', aliases: ['what is the sun doing to me right now', 'tell me about my sun transits'] },
+  { id: 'current_moon_transits', name: 'Moon', aliases: ['what is the moon doing to me right now', 'tell me about my moon transits'] },
+  { id: 'current_mercury_transits', name: 'Mercury', aliases: ['what is mercury doing to me right now', 'tell me about my mercury transits'] },
+  { id: 'current_venus_transits', name: 'Venus', aliases: ['what is venus doing to me right now', 'tell me about my venus transits'] },
+  { id: 'current_mars_transits', name: 'Mars', aliases: ['what is mars doing to me right now', 'tell me about my mars transits'] },
+  { id: 'current_jupiter_transits', name: 'Jupiter', aliases: ['what is jupiter doing to me right now', 'tell me about my jupiter transits'] },
+  { id: 'current_saturn_transits', name: 'Saturn', aliases: ['what is saturn doing to me right now', 'tell me about my saturn transits'] },
+  { id: 'current_uranus_transits', name: 'Uranus', aliases: ['what is uranus doing to me right now', 'tell me about my uranus transits'] },
+  { id: 'current_neptune_transits', name: 'Neptune', aliases: ['what is neptune doing to me right now', 'tell me about my neptune transits'] },
+  { id: 'current_pluto_transits', name: 'Pluto', aliases: ['what is pluto doing to me right now', 'tell me about my pluto transits'] },
+  { id: 'current_chiron_transits', name: 'Chiron', aliases: ['what is chiron activating for me now', 'tell me about my chiron transits'] },
+  { id: 'current_true_node_transits', name: 'True Node', aliases: ['what is the true node activating for me now', 'tell me about my true node transits'] },
+  { id: 'current_ascendant_transits', name: 'Ascendant', aliases: ['what is activating my ascendant right now', 'tell me about my ascendant transits'] },
+  { id: 'current_descendant_transits', name: 'Descendant', aliases: ['what is activating my descendant right now', 'tell me about my descendant transits'] },
+  { id: 'current_midheaven_transits', name: 'Midheaven', aliases: ['what is activating my midheaven right now', 'tell me about my midheaven transits'] }
+];
+
+function buildCurrentTransitBodyCanonicalRoute(body) {
+  return buildCanonicalRoute({
+    id: body.id,
+    family: 'transits',
+    routeKind: 'astrology_transits',
+    answerStyle: 'personal_transits',
+    commonRouteId: body.id,
+    requiredArgs: ['profile'],
+    cacheStrategy: 'indexed_transits_then_tool',
+    responseShape: 'factual_cards',
+    intentSample: `${body.name.toLowerCase()} transits now`,
+    localized: {
+      en: body.aliases
+    }
   });
 }
 
@@ -224,20 +283,33 @@ const ELECTIONAL_CANONICAL_ROUTES = [
   })
 ];
 
-const WESTERN_CANONICAL_ROUTES = [
+const BASE_WESTERN_CANONICAL_ROUTES = [
   buildCanonicalRoute({
     id: 'natal_overview',
     family: 'natal',
     routeKind: 'astrology_natal',
     answerStyle: 'natal_theme',
     commonRouteId: 'natal_overview',
+    toolTarget: 'v1_western_natal_insights',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
     responseShape: 'factual_cards',
+    followUpPolicy: 'standalone',
+    blockedPhrases: ['currently', 'right now', 'this period', 'this season', 'current atmosphere'],
     scope: 'natal_overview',
     intentSample: 'tell me about my natal chart and its specificities',
     localized: {
-      en: ['tell me about my natal chart', 'what are the main themes of my chart', 'my birth chart overview'],
+      en: [
+        'tell me about my natal chart',
+        'tell me about my chart',
+        'tell me about my chart please',
+        'tell me about my astro theme',
+        'tell me about by astro theme',
+        'tell me about my astrology theme',
+        'what is my chart about',
+        'what are the main themes of my chart',
+        'my birth chart overview'
+      ],
       fr: ['parle moi de mon theme natal', 'parle moi de mon thème natal', 'parle moi de mon theme astro', 'parle moi de mon thème astro', 'parle de mon theme astro', 'parle de mon thème astro', 'quelles sont les grandes lignes de mon theme'],
       de: ['erzahl mir von meinem geburtshoroskop', 'was sind die hauptthemen meines horoskops'],
       es: ['hablame de mi carta natal', 'cuales son los temas principales de mi carta']
@@ -249,6 +321,7 @@ const WESTERN_CANONICAL_ROUTES = [
     routeKind: 'astrology_natal',
     answerStyle: 'life_area_theme',
     commonRouteId: 'relationship_patterns',
+    toolTarget: 'v1_western_natal_insights',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
     responseShape: 'factual_cards',
@@ -267,6 +340,7 @@ const WESTERN_CANONICAL_ROUTES = [
     routeKind: 'astrology_natal',
     answerStyle: 'life_area_theme',
     commonRouteId: 'career_signature',
+    toolTarget: 'v1_western_natal_insights',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
     responseShape: 'factual_cards',
@@ -285,6 +359,7 @@ const WESTERN_CANONICAL_ROUTES = [
     routeKind: 'astrology_natal',
     answerStyle: 'life_area_theme',
     commonRouteId: 'money_pattern',
+    toolTarget: 'v1_western_natal_insights',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
     responseShape: 'factual_cards',
@@ -305,6 +380,9 @@ const WESTERN_CANONICAL_ROUTES = [
     commonRouteId: 'special_structures',
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
+    sourceKinds: ['natal'],
+    categories: ['chart_pattern'],
+    tags: [],
     responseShape: 'factual_cards',
     scope: 'chart_structures',
     intentSample: 'what special structures are in my chart',
@@ -323,6 +401,7 @@ const WESTERN_CANONICAL_ROUTES = [
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_natal_then_tool',
     responseShape: 'full_listing',
+    mediaAttachments: ['natal_aspects_png'],
     scope: 'natal_aspects',
     intentSample: 'list all my aspects',
     matchHint: 'Static natal chart aspect listing only. Use this only when the user wants the aspects that already exist inside the birth chart. Do not use for transit searches across time, date ranges, years, or since birth.',
@@ -590,6 +669,7 @@ const WESTERN_CANONICAL_ROUTES = [
       es: ['que pasa emocionalmente para mi ahora']
     }
   }),
+  ...CURRENT_TRANSIT_BODY_CANONICAL_CONFIGS.map(buildCurrentTransitBodyCanonicalRoute),
   buildCanonicalRoute({
     id: 'pressure_window_now',
     family: 'transits',
@@ -878,14 +958,39 @@ const WESTERN_CANONICAL_ROUTES = [
     }
   }),
   buildCanonicalRoute({
+    id: 'daily_ephemeris',
+    family: 'ephemeris',
+    routeKind: 'astrology_transits',
+    answerStyle: 'system_answer',
+    displayName: 'Daily ephemeris',
+    toolTarget: 'rest_ephemeris',
+    requiredArgs: ['date'],
+    cacheStrategy: 'tool_only',
+    responseShape: 'factual_cards',
+    mcpLoadingMode: 'never',
+    mediaAttachments: ['ephemeris_month_png'],
+    scope: 'ephemeris',
+    intentSample: 'give me the ephemeris for one day',
+    matchHint: 'Single-day planetary ephemeris for today or a requested date.',
+    localized: {
+      en: ['daily ephemeris', 'ephemeris for today', 'give me the ephemeris for may 5 2027', 'show me one day ephemeris'],
+      fr: ['ephemeride du jour', 'éphéméride du jour', 'donne moi l ephemeride du 5 mai 2027', 'donne moi les ephemerides du jour'],
+      de: ['tägliche ephemeride', 'ephemeride fur heute'],
+      es: ['efemeride diaria', 'efemeride de hoy']
+    }
+  }),
+  buildCanonicalRoute({
     id: 'ephemeris',
     family: 'ephemeris',
     routeKind: 'astrology_transits',
     answerStyle: 'system_answer',
-    toolTarget: 'v1_ephemeris',
+    displayName: 'Monthly ephemeris',
+    toolTarget: 'rest_ephemeris',
     requiredArgs: ['range'],
     cacheStrategy: 'tool_only',
     responseShape: 'factual_cards',
+    mcpLoadingMode: 'never',
+    mediaAttachments: ['ephemeris_month_png'],
     scope: 'ephemeris',
     intentSample: 'give me the ephemeris for a requested month or date range',
     matchHint: 'Planetary ephemeris for a requested month, year, or date range.',
@@ -901,7 +1006,7 @@ const WESTERN_CANONICAL_ROUTES = [
     family: 'horoscope',
     routeKind: 'astrology_transits',
     answerStyle: 'personal_transits',
-    toolTarget: 'v1_horoscope_daily_personal',
+    toolTarget: 'rest_horoscope_daily_personal_text',
     requiredArgs: ['profile'],
     cacheStrategy: 'tool_only',
     responseShape: 'factual_cards',
@@ -933,6 +1038,14 @@ const WESTERN_CANONICAL_ROUTES = [
     }
   })
 ];
+
+const WESTERN_CANONICAL_ROUTES = applyRouteOverrides(BASE_WESTERN_CANONICAL_ROUTES);
+
+function reloadWesternCanonicalRouteOverrides() {
+  const refreshed = applyRouteOverrides(BASE_WESTERN_CANONICAL_ROUTES);
+  WESTERN_CANONICAL_ROUTES.splice(0, WESTERN_CANONICAL_ROUTES.length, ...refreshed);
+  return WESTERN_CANONICAL_ROUTES;
+}
 
 function tokenize(text) {
   return normalizeQuestion(text)
@@ -1032,5 +1145,6 @@ module.exports = {
   WESTERN_CANONICAL_ROUTES,
   getWesternCanonicalRouteById,
   listWesternCanonicalRoutes,
-  matchWesternCanonicalRoute
+  matchWesternCanonicalRoute,
+  reloadWesternCanonicalRouteOverrides
 };

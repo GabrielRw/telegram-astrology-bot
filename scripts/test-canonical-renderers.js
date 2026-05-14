@@ -1,6 +1,12 @@
 const assert = require('node:assert/strict');
 
 const { __test } = require('../src/services/conversation');
+const { getWesternCanonicalRouteById } = require('../src/config/westernCanonicalRoutes');
+const {
+  buildEphemerisSummaryText,
+  buildEphemerisWebAppUrl,
+  renderEphemerisMonthPng
+} = require('../src/services/ephemerisTable');
 
 function testSecondaryProgressions() {
   const payload = {
@@ -159,6 +165,11 @@ function testHoroscopeRenderer() {
   assert.doesNotMatch(es, /\bOverall 82\b/);
 }
 
+function testPersonalHoroscopeUsesLocalV3Tool() {
+  const route = getWesternCanonicalRouteById('personal_horoscope');
+  assert.equal(route.toolTarget, 'rest_horoscope_daily_personal_text');
+}
+
 function testSynastryRenderer() {
   const payload = {
     summary: {
@@ -301,6 +312,44 @@ function testEphemerisRenderer() {
   assert.match(de, /Rückläufig: Merkur/i);
 }
 
+async function testEphemerisSummaryAndPng() {
+  const payload = {
+    meta: {
+      start: '2027-05-01',
+      end: '2027-05-02',
+      step: '1d',
+      rows: 2,
+      bodies: ['Sun', 'Moon'],
+      zodiac_type: 'tropical',
+      timezone: 'Europe/Paris'
+    },
+    data: [
+      {
+        local_timestamp: '2027-05-01T00:00:00+02:00',
+        bodies: {
+          Sun: { sign: 'Taurus', pos: 29.5, retrograde: false },
+          Moon: { sign: 'Pisces', pos: 3.1, retrograde: false }
+        },
+        astrology: { moon_phase: { label: 'Last Quarter' } }
+      },
+      {
+        local_timestamp: '2027-05-02T00:00:00+02:00',
+        bodies: {
+          Sun: { sign: 'Gemini', pos: 0.1, retrograde: false },
+          Moon: { sign: 'Aries', pos: 15.1, retrograde: false }
+        },
+        astrology: { moon_phase: { label: 'Waning Crescent' } }
+      }
+    ]
+  };
+  const text = buildEphemerisSummaryText(payload);
+  assert.match(text, /Ephemeris for 2027-05-01 to 2027-05-02/);
+  assert.match(text, /Sun enters Gemini/);
+  assert.match(buildEphemerisWebAppUrl(payload), /month=2027-05/);
+  const buffer = await renderEphemerisMonthPng(payload);
+  assert.equal(buffer.subarray(1, 4).toString('ascii'), 'PNG');
+}
+
 function testTransitSearchRawRenderer() {
   const payload = {
     input: {
@@ -339,14 +388,21 @@ function testTransitSearchRawRenderer() {
   assert.doesNotMatch(de, /\bUTC\b/);
 }
 
-testSecondaryProgressions();
-testSolarReturn();
-testTransitSearchInterpretive();
-testHoroscopeRenderer();
-testSynastryRenderer();
-testAnnualProfectionsRenderer();
-testRelocationRenderer();
-testEphemerisRenderer();
-testTransitSearchRawRenderer();
+(async () => {
+  testSecondaryProgressions();
+  testSolarReturn();
+  testTransitSearchInterpretive();
+  testHoroscopeRenderer();
+  testPersonalHoroscopeUsesLocalV3Tool();
+  testSynastryRenderer();
+  testAnnualProfectionsRenderer();
+  testRelocationRenderer();
+  testEphemerisRenderer();
+  await testEphemerisSummaryAndPng();
+  testTransitSearchRawRenderer();
 
-console.log('ok');
+  console.log('ok');
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

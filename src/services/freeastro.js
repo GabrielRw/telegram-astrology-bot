@@ -222,6 +222,105 @@ async function getDailyPersonalHoroscopeV3(data) {
   });
 }
 
+function normalizeEphemerisRows(payload) {
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+  if (payload?.data && typeof payload.data === 'object') {
+    return [payload.data];
+  }
+  return [];
+}
+
+function setEphemerisRows(payload, rows) {
+  if (Array.isArray(payload?.data)) {
+    payload.data = rows;
+    return payload;
+  }
+  payload.data = rows[0] || null;
+  return payload;
+}
+
+function normalizeBodyName(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function wantsMeanLilith(bodies = []) {
+  return bodies.some((body) => ['mean_lilith', 'black_moon_lilith'].includes(normalizeBodyName(body)));
+}
+
+function wantsTrueLilith(bodies = []) {
+  return bodies.some((body) => ['lilith', 'true_lilith'].includes(normalizeBodyName(body)));
+}
+
+function withoutMeanLilithAliases(bodies = []) {
+  return bodies.filter((body) => !['mean_lilith', 'black_moon_lilith'].includes(normalizeBodyName(body)));
+}
+
+function mergeMeanLilithEphemeris(basePayload, meanPayload) {
+  const baseRows = normalizeEphemerisRows(basePayload);
+  const meanRows = normalizeEphemerisRows(meanPayload);
+  const mergedRows = baseRows.map((row, index) => {
+    const meanLilith = meanRows[index]?.bodies?.Lilith || meanRows[index]?.bodies?.lilith || null;
+    if (!meanLilith) {
+      return row;
+    }
+
+    return {
+      ...row,
+      bodies: {
+        ...(row.bodies || {}),
+        Mean_Lilith: {
+          ...meanLilith,
+          id: 'mean_lilith',
+          name: 'Mean Lilith',
+          variant: 'mean'
+        }
+      }
+    };
+  });
+
+  const metaBodies = Array.isArray(basePayload?.meta?.bodies) ? basePayload.meta.bodies : [];
+  basePayload.meta = {
+    ...(basePayload.meta || {}),
+    bodies: metaBodies.includes('Mean_Lilith') ? metaBodies : [...metaBodies, 'Mean_Lilith']
+  };
+
+  return setEphemerisRows(basePayload, mergedRows);
+}
+
+async function getEphemeris(data) {
+  const requestedBodies = Array.isArray(data?.bodies) ? data.bodies : [];
+  const shouldMergeMeanLilith = wantsMeanLilith(requestedBodies) && wantsTrueLilith(requestedBodies);
+  const baseData = shouldMergeMeanLilith
+    ? { ...data, bodies: withoutMeanLilithAliases(requestedBodies) }
+    : data;
+  const basePayload = await request('/api/v1/ephemeris/calculate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(baseData)
+  });
+
+  if (!shouldMergeMeanLilith) {
+    return basePayload;
+  }
+
+  const meanPayload = await request('/api/v1/ephemeris/calculate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      ...data,
+      bodies: ['Mean_Lilith']
+    })
+  });
+
+  return mergeMeanLilithEphemeris(basePayload, meanPayload);
+}
+
 async function getNatalChart(data) {
   return requestBinary('/api/v1/natal/chart/', {
     method: 'POST',
@@ -234,6 +333,7 @@ async function getNatalChart(data) {
 
 module.exports = {
   FreeAstroError,
+  getEphemeris,
   getNatalChart,
   getNatal,
   getNatalInsights,

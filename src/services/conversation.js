@@ -1,7 +1,10 @@
 const { performance } = require('node:perf_hooks');
 const { detectConversationIntent } = require('../config/conversationIntents');
+const { getAnswerStyleInstructions } = require('../config/answerStyleOverrides');
+const { getResponseShapeInstructions } = require('../config/responseShapeOverrides');
 const {
-  getCommonQuestionRouteById
+  getCommonQuestionRouteById,
+  matchCommonQuestionRoute
 } = require('../config/commonQuestionRoutes');
 const {
   getWesternCanonicalRouteById,
@@ -10,7 +13,12 @@ const {
 const factIndex = require('./factIndex');
 const mcpService = require('./freeastroMcp');
 const profiles = require('./profiles');
+const { matchRouteByEmbedding } = require('./routeEmbeddings');
 const toolCache = require('./toolCache');
+const {
+  buildEphemerisSummaryText,
+  buildEphemerisWebAppUrl
+} = require('./ephemerisTable');
 const { appendUnmatchedCanonicalQuestion } = require('./unmatchedCanonicalLog');
 const { FunctionCallingConfigMode } = require('@google/genai');
 const { createLocalFunctionDeclarations, generatePlainText, getFastPathModelName, runFunctionCallingLoop } = require('./gemini');
@@ -25,7 +33,8 @@ const {
   setLastToolResults
 } = require('../state/chatState');
 const { getLocale } = require('./locale');
-const { searchCities } = require('./freeastro');
+const { getEphemeris, searchCities } = require('./freeastro');
+const { splitConversationReply } = require('../utils/format');
 
 const LOCALE_INSTRUCTION = {
   en: 'English',
@@ -33,6 +42,23 @@ const LOCALE_INSTRUCTION = {
   de: 'German',
   es: 'Spanish'
 };
+
+const CONVERSATION_FOLLOW_UPS_ENABLED = process.env.CONVERSATION_FOLLOW_UPS_ENABLED === 'true';
+const EPHEMERIS_DEFAULT_BODIES = [
+  'Sun',
+  'Moon',
+  'Mercury',
+  'Venus',
+  'Mars',
+  'Jupiter',
+  'Saturn',
+  'Uranus',
+  'Neptune',
+  'Pluto',
+  'Chiron',
+  'True_Lilith',
+  'Mean_Lilith'
+];
 
 const SYNSTRY_TOOL_NAMES = new Set([
   'v1_western_synastry',
@@ -237,6 +263,7 @@ function buildSystemInstruction(chatState, mcpStatus, intent, options = {}) {
     `Conversation route: ${options.routeKind || 'astrology_natal'}.`,
     `Common route match: ${options.commonRouteId || 'none'}.`,
     `Required answer style: ${options.answerStyle || 'natal_theme'}.`,
+    `Required response shape: ${options.responseShape || 'synthesis'}.`,
     `Response perspective: ${options.responsePerspective || 'second_person'}.`,
     `Target profile label: ${options.targetProfileLabel || options.activeProfileName || 'Chart User'}.`,
     `Detected user intent: ${intent.id}.`,
@@ -592,6 +619,15 @@ function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone 
         month: parsedMonth,
         fullListing: wantsFullListingRequest(value)
       });
+    case 'daily_ephemeris': {
+      const date = explicitSingleDate || (wantsToday ? { start: getDateStringInTimezone(timezone), end: getDateStringInTimezone(timezone) } : null);
+      return sanitizeStructuredQueryPatch({
+        rangeStart: date?.start || null,
+        rangeEnd: date?.end || null,
+        timeframe: date ? (wantsToday ? 'current_day' : 'explicit_day') : null,
+        fullListing: false
+      });
+    }
     default:
       return {};
   }
@@ -704,6 +740,26 @@ function looksLikeReferentialFollowUp(text) {
   return (referentialCue && followUpCue) || shortReferential || followUpCue;
 }
 
+function looksLikeContextDependentFollowUp(text) {
+  const value = String(text || '').trim().toLowerCase();
+  if (!value || value.length > 220) {
+    return false;
+  }
+
+  const referentialCue = /\b(this|that|these|those|it|them|ce|cette|ces|cela|ca|ça|das|diese|dieser|esto|eso|estos|esas|esa)\b/i.test(value);
+  const shortContextCue = /^(?:ok|okay|d accord|dac|alors|et|and|und|y|verify|recheck|check|confirm|clarify|explain|details?|meaning|why|pourquoi|verifie|vérifie|confirme|explique|detaille|détaille)\b/i.test(value);
+  return referentialCue || shortContextCue;
+}
+
+function buildFollowUpsDisabledResponse(locale) {
+  return {
+    fr: 'Pour l’instant, posez une question complète pour que je choisisse la bonne route. Exemple : “Que signifie ma Lune en astrologie ?”',
+    de: 'Bitte stelle die Frage vorerst vollständig, damit ich die richtige Route wählen kann. Beispiel: „Was bedeutet mein Mond astrologisch?“',
+    es: 'Por ahora, haz una pregunta completa para que pueda elegir la ruta correcta. Ejemplo: “¿Qué significa mi Luna en astrología?”',
+    en: 'For now, ask a complete question so I can choose the right route. Example: “What does my Moon mean astrologically?”'
+  }[locale] || 'For now, ask a complete question so I can choose the right route. Example: “What does my Moon mean astrologically?”';
+}
+
 function detectArtifactFollowUpLocally(userText, conversationContext, history = []) {
   const value = String(userText || '').trim();
   const artifact = getLastAnswerArtifact(conversationContext);
@@ -742,6 +798,15 @@ function looksLikeStandaloneAstrologyQuery(text) {
   }
 
   const value = String(text || '').toLowerCase();
+  const broadNatalOverview = (
+    /\b(tell me|show me|give me|read|describe|explain|overview|big picture|main themes?|astro theme|astrology theme|birth chart|natal chart|my chart|mon theme|mon thème|theme astro|thème astro|theme natal|thème natal)\b/.test(value) &&
+    /\b(chart|natal|birth|theme|thème|astro|astrology)\b/.test(value) &&
+    !looksLikeCurrentTransitCue(value)
+  );
+  if (broadNatalOverview) {
+    return true;
+  }
+
   const hasCoreTopic = /(transits?|aspects?|theme|thème|chart|ephemerides|éphémérides|solar return|retour solaire|relocation|synastr)/.test(value);
   const hasSpecificScope = (
     /(ce mois|ce mois ci|ce mois-ci|this month|since birth|depuis ma naissance|from birth|soleil|sun|lune|moon|mercure|mercury|venus|mars|jupiter|saturne|saturn|uranus|neptune|pluton|pluto|chiron)/.test(value) ||
@@ -1373,6 +1438,14 @@ function inheritRouteFromConversation(route, conversationContext, userText) {
   };
 }
 
+function getMatchedCommonRouteForFollowUpPolicy(text) {
+  try {
+    return matchCommonQuestionRoute(text);
+  } catch (error) {
+    return null;
+  }
+}
+
 function resolveQuestionForPlanner(route, userText, history = []) {
   if (!route?.inheritedFromPreviousQuestion) {
     return String(userText || '');
@@ -1452,6 +1525,18 @@ function shouldUseDirectCanonicalMcpExecution(executionIntent, canonicalRoute = 
   );
 }
 
+function shouldUseConfiguredCanonicalFallback(canonicalRoute = null, plannedRoute = null) {
+  if (!canonicalRoute?.toolTarget || plannedRoute?.target !== 'indexed_facts') {
+    return false;
+  }
+
+  return (
+    canonicalRoute.cacheStrategy === 'indexed_natal_then_tool' ||
+    canonicalRoute.cacheStrategy === 'indexed_transits_then_tool' ||
+    canonicalRoute.cacheStrategy === 'cached_plus_tool'
+  );
+}
+
 function getElectionalRouteConfig(routeId = null) {
   return routeId ? (ELECTIONAL_ROUTE_CONFIG_BY_ID.get(routeId) || null) : null;
 }
@@ -1515,9 +1600,14 @@ function inferDirectCanonicalRouteForExecutionFamily(executionIntent, userText, 
       }
       return existing?.toolTarget ? existing : null;
     case 'mcp_ephemeris':
-      return /\bephemerides?\b|\bephemeris\b|\beph[eé]m[eé]rides?\b/.test(value)
-        ? getWesternCanonicalRouteById('ephemeris')
-        : (existing?.toolTarget ? existing : null);
+      if (/\bephemerides?\b|\bephemeris\b|\beph[eé]m[eé]rides?\b/.test(value)) {
+        const singleDate = parseExplicitSingleDateFromQuestion(userText, queryState?.timezone || 'UTC');
+        const wantsDaily = /\b(today|daily|one day|single day|du jour|aujourd'hui|aujourdhui|heute|hoy)\b/i.test(value);
+        return (singleDate || wantsDaily)
+          ? getWesternCanonicalRouteById('daily_ephemeris')
+          : getWesternCanonicalRouteById('ephemeris');
+      }
+      return existing?.toolTarget ? existing : null;
     case 'mcp_horoscope':
       return /\bhoroscope\b/.test(value)
         ? getWesternCanonicalRouteById('personal_horoscope')
@@ -1532,6 +1622,16 @@ function inferDirectCanonicalRouteForExecutionFamily(executionIntent, userText, 
     default:
       return existing?.toolTarget ? existing : null;
   }
+}
+
+function findCanonicalRouteForCommonRoute(commonRoute = null) {
+  if (!commonRoute?.id) {
+    return null;
+  }
+
+  return getWesternCanonicalRouteById(commonRoute.id)
+    || listWesternCanonicalRoutes().find((route) => route.commonRouteId === commonRoute.id)
+    || null;
 }
 
 async function resolveCanonicalCommonRouteWithAi(locale, userText, route) {
@@ -1834,7 +1934,7 @@ async function extractTransitSearchRefinementWithAi(locale, userText, subjectPro
 
 async function extractFullListingPreferenceWithAi(locale, userText, currentQueryState = null) {
   const routeId = currentQueryState?.canonicalRouteId || null;
-  if (!['all_natal_aspects', 'ephemeris'].includes(routeId)) {
+  if (!['all_natal_aspects', 'ephemeris', 'daily_ephemeris'].includes(routeId)) {
     return {
       fullListing: null,
       confidence: 0,
@@ -1943,7 +2043,7 @@ async function maybeRefineStructuredQueryStateWithAi(locale, userText, subjectPr
     };
   }
 
-  if (['all_natal_aspects', 'ephemeris'].includes(currentQueryState.canonicalRouteId)) {
+  if (['all_natal_aspects', 'ephemeris', 'daily_ephemeris'].includes(currentQueryState.canonicalRouteId)) {
     const fullListingPreference = await extractFullListingPreferenceWithAi(locale, userText, currentQueryState);
     if (typeof fullListingPreference.fullListing !== 'boolean') {
       return currentQueryState;
@@ -2123,6 +2223,36 @@ function normalizeExecutionFamily(value, routeKind = null) {
   return 'indexed_natal';
 }
 
+function buildExecutionIntentFromEmbeddingMatch(match) {
+  if (!match?.accepted || !EXECUTION_FAMILIES.has(match.expectedFamily)) {
+    return null;
+  }
+
+  return {
+    target: String(match.expectedFamily).startsWith('indexed_') ? 'indexed_facts' : 'mcp',
+    family: match.expectedFamily,
+    confidence: Math.max(0, Math.min(Number(match.score || 0), 1)),
+    reason: `Gemini embedding route match selected ${match.routeId}.`
+  };
+}
+
+function buildExecutionIntentFromCommonRoute(route) {
+  if (!route) {
+    return null;
+  }
+
+  const sourceKinds = Array.isArray(route.sourceKinds) ? route.sourceKinds : [];
+  const family = sourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+    ? 'indexed_monthly_transits'
+    : 'indexed_natal';
+  return {
+    target: 'indexed_facts',
+    family,
+    confidence: Math.max(0, Math.min(Number(route.score || 0), 1)),
+    reason: `Local common route match selected ${route.id}.`
+  };
+}
+
 async function routeConversationExecutionWithAi(locale, userText, route, subjectProfile, factAvailability, conversationContext, queryState = null) {
   const electionalConfig = inferElectionalRouteConfigFromQuestion(userText)
     || getElectionalRouteConfig(queryState?.canonicalRouteId);
@@ -2275,12 +2405,21 @@ function buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAv
     primaryProfileId: subjectProfile.profileId,
     secondaryProfileId: null,
     sourceKinds: commonRoute.sourceKinds,
+    factSourceTools: commonRoute.factSourceTools || [],
     categories: commonRoute.categories || [],
     tags: commonRoute.tags || [],
     cacheMonth: includesTransit ? (factAvailability?.indexedTransitCacheMonth || null) : null,
     limit: isMonthlyTransitOverview ? 20 : (isDailyTransitOverview ? 20 : (includesTransit ? 8 : 4)),
     reason: `Matched common question route ${commonRoute.id}`,
     answerStyle: commonRoute.answerStyle,
+      responseShape: commonRoute.responseShape || null,
+      cardLimit: commonRoute.cardLimit || null,
+      factLimit: commonRoute.factLimit || null,
+      responseInstructions: commonRoute.responseInstructions || null,
+      mcpLoadingMode: commonRoute.mcpLoadingMode || null,
+      deliveryMode: commonRoute.deliveryMode || null,
+      mediaAttachments: commonRoute.mediaAttachments || [],
+      blockedPhrases: commonRoute.blockedPhrases || [],
     commonRouteId: commonRoute.id
   };
 }
@@ -2312,6 +2451,14 @@ function buildCanonicalIndexedRoute(canonicalRoute, userText, subjectProfile, fa
       limit: 20,
       reason: `Matched canonical route ${canonicalRoute.id} for current month cache`,
       answerStyle: canonicalRoute.answerStyle,
+      responseShape: canonicalRoute.responseShape || 'synthesis',
+      cardLimit: canonicalRoute.cardLimit || null,
+      factLimit: canonicalRoute.factLimit || null,
+      responseInstructions: canonicalRoute.responseInstructions || null,
+      mcpLoadingMode: canonicalRoute.mcpLoadingMode || null,
+      deliveryMode: canonicalRoute.deliveryMode || null,
+      mediaAttachments: canonicalRoute.mediaAttachments || [],
+      blockedPhrases: canonicalRoute.blockedPhrases || [],
       commonRouteId: canonicalRoute.id
     };
   }
@@ -2331,6 +2478,14 @@ function buildCanonicalIndexedRoute(canonicalRoute, userText, subjectProfile, fa
       limit: 200,
       reason: `Matched canonical route ${canonicalRoute.id} for current month cache`,
       answerStyle: canonicalRoute.answerStyle,
+      responseShape: canonicalRoute.responseShape || 'synthesis',
+      cardLimit: canonicalRoute.cardLimit || null,
+      factLimit: canonicalRoute.factLimit || null,
+      responseInstructions: canonicalRoute.responseInstructions || null,
+      mcpLoadingMode: canonicalRoute.mcpLoadingMode || null,
+      deliveryMode: canonicalRoute.deliveryMode || null,
+      mediaAttachments: canonicalRoute.mediaAttachments || [],
+      blockedPhrases: canonicalRoute.blockedPhrases || [],
       commonRouteId: canonicalRoute.id
     };
   }
@@ -2357,6 +2512,7 @@ function buildPlannedRouteFromExecutionIntent(executionIntent, subjectProfile, f
       limit: Math.max(3, Math.min(requestedLimit || 10, 200)),
       reason: `Execution router selected ${executionIntent.family}`,
       answerStyle: 'personal_transits',
+      responseShape: queryState?.responseShape || 'synthesis',
       commonRouteId: queryState?.canonicalRouteId || null
     };
   }
@@ -2372,6 +2528,7 @@ function buildPlannedRouteFromExecutionIntent(executionIntent, subjectProfile, f
     limit: Math.max(3, Math.min(Number(queryState?.parameters?.limit || 5), 12)),
     reason: `Execution router selected ${executionIntent.family}`,
     answerStyle: 'natal_theme',
+    responseShape: queryState?.responseShape || 'synthesis',
     commonRouteId: queryState?.canonicalRouteId || null
   };
 }
@@ -3855,19 +4012,31 @@ function buildRelocationReplayQuestion(userText, queryState = null) {
   return baseQuestion;
 }
 
-function buildCanonicalToolPrompt(route, userText, subjectProfile, result, locale) {
+function buildCanonicalToolPrompt(route, userText, subjectProfile, result, locale, options = {}) {
+  const responseShape = route?.responseShape || options.responseShape || 'synthesis';
+  const shapeInstructions = getResponseShapeInstructions(responseShape);
+  const routeInstructions = String(route?.responseInstructions || options.responseInstructions || '').trim();
+  const cardLimit = Number(route?.cardLimit || options.cardLimit || 0);
   const systemInstruction = [
     'You are a concise professional astrologer.',
     `Always answer in ${LOCALE_INSTRUCTION[locale] || 'English'}.`,
     'Answer only from the grounded FreeAstro result provided.',
     'Do not invent facts, dates, placements, or meanings not present in the result.',
-    'Keep the answer concise and directly tied to the user question.'
+    'Keep the answer concise and directly tied to the user question.',
+    `Response shape: ${responseShape}.`,
+    ...shapeInstructions,
+    ...(responseShape === 'factual_cards' ? [
+      `Return ${cardLimit > 0 ? `up to ${cardLimit}` : 'a small set of'} short factual cards or visibly separated sections.`,
+      'Each card must be grounded in the tool result and should keep one distinct fact, timing, placement, or theme separate.'
+    ] : []),
+    ...(routeInstructions ? [`Route-specific response instructions: ${routeInstructions}`] : [])
   ].join('\n');
 
   const toolPayload = JSON.stringify(result?.structuredContent || result || {}, null, 2).slice(0, 12000);
   const userPrompt = [
     `Question: ${String(userText || '').trim()}`,
     `Canonical route: ${route.id}`,
+    `Response shape: ${responseShape}`,
     `Profile: ${subjectProfile?.profileName || 'Chart User'}`,
     'Grounded result:',
     toolPayload,
@@ -3876,6 +4045,82 @@ function buildCanonicalToolPrompt(route, userText, subjectProfile, result, local
   ].join('\n');
 
   return { systemInstruction, userPrompt };
+}
+
+async function maybeRewriteCanonicalPresentation(locale, route, userText, subjectProfile, toolCallResult, presented, responseMode) {
+  const routeInstructions = String(route?.responseInstructions || '').trim();
+  const responseShape = route?.responseShape || 'synthesis';
+  const shouldRewriteForShape = responseShape === 'factual_cards';
+  if (responseMode === 'raw' || (!routeInstructions && !shouldRewriteForShape)) {
+    return presented;
+  }
+
+  const currentText = typeof presented === 'string'
+    ? presented
+    : [
+        presented?.text,
+        ...(Array.isArray(presented?.textParts) ? presented.textParts : [])
+      ].filter(Boolean).join('\n\n');
+
+  if (!currentText) {
+    return presented;
+  }
+
+  const shapeInstructions = getResponseShapeInstructions(responseShape);
+  const cardLimit = Number(route?.cardLimit || 0);
+  const systemInstruction = [
+    'You are a concise professional astrologer.',
+    `Always answer in ${LOCALE_INSTRUCTION[locale] || 'English'}.`,
+    'Rewrite the already-grounded renderer output according to the route response shape and instructions.',
+    'Do not add facts, dates, placements, cities, scores, or interpretations that are not present in the renderer output or grounded tool result.',
+    'Preserve exact names, dates, signs, houses, places, and rankings when they appear.',
+    `Response shape: ${responseShape}.`,
+    ...shapeInstructions,
+    ...(responseShape === 'factual_cards' ? [
+      `Return ${cardLimit > 0 ? `up to ${cardLimit}` : 'a small set of'} short factual cards or visibly separated sections.`,
+      'Each card must be grounded in the renderer output or tool result and should keep one distinct fact, timing, placement, or theme separate.'
+    ] : []),
+    ...(routeInstructions ? [`Route-specific response instructions: ${routeInstructions}`] : [])
+  ].join('\n');
+  const toolPayload = JSON.stringify(toolCallResult?.structuredContent || toolCallResult || {}, null, 2).slice(0, 10000);
+  const prompt = [
+    `Question: ${String(userText || '').trim()}`,
+    `Canonical route: ${route?.id || 'unknown'}`,
+    `Profile: ${subjectProfile?.profileName || 'Chart User'}`,
+    '',
+    'Current renderer output:',
+    currentText,
+    '',
+    'Grounded tool result:',
+    toolPayload,
+    '',
+    'Rewrite the final answer now.'
+  ].join('\n');
+
+  try {
+    const text = await generatePlainText({
+      systemInstruction,
+      userText: prompt,
+      history: [],
+      model: getFastPathModelName()
+    });
+    const normalized = normalizeAssistantText(text || currentText);
+    return typeof presented === 'string'
+      ? normalized
+      : {
+          ...presented,
+          text: normalized,
+          textParts: undefined,
+          renderMode: 'plain'
+        };
+  } catch (error) {
+    info('canonical presentation rewrite failed', {
+      canonicalRouteId: route?.id || null,
+      responseShape,
+      error: error?.message || String(error)
+    });
+    return presented;
+  }
 }
 
 async function presentCanonicalToolResult(locale, route, userText, subjectProfile, toolCallResult, responseMode, channel = null, queryState = null) {
@@ -3977,8 +4222,22 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
     }
   }
 
-  if (route.id === 'ephemeris' && structuredPayload && queryState?.parameters?.fullListing) {
-    return buildEphemerisRawResponse(locale, structuredPayload, subjectProfile);
+  if ((route.id === 'ephemeris' || route.id === 'daily_ephemeris') && structuredPayload) {
+    const rendered = queryState?.parameters?.fullListing
+      ? buildEphemerisRawResponse(locale, structuredPayload, subjectProfile)
+      : {
+          text: '',
+          textParts: undefined,
+          renderMode: 'plain',
+          suppressTextResponse: true
+        };
+    return {
+      ...rendered,
+      externalLinks: [{
+        label: 'Customize ephemeris table',
+        url: buildEphemerisWebAppUrl(structuredPayload)
+      }]
+    };
   }
 
   if (responseMode === 'raw') {
@@ -4002,7 +4261,7 @@ async function presentCanonicalToolResult(locale, route, userText, subjectProfil
       return buildSolarReturnRawResponse(locale, structuredPayload, subjectProfile);
     }
 
-    if (route.id === 'ephemeris' && structuredPayload) {
+    if ((route.id === 'ephemeris' || route.id === 'daily_ephemeris') && structuredPayload) {
       return buildEphemerisRawResponse(locale, structuredPayload, subjectProfile);
     }
 
@@ -4088,7 +4347,7 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
     case 'career_signature':
     case 'money_pattern':
       return flatNatal ? {
-        toolName: 'v1_western_natal_insights',
+        toolName: route.toolTarget,
         requestArgs: flatNatal,
         cacheMonth: '',
         primaryProfileId: subjectProfile.profileId,
@@ -4118,7 +4377,7 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
         cacheMonth: currentMonthWindow.cacheMonth
       } : null);
       return flatNatal && selectedWindow ? {
-        toolName: 'v1_western_transits_timeline',
+        toolName: route.toolTarget,
         requestArgs: {
           natal: flatNatal,
           range_start: selectedWindow.rangeStart || selectedWindow.start,
@@ -4200,7 +4459,7 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
         usedDeterministicFallback: extractionMeta.usedDeterministicFallback
       });
       return {
-        toolName: 'v1_western_transits_search',
+        toolName: route.toolTarget,
         requestArgs,
         cacheMonth: '',
         primaryProfileId: subjectProfile.profileId,
@@ -4400,7 +4659,64 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
         secondaryProfileId: null
       } : { missing: ['body'] };
     }
+    case 'daily_ephemeris': {
+      const requestedDate = (
+        queryState?.parameters?.rangeStart &&
+        queryState?.parameters?.rangeStart === queryState?.parameters?.rangeEnd
+      )
+        ? queryState.parameters.rangeStart
+        : (parseExplicitSingleDateFromQuestion(userText, timezone)?.start || currentDate);
+      return {
+        toolName: route.toolTarget,
+        requestArgs: {
+          start: requestedDate,
+          end: requestedDate,
+          step: '1d',
+          format: 'json',
+          lat: subjectProfile?.lat || subjectProfile?.latitude || flatNatal?.lat,
+          lng: subjectProfile?.lng || subjectProfile?.longitude || flatNatal?.lng,
+          tz_str: timezone,
+          timezone,
+          include_houses: false,
+          include_angles: false,
+          include_speed: true,
+          include_retrograde: true,
+          include_aspects: true,
+          include_minor_aspects: false,
+          bodies: EPHEMERIS_DEFAULT_BODIES
+        },
+        cacheMonth: '',
+        primaryProfileId: subjectProfile.profileId,
+        secondaryProfileId: null
+      };
+    }
     case 'ephemeris': {
+      const explicitSingleDate = parseExplicitSingleDateFromQuestion(userText, timezone);
+      if (explicitSingleDate?.start) {
+        return {
+          toolName: route.toolTarget,
+          requestArgs: {
+            start: explicitSingleDate.start,
+            end: explicitSingleDate.end || explicitSingleDate.start,
+            step: '1d',
+            format: 'json',
+            lat: subjectProfile?.lat || subjectProfile?.latitude || flatNatal?.lat,
+            lng: subjectProfile?.lng || subjectProfile?.longitude || flatNatal?.lng,
+            tz_str: timezone,
+            timezone,
+            include_houses: false,
+            include_angles: false,
+            include_speed: true,
+            include_retrograde: true,
+            include_aspects: true,
+            include_minor_aspects: false,
+            bodies: EPHEMERIS_DEFAULT_BODIES
+          },
+          cacheMonth: '',
+          primaryProfileId: subjectProfile.profileId,
+          secondaryProfileId: null
+        };
+      }
       const parsedMonth = parseMonthFromQuestion(userText, timezone);
       const range = parsedMonth ? buildMonthDateRange(parsedMonth) : currentMonthWindow ? {
         start: currentMonthWindow.rangeStart,
@@ -4415,11 +4731,18 @@ async function buildCanonicalToolExecution(identity, route, userText, subjectPro
           start: range.start,
           end: range.end,
           step: '1d',
+          format: 'json',
+          lat: subjectProfile?.lat || subjectProfile?.latitude || flatNatal?.lat,
+          lng: subjectProfile?.lng || subjectProfile?.longitude || flatNatal?.lng,
+          tz_str: timezone,
           timezone,
+          include_houses: false,
+          include_angles: false,
           include_speed: true,
           include_retrograde: true,
           include_aspects: true,
-          include_minor_aspects: false
+          include_minor_aspects: false,
+          bodies: EPHEMERIS_DEFAULT_BODIES
         },
         cacheMonth: currentMonthWindow?.cacheMonth || '',
         primaryProfileId: subjectProfile.profileId,
@@ -4505,19 +4828,40 @@ async function executeCanonicalToolRoute(identity, route, userText, subjectProfi
     };
   }
 
-  const resolved = await toolCache.resolveCachedToolCall(identity, {
-    toolName: execution.toolName,
-    requestArgs: execution.requestArgs,
-    profile: subjectProfile,
-    primaryProfileId: execution.primaryProfileId,
-    secondaryProfileId: execution.secondaryProfileId,
-    questionText: userText,
-    cacheMonth: execution.cacheMonth || '',
-    source: 'canonical',
-    executor: (resolvedArgs) => mcpService.callToolByOriginalName(execution.toolName, resolvedArgs)
-  });
+  let resolved;
+  if (execution.toolName === toolCache.DAILY_HOROSCOPE_TOOL) {
+    resolved = await toolCache.ensureDailyHoroscope(identity, subjectProfile, {
+      locale,
+      questionText: userText,
+      source: 'canonical'
+    });
+  } else if (execution.toolName === 'rest_ephemeris') {
+    resolved = await toolCache.resolveCachedToolCall(identity, {
+      toolName: execution.toolName,
+      requestArgs: execution.requestArgs,
+      profile: subjectProfile,
+      primaryProfileId: execution.primaryProfileId,
+      secondaryProfileId: execution.secondaryProfileId,
+      questionText: userText,
+      cacheMonth: execution.cacheMonth || '',
+      source: 'canonical',
+      executor: (resolvedArgs) => getEphemeris(resolvedArgs)
+    });
+  } else {
+    resolved = await toolCache.resolveCachedToolCall(identity, {
+        toolName: execution.toolName,
+        requestArgs: execution.requestArgs,
+        profile: subjectProfile,
+        primaryProfileId: execution.primaryProfileId,
+        secondaryProfileId: execution.secondaryProfileId,
+        questionText: userText,
+        cacheMonth: execution.cacheMonth || '',
+        source: 'canonical',
+        executor: (resolvedArgs) => mcpService.callToolByOriginalName(execution.toolName, resolvedArgs)
+      });
+  }
 
-  const presented = await presentCanonicalToolResult(
+  const initialPresented = await presentCanonicalToolResult(
     locale,
     route,
     userText,
@@ -4527,10 +4871,21 @@ async function executeCanonicalToolRoute(identity, route, userText, subjectProfi
     identity?.channel || null,
     queryState
   );
+  const presented = await maybeRewriteCanonicalPresentation(
+    locale,
+    route,
+    userText,
+    subjectProfile,
+    resolved.result,
+    initialPresented,
+    responseMode
+  );
   return {
     text: typeof presented === 'string' ? presented : presented.text,
     textParts: typeof presented === 'string' ? undefined : presented.textParts,
     renderMode: typeof presented === 'string' ? 'plain' : (presented.renderMode || 'plain'),
+    suppressTextResponse: typeof presented === 'string' ? false : Boolean(presented.suppressTextResponse),
+    externalLinks: typeof presented === 'string' ? undefined : presented.externalLinks,
     usedTools: [{
       name: execution.toolName,
       args: execution.requestArgs,
@@ -5380,6 +5735,7 @@ function extractTransitSearchPayload(result) {
 function extractStructuredToolPayload(result) {
   const candidates = [
     result?.structuredContent,
+    result?.payload,
     result?.data,
     result?.structuredContent?.data,
     result
@@ -7837,6 +8193,8 @@ function buildDeterministicNatalResponse(locale, subjectProfile, userText, optio
   }
 
   if (
+    CONVERSATION_FOLLOW_UPS_ENABLED &&
+    !looksLikeStandaloneAstrologyQuery(userText) &&
     (looksLikeReferentialFollowUp(userText) || /\b(this|that|it|ce|cela|ça|ca|das|eso|esto)\b/i.test(String(userText || ''))) &&
     looksLikePlacementMeaningQuestion(userText) &&
     !looksLikeCurrentTransitCue(userText)
@@ -7856,11 +8214,11 @@ function buildDeterministicNatalResponse(locale, subjectProfile, userText, optio
     });
   }
 
-  const directPlacementFollowUp = looksLikePlanetOnlyPlacementFollowUp(
-    userText,
-    options.toolResults,
-    options.conversationContext
-  );
+  const directPlacementFollowUp = CONVERSATION_FOLLOW_UPS_ENABLED && looksLikePlanetOnlyPlacementFollowUp(
+      userText,
+      options.toolResults,
+      options.conversationContext
+    );
   const directPlacementQuestionText = directPlacementFollowUp
     ? userText
     : (options.effectiveUserQuestion || options.plannerQuestionText || userText);
@@ -8844,10 +9202,10 @@ function buildRawToolResultText(locale, toolName, result, options = {}) {
   if (toolName === 'v1_western_solar_calculate' && structuredPayload) {
     return buildSolarReturnRawResponse(locale, structuredPayload, subjectProfile);
   }
-  if (toolName === 'v1_ephemeris' && structuredPayload) {
+  if ((toolName === 'v1_ephemeris' || toolName === 'rest_ephemeris') && structuredPayload) {
     return buildEphemerisRawResponse(locale, structuredPayload, subjectProfile);
   }
-  if ((toolName === 'v1_horoscope_daily_personal' || toolName === 'v2_horoscope_daily_personal' || toolName === 'v1_horoscope_daily_sign') && structuredPayload) {
+  if ((toolName === 'v1_horoscope_daily_personal' || toolName === 'v2_horoscope_daily_personal' || toolName === 'rest_horoscope_daily_personal_text' || toolName === 'v1_horoscope_daily_sign') && structuredPayload) {
     return buildHoroscopeRawResponse(locale, structuredPayload, subjectProfile);
   }
   if ((toolName === 'v1_western_synastry_summary' || toolName === 'v1_western_synastry' || toolName === 'v1_western_synastry_horoscope')) {
@@ -9223,22 +9581,341 @@ function buildDeterministicFactAnswer(userText, facts, intent, subjectProfile, a
   return normalizeAssistantText([intro, body, closing].join('\n\n'));
 }
 
-function buildFactRewritePrompt(userText, facts, intent, subjectProfile, draftAnswer, answerStyle, responsePerspective) {
-  const factLines = facts.slice(0, 4).map((fact, index) => {
-    const parts = [
-      `${index + 1}. Title: ${fact.title || 'Untitled fact'}`,
-      `Evidence: ${fact.factText}`
-    ].filter(Boolean);
+function normalizeBlockedPhrases(values) {
+  return Array.isArray(values)
+    ? [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))]
+    : [];
+}
 
-    return parts.join('\n');
+function formatPromptAstroLabel(value) {
+  return String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatPromptDegree(value) {
+  const degree = Number(value);
+  if (!Number.isFinite(degree)) {
+    return null;
+  }
+  return `${degree.toFixed(2).replace(/\.?0+$/, '')}°`;
+}
+
+function formatKnownNatalPromptLines(subjectProfile, options = {}) {
+  if (!subjectProfile?.rawNatalPayload) {
+    return [];
+  }
+
+  const normalizedProfile = normalizeNatalProfile(subjectProfile.rawNatalPayload, subjectProfile.cityLabel, {
+    birthCountry: subjectProfile.birthCountry
+  });
+  const lines = [];
+  const formatPoint = (label, point, extra = '') => {
+    if (!point) {
+      return null;
+    }
+    return [
+      `${label}: ${formatPromptAstroLabel(point.sign)}`,
+      point.house ? `house ${point.house}` : null,
+      formatPromptDegree(point.degree),
+      extra
+    ].filter(Boolean).join(', ');
+  };
+
+  const sunLine = formatPoint('Sun', normalizedProfile.sun);
+  const moonLine = formatPoint('Moon', normalizedProfile.moon);
+  const risingLine = normalizedProfile.timeKnown
+    ? formatPoint('Ascendant/Rising', normalizedProfile.rising)
+    : 'Ascendant/Rising: unavailable without reliable birth time';
+
+  if (sunLine) lines.push(sunLine);
+  if (moonLine) lines.push(moonLine);
+  if (risingLine) lines.push(risingLine);
+
+  const aspectLimit = Math.max(1, Math.min(Number(options.aspectLimit || 5), 8));
+  const aspectLines = asArray(normalizedProfile.majorAspects)
+    .slice(0, aspectLimit)
+    .map((aspect, index) => {
+      const orb = formatPromptDegree(aspect.orb);
+      return `${index + 1}. ${formatPromptAstroLabel(aspect.p1)} ${formatPromptAstroLabel(aspect.type)} ${formatPromptAstroLabel(aspect.p2)}${orb ? `, orb ${orb}` : ''}`;
+    });
+
+  if (aspectLines.length > 0) {
+    lines.push('Top major aspects by tightest orb:');
+    lines.push(...aspectLines);
+  }
+
+  return lines;
+}
+
+function resolveRouteFactLimit(cardLimit, factLimit = null) {
+  const normalizedCardLimit = Math.max(1, Math.min(Number(cardLimit || 5), 12));
+  const defaultLimit = Math.max(normalizedCardLimit, Math.min(Math.max(normalizedCardLimit * 3, 12), 30));
+  return Math.max(normalizedCardLimit, Math.min(Number(factLimit || defaultLimit), 30));
+}
+
+function formatPromptFactPlanetPosition(evidence, planetId) {
+  const normalizedId = String(planetId || '').toLowerCase();
+  const position = asArray(evidence?.planet_positions)
+    .find((item) => String(item?.id || '').toLowerCase() === normalizedId);
+  if (!position) {
+    return humanizeRawKey(planetId);
+  }
+
+  const details = [
+    humanizeRawKey(position.id || planetId),
+    position.sign_id ? humanizeRawKey(position.sign_id) : null,
+    position.house ? `house ${position.house}` : null,
+    Number.isFinite(Number(position.degree_in_sign)) ? `${Number(position.degree_in_sign).toFixed(2).replace(/\.?0+$/, '')}°` : null
+  ].filter(Boolean);
+  return details.join(', ');
+}
+
+function formatPromptFactEvidenceDetails(fact) {
+  const { evidence, entities, raw } = getRawFactCore(fact);
+  const lines = [];
+  const configurationType = formatScalarValue(evidence.configuration_type)
+    || asArray(entities.configuration_types).map(formatScalarValue).filter(Boolean)[0]
+    || null;
+
+  if (configurationType) {
+    lines.push(`Configuration type: ${humanizeRawKey(configurationType)}.`);
+  }
+
+  const handleId = formatScalarValue(evidence.handle_id);
+  if (handleId) {
+    const normalizedConfigurationType = String(configurationType || '').toLowerCase();
+    const isBucket = normalizedConfigurationType.includes('bucket');
+    const isLocomotive = normalizedConfigurationType.includes('locomotive');
+    const handleLabel = isBucket
+      ? 'Handle planet'
+      : isLocomotive
+        ? 'Outlet/focus planet; do not call this a handle in a locomotive pattern'
+        : 'Focus planet';
+    lines.push(`${handleLabel}: ${formatPromptFactPlanetPosition(evidence, handleId)}.`);
+  }
+
+  if (Number.isFinite(Number(evidence.handle_separation_deg))) {
+    const normalizedConfigurationType = String(configurationType || '').toLowerCase();
+    const separationLabel = normalizedConfigurationType.includes('bucket')
+      ? 'Handle separation from the opposition focus'
+      : 'Outlet/focus separation from the opposition point';
+    lines.push(`${separationLabel}: ${Number(evidence.handle_separation_deg).toFixed(2).replace(/\.?0+$/, '')}°.`);
+  }
+
+  const largestGap = evidence.largest_gap && typeof evidence.largest_gap === 'object'
+    ? evidence.largest_gap
+    : null;
+  if (largestGap) {
+    const fromPlanet = formatScalarValue(largestGap.from_planet);
+    const toPlanet = formatScalarValue(largestGap.to_planet);
+    const gapSize = Number.isFinite(Number(largestGap.gap_deg))
+      ? `${Number(largestGap.gap_deg).toFixed(2).replace(/\.?0+$/, '')}°`
+      : null;
+    lines.push([
+      'Largest empty gap:',
+      fromPlanet && toPlanet ? `${humanizeRawKey(fromPlanet)} to ${humanizeRawKey(toPlanet)}` : null,
+      gapSize ? `(${gapSize})` : null
+    ].filter(Boolean).join(' ') + '.');
+    if (toPlanet) {
+      lines.push(`First coach / leading planet after the largest gap: ${formatPromptFactPlanetPosition(evidence, toPlanet)}.`);
+    }
+    if (fromPlanet) {
+      lines.push(`Last coach / trailing planet before the largest gap: ${formatPromptFactPlanetPosition(evidence, fromPlanet)}.`);
+    }
+  }
+
+  if (Number.isFinite(Number(evidence.occupied_span_deg))) {
+    lines.push(`Occupied planetary span: ${Number(evidence.occupied_span_deg).toFixed(2).replace(/\.?0+$/, '')}°.`);
+  }
+
+  if (Number.isFinite(Number(evidence.second_largest_gap_deg))) {
+    lines.push(`Second-largest gap: ${Number(evidence.second_largest_gap_deg).toFixed(2).replace(/\.?0+$/, '')}°.`);
+  }
+
+  if (evidence.qualifying_rule) {
+    lines.push(`Qualifying rule: ${String(evidence.qualifying_rule).trim()}.`);
+  }
+
+  const bodies = asArray(evidence.bodies?.length > 0 ? evidence.bodies : entities.planets)
+    .map(humanizeRawKey)
+    .filter(Boolean);
+  if (bodies.length > 0) {
+    lines.push(`Bodies involved: ${bodies.slice(0, 12).join(', ')}.`);
+  }
+
+  if (evidence.scope || evidence.sign_id || evidence.house || evidence.house_id) {
+    const location = [
+      evidence.scope ? `scope ${humanizeRawKey(evidence.scope)}` : null,
+      evidence.sign_id ? `sign ${humanizeRawKey(evidence.sign_id)}` : null,
+      evidence.house || evidence.house_id ? `house ${formatScalarValue(evidence.house || evidence.house_id)}` : null
+    ].filter(Boolean);
+    if (location.length > 0) {
+      lines.push(`Pattern location: ${location.join(', ')}.`);
+    }
+  }
+
+  if (evidence.axis_pair?.length > 0) {
+    lines.push(`Axis pair: ${asArray(evidence.axis_pair).map(humanizeRawKey).join(' / ')}.`);
+  }
+
+  if (evidence.duplicated_cusp_signs?.length > 0) {
+    lines.push(`Duplicated cusp signs: ${asArray(evidence.duplicated_cusp_signs).map(humanizeRawKey).join(', ')}.`);
+  }
+
+  if (raw?.detector) {
+    lines.push(`Detector: ${String(raw.detector).trim()}.`);
+  }
+
+  return lines.slice(0, 10);
+}
+
+function buildPromptFactBlock(fact, index) {
+  const parts = [
+    `${index + 1}. Title: ${fact.title || 'Untitled fact'}`,
+    `Evidence: ${fact.factText}`
+  ];
+  const details = formatPromptFactEvidenceDetails(fact);
+  if (details.length > 0) {
+    parts.push('Structured evidence:');
+    parts.push(...details.map((detail) => `- ${detail}`));
+  }
+  return parts.join('\n');
+}
+
+function collectRelatedChartPatternTags(facts) {
+  const allowed = new Set([
+    'locomotive',
+    'bucket',
+    'bowl',
+    'bundle',
+    'splash',
+    'seesaw',
+    'kite',
+    'grand_trine',
+    'grand_cross',
+    't_square',
+    'yod',
+    'mystic_rectangle',
+    'minor_grand_trine',
+    'talent_triangle',
+    'cradle',
+    'wedge',
+    'finger_of_god',
+    'rectangle',
+    'triangle',
+    'aspect_pattern',
+    'stellium',
+    'intercepted_sign',
+    'interceptions'
+  ]);
+  const tags = new Set();
+
+  for (const fact of facts) {
+    const { evidence, entities } = getRawFactCore(fact);
+    [
+      evidence.configuration_type,
+      evidence.configurationType,
+      ...asArray(entities.configuration_types),
+      ...asArray(entities.signature_types)
+    ]
+      .map(formatScalarValue)
+      .filter(Boolean)
+      .forEach((value) => {
+        const normalized = String(value).toLowerCase().replace(/[^a-z0-9:_-]+/g, '_');
+        if (allowed.has(normalized)) {
+          tags.add(normalized);
+        }
+      });
+
+    for (const tag of asArray(fact.tags)) {
+      const normalized = String(tag || '').toLowerCase();
+      if (allowed.has(normalized)) {
+        tags.add(normalized);
+      }
+    }
+  }
+
+  return [...tags].slice(0, 6);
+}
+
+async function enrichChartPatternRelatedFacts(identity, subjectProfile, searchInput, facts) {
+  if (
+    !subjectProfile?.profileId ||
+    !Array.isArray(facts) ||
+    facts.length === 0 ||
+    !asArray(searchInput?.sourceKinds).includes(factIndex.NATAL_SOURCE_KIND) ||
+    !asArray(searchInput?.categories).includes('chart_pattern')
+  ) {
+    return facts;
+  }
+
+  const relatedTags = collectRelatedChartPatternTags(facts);
+  if (relatedTags.length === 0) {
+    return facts;
+  }
+
+  const byKey = new Map(facts.map((fact) => [fact.factKey, fact]));
+  for (const tag of relatedTags) {
+    const relatedInput = {
+      primaryProfileId: subjectProfile.profileId,
+      secondaryProfileId: null,
+      sourceKinds: [factIndex.NATAL_SOURCE_KIND],
+      categories: [],
+      tags: [tag],
+      cacheMonth: null,
+      limit: 6
+    };
+    const relatedFacts = await traceConversationAsync(
+      identity,
+      'related chart structure fact search',
+      () => factIndex.searchFacts(identity, relatedInput),
+      {
+        sourceKinds: relatedInput.sourceKinds,
+        tags: relatedInput.tags,
+        limit: relatedInput.limit
+      }
+    );
+    for (const fact of relatedFacts) {
+      if (!byKey.has(fact.factKey)) {
+        byKey.set(fact.factKey, fact);
+      }
+    }
+  }
+
+  return [...byKey.values()]
+    .sort((left, right) => {
+      const importanceDelta = Number(right.importance || 0) - Number(left.importance || 0);
+      if (importanceDelta !== 0) {
+        return importanceDelta;
+      }
+      return String(left.title || '').localeCompare(String(right.title || ''));
+    });
+}
+
+function buildFactRewritePrompt(userText, facts, intent, subjectProfile, draftAnswer, answerStyle, responseShape, responsePerspective, options = {}) {
+  const cardLimit = Math.max(1, Math.min(Number(options.cardLimit || 4), 12));
+  const promptFactLimit = resolveRouteFactLimit(cardLimit, options.factLimit || cardLimit);
+  const factLines = facts.slice(0, promptFactLimit).map(buildPromptFactBlock);
+  const knownNatalLines = formatKnownNatalPromptLines(subjectProfile, {
+    aspectLimit: Math.max(5, cardLimit)
   });
 
   return [
     `Profile: ${subjectProfile?.profileName || 'Chart User'}`,
     `Intent: ${intent.id}`,
     `Answer style: ${answerStyle}`,
+    `Response shape: ${responseShape || 'synthesis'}`,
+    `Target factual card count: ${cardLimit}`,
+    `Indexed fact count available in prompt: ${factLines.length}`,
+    `Blocked phrases: ${normalizeBlockedPhrases(options.blockedPhrases).join(', ') || 'none'}`,
     `Response perspective: ${responsePerspective}`,
     `Question: ${String(userText || '').trim()}`,
+    '',
+    'Known exact natal chart basics:',
+    ...(knownNatalLines.length ? knownNatalLines : ['none']),
     '',
     'Grounded facts:',
     ...factLines,
@@ -9248,7 +9925,7 @@ function buildFactRewritePrompt(userText, facts, intent, subjectProfile, draftAn
   ].join('\n');
 }
 
-async function maybeRewriteFactAnswer(locale, userText, facts, intent, subjectProfile, draftAnswer, answerStyle, responsePerspective) {
+async function maybeRewriteFactAnswer(locale, userText, facts, intent, subjectProfile, draftAnswer, answerStyle, responseShape, responsePerspective, options = {}) {
   if (!draftAnswer) {
     return draftAnswer;
   }
@@ -9258,6 +9935,8 @@ async function maybeRewriteFactAnswer(locale, userText, facts, intent, subjectPr
     facts.some((fact) => fact.sourceKind === factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
   );
 
+  const hasRouteSpecificInstructions = Boolean(String(options.responseInstructions || '').trim());
+  const usesFactualCards = responseShape === 'factual_cards';
   const sharedInstructions = [
     'You are a top-quality professional astrologer.',
     'Write a short astrology answer from grounded facts only.',
@@ -9269,9 +9948,13 @@ async function maybeRewriteFactAnswer(locale, userText, facts, intent, subjectPr
     'Do not list raw taxonomy terms unless they are naturally readable astrology terms.',
     'Do not add any new facts, timings, placements, or interpretations.',
     'Answer the user question directly in the first sentence.',
-    'Base the answer on the strongest 2 or 3 grounded factors, not an exhaustive list.',
     'Avoid repetitive phrasing and avoid sounding mechanical.',
-    'Keep it to 2 or 3 short paragraphs.'
+    hasRouteSpecificInstructions || usesFactualCards
+      ? 'Follow the route-specific response instructions and requested response shape over generic paragraph-count guidance.'
+      : 'Base the answer on the strongest 2 or 3 grounded factors, not an exhaustive list.',
+    hasRouteSpecificInstructions || usesFactualCards
+      ? 'Keep each requested section short and grounded.'
+      : 'Keep it to 2 or 3 short paragraphs.'
   ];
 
   if (responsePerspective === 'third_person') {
@@ -9283,6 +9966,7 @@ async function maybeRewriteFactAnswer(locale, userText, facts, intent, subjectPr
 
   const natalInstructions = [
     'Interpret this as a natal reading.',
+    'Describe stable birth-chart patterns, not a current transit period.',
     'Lead with the core relationship, personality, emotional, or life-pattern theme that best answers the question.',
     'Show how the strongest chart factors work together instead of listing them separately.',
     'Translate the chart into lived tendencies, emotional patterns, needs, fears, strengths, or behavior.',
@@ -9301,55 +9985,182 @@ async function maybeRewriteFactAnswer(locale, userText, facts, intent, subjectPr
     'Keep the tone timely, dynamic, and present-focused.'
   ];
 
-  const styleInstructions = {
-    natal_theme: [
-      'Structure the answer around 2 or 3 major natal axes only.',
-      'Open with the main defining theme, then add the strongest supporting pattern.'
-    ],
-    planet_focus: [
-      'Focus first on the planet itself, then on its sign, house, and lived expression.',
-      'Do not drift into a full chart summary.'
-    ],
-    house_focus: [
-      'Structure the answer as: house topic, ruler or strongest house factor, then lived impact.',
-      'Do not reduce the answer to a generic planet-in-house reading.'
-    ],
-    aspect_focus: [
-      'Name the main aspect dynamic first, then explain how it affects personality or behavior.',
-      'Keep the answer centered on one dominant aspect pattern.'
-    ],
-    life_area_theme: [
-      'Prioritize the life area named in the question and rank the strongest 2 or 3 factors.',
-      'Avoid cataloguing signatures without linking them to lived experience.'
-    ],
-    current_sky: [
-      'Start with the dominant atmosphere of the sky today.',
-      'Then narrow into the most relevant personal activation if one is clearly present.'
-    ],
-    personal_transits: [
-      'Start with the dominant personal transit of the day or period.',
-      'Add at most two secondary activations and one short practical takeaway.'
-    ],
-    synastry: [
-      'Write as a comparison between two people, naming the dynamic clearly and directly.',
-      'Do not answer as if only one chart existed.'
-    ]
-  };
+  const styleInstructions = getAnswerStyleInstructions(answerStyle);
+  const shapeInstructions = getResponseShapeInstructions(responseShape || 'synthesis');
+  const routeShapeInstructions = String(options.responseInstructions || '').trim()
+    ? [`Route-specific response instructions: ${String(options.responseInstructions).trim()}`]
+    : [];
+  const blockedPhraseInstructions = normalizeBlockedPhrases(options.blockedPhrases).length > 0
+    ? [`Do not use these route-blocked phrases or close variants: ${normalizeBlockedPhrases(options.blockedPhrases).join(', ')}.`]
+    : [];
 
   const systemInstruction = [
     ...sharedInstructions,
     ...(isTransitReading ? transitInstructions : natalInstructions),
-    ...(styleInstructions[answerStyle] || [])
+    ...styleInstructions,
+    ...shapeInstructions,
+    ...routeShapeInstructions,
+    ...blockedPhraseInstructions
   ].join('\n');
 
   const rewritten = await generatePlainText({
     systemInstruction,
-    userText: buildFactRewritePrompt(userText, facts, intent, subjectProfile, draftAnswer, answerStyle, responsePerspective),
+    userText: buildFactRewritePrompt(userText, facts, intent, subjectProfile, draftAnswer, answerStyle, responseShape, responsePerspective, options),
     history: [],
     model: getFastPathModelName()
   });
 
   return normalizeAssistantText(rewritten || draftAnswer);
+}
+
+function buildIndexedFactUsedTools(searchInput, facts) {
+  return [{
+    name: 'search_cached_profile_facts',
+    args: searchInput,
+    result: {
+      available: true,
+      facts: facts.map((fact) => ({
+        category: fact.category,
+        title: fact.title,
+        tags: fact.tags,
+        fact_text: fact.factText,
+        fact_payload: fact.factPayload,
+        source_kind: fact.sourceKind,
+        cache_month: fact.cacheMonth
+      }))
+    }
+  }];
+}
+
+function extractProgressiveSectionSpecs(responseInstructions, cardLimit) {
+  const limit = Math.max(1, Math.min(Number(cardLimit || 5), 12));
+  const headings = String(responseInstructions || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .map((line) => line.replace(/\s+:/g, ':'))
+    .filter((line) => /^[A-Z][A-Za-z0-9 /&'()-]{1,80}:$/.test(line))
+    .map((line) => line.replace(/:$/, '').trim())
+    .filter(Boolean);
+
+  const uniqueHeadings = [...new Set(headings)];
+  if (uniqueHeadings.length > 0) {
+    return uniqueHeadings.slice(0, limit).map((heading, index) => ({
+      index,
+      heading,
+      label: heading
+    }));
+  }
+
+  return Array.from({ length: limit }, (_, index) => ({
+    index,
+    heading: `Section ${index + 1}`,
+    label: `Section ${index + 1}`
+  }));
+}
+
+async function generateProgressiveFactSections(identity, locale, userText, facts, intent, subjectProfile, draftAnswer, answerStyle, responseShape, responsePerspective, options = {}) {
+  const sectionSpecs = extractProgressiveSectionSpecs(options.responseInstructions || '', options.cardLimit || 5);
+  if (sectionSpecs.length === 0 || typeof options.onProgressSection !== 'function') {
+    return null;
+  }
+
+  const isTransitReading = (
+    intent.id === 'transits' ||
+    facts.some((fact) => fact.sourceKind === factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+  );
+  const styleInstructions = getAnswerStyleInstructions(answerStyle);
+  const shapeInstructions = getResponseShapeInstructions(responseShape || 'factual_cards');
+  const routeInstructions = String(options.responseInstructions || '').trim();
+  const blockedPhrases = normalizeBlockedPhrases(options.blockedPhrases);
+  const knownNatalLines = formatKnownNatalPromptLines(subjectProfile, {
+    aspectLimit: Math.max(5, Number(options.cardLimit || sectionSpecs.length || 5))
+  });
+  const factLimit = resolveRouteFactLimit(sectionSpecs.length, options.factLimit || facts.length);
+  const factLines = facts.slice(0, factLimit).map(buildPromptFactBlock);
+  const generatedSections = [];
+
+  const baseSystemInstruction = [
+    'You are a top-quality professional astrologer.',
+    'Generate exactly one section of a larger astrology answer.',
+    `Write in ${LOCALE_INSTRUCTION[locale] || 'English'}.`,
+    'Use plain text only.',
+    'Do not use markdown, bullets, numbering, or labels like Card 1.',
+    'Do not include the section heading unless the route-specific instructions explicitly ask for headings.',
+    'Use only the available chart facts and known exact chart basics.',
+    'Do not invent placements, aspects, timings, transits, facts, or interpretations.',
+    'Keep the section short: one concise paragraph unless the route asks otherwise.',
+    'Avoid repeating the same opening phrase used in earlier sections.',
+    responsePerspective === 'third_person'
+      ? `Refer to ${subjectProfile?.profileName || 'the person'} by name or as he/she/they, not as you/your.`
+      : 'Speak directly to the chart owner as you/your.',
+    isTransitReading
+      ? 'Interpret this as a transit or current-sky reading.'
+      : 'Interpret this as a natal reading. Describe stable birth-chart patterns, not a current transit period.',
+    ...styleInstructions,
+    ...shapeInstructions,
+    routeInstructions ? `Route-specific response instructions for the full answer:\n${routeInstructions}` : '',
+    blockedPhrases.length > 0
+      ? `Do not use these route-blocked phrases or close variants: ${blockedPhrases.join(', ')}.`
+      : ''
+  ].filter(Boolean).join('\n');
+
+  for (const spec of sectionSpecs) {
+    const previousSections = generatedSections.length > 0
+      ? generatedSections.map((section, index) => `${index + 1}. ${section}`).join('\n')
+      : 'none';
+    const prompt = [
+      `Question: ${String(userText || '').trim()}`,
+      `Profile: ${subjectProfile?.profileName || 'Chart User'}`,
+      `Full answer section count: ${sectionSpecs.length}`,
+      `Current section: ${spec.index + 1} of ${sectionSpecs.length}`,
+      `Current section purpose: ${spec.heading}`,
+      '',
+      'Known exact natal chart basics:',
+      ...(knownNatalLines.length ? knownNatalLines : ['none']),
+      '',
+      'Grounded facts:',
+      ...factLines,
+      '',
+      'Fallback draft for context:',
+      draftAnswer,
+      '',
+      'Already written sections:',
+      previousSections,
+      '',
+      `Write only the "${spec.heading}" section now.`
+    ].join('\n');
+
+    const sectionStartedAt = performance.now();
+    const generated = await traceConversationAsync(
+      identity,
+      `Gemini progressive section: ${spec.heading}`,
+      () => generatePlainText({
+        systemInstruction: baseSystemInstruction,
+        userText: prompt,
+        history: [],
+        model: getFastPathModelName()
+      }),
+      {
+        section: spec.index + 1,
+        totalSections: sectionSpecs.length,
+        heading: spec.heading
+      }
+    );
+    const text = normalizeAssistantText(generated || '').trim();
+    if (!text) {
+      continue;
+    }
+
+    generatedSections.push(text);
+    await options.onProgressSection(text, {
+      index: spec.index,
+      total: sectionSpecs.length,
+      heading: spec.heading,
+      durationMs: Math.round(performance.now() - sectionStartedAt)
+    });
+  }
+
+  return generatedSections.length > 0 ? generatedSections : null;
 }
 
 async function tryFactFastPath(identity, userText, intent, subjectProfile, factAvailability, locale, plannedRoute = null, options = {}) {
@@ -9359,6 +10170,8 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
 
   const startedAt = performance.now();
   const rawMode = options.responseMode === 'raw';
+  const routeCardLimit = Math.max(1, Math.min(Number(plannedRoute?.cardLimit || 5), 12));
+  const routeFactLimit = resolveRouteFactLimit(routeCardLimit, plannedRoute?.factLimit);
   const transitBiased = isTransitBiasedQuestion(userText)
     || plannedRoute?.sourceKinds?.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND);
   let searchInput = plannedRoute && plannedRoute.target === 'indexed_facts'
@@ -9368,22 +10181,50 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
         sourceKinds: Array.isArray(plannedRoute.sourceKinds) && plannedRoute.sourceKinds.length > 0
           ? plannedRoute.sourceKinds
           : buildFactSearchInput(intent, userText, subjectProfile, factAvailability).sourceKinds,
+        sourceToolNames: Array.isArray(plannedRoute.factSourceTools) ? plannedRoute.factSourceTools : [],
         categories: Array.isArray(plannedRoute.categories) ? plannedRoute.categories : [],
         tags: Array.isArray(plannedRoute.tags) ? plannedRoute.tags : [],
         cacheMonth: plannedRoute.sourceKinds?.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
           ? (plannedRoute.cacheMonth || factAvailability?.indexedTransitCacheMonth || null)
           : null,
-        limit: plannedRoute.limit || 4
+        limit: plannedRoute.responseShape === 'factual_cards'
+          ? Math.max(Number(plannedRoute.limit || 0), routeFactLimit)
+          : (plannedRoute.limit || 4)
       }
     : buildFactSearchInput(intent, userText, subjectProfile, factAvailability);
-  let facts = await factIndex.searchFacts(identity, searchInput);
+  let facts = await traceConversationAsync(
+    identity,
+    'search indexed facts',
+    () => factIndex.searchFacts(identity, searchInput),
+    {
+      sourceKinds: searchInput.sourceKinds,
+      sourceToolNames: searchInput.sourceToolNames,
+      categories: searchInput.categories,
+      tags: searchInput.tags,
+      limit: searchInput.limit
+    }
+  );
 
-  if (facts.length < 2 && searchInput.tags.length > 0) {
-    facts = await factIndex.searchFacts(identity, {
+  const shouldRelaxTagsForCardCount = (
+    plannedRoute?.responseShape === 'factual_cards' &&
+    facts.length < routeCardLimit
+  );
+  if ((facts.length < 2 || shouldRelaxTagsForCardCount) && searchInput.tags.length > 0) {
+    const relaxedInput = {
       ...searchInput,
       tags: [],
-      limit: intent.id === 'transits' ? 5 : 4
-    });
+      limit: intent.id === 'transits' ? Math.max(5, routeFactLimit) : Math.max(4, routeFactLimit)
+    };
+    facts = await traceConversationAsync(
+      identity,
+      'search indexed facts without tags',
+      () => factIndex.searchFacts(identity, relaxedInput),
+      {
+        sourceKinds: relaxedInput.sourceKinds,
+        categories: relaxedInput.categories,
+        limit: relaxedInput.limit
+      }
+    );
   }
 
   const needsPlannedSearch = !plannedRoute && (facts.length < 2 || intent.id === 'fallback');
@@ -9398,7 +10239,17 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
             : null
         };
         let selectedPlannedInput = normalizedPlannedInput;
-        let plannedFacts = await factIndex.searchFacts(identity, normalizedPlannedInput);
+        let plannedFacts = await traceConversationAsync(
+          identity,
+          'planned indexed fact search',
+          () => factIndex.searchFacts(identity, normalizedPlannedInput),
+          {
+            sourceKinds: normalizedPlannedInput.sourceKinds,
+            categories: normalizedPlannedInput.categories,
+            tags: normalizedPlannedInput.tags,
+            limit: normalizedPlannedInput.limit
+          }
+        );
 
         if (plannedFacts.length < 2) {
           const relaxedPlannedInput = {
@@ -9409,7 +10260,17 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
               : [],
             limit: normalizedPlannedInput.limit
           };
-          const relaxedFacts = await factIndex.searchFacts(identity, relaxedPlannedInput);
+          const relaxedFacts = await traceConversationAsync(
+            identity,
+            'relaxed planned fact search',
+            () => factIndex.searchFacts(identity, relaxedPlannedInput),
+            {
+              sourceKinds: relaxedPlannedInput.sourceKinds,
+              categories: relaxedPlannedInput.categories,
+              tags: relaxedPlannedInput.tags,
+              limit: relaxedPlannedInput.limit
+            }
+          );
           if (relaxedFacts.length > plannedFacts.length) {
             plannedFacts = relaxedFacts;
             selectedPlannedInput = relaxedPlannedInput;
@@ -9440,7 +10301,15 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
       cacheMonth: factAvailability.indexedTransitCacheMonth,
       limit: 5
     };
-    const broadTransitFacts = await factIndex.searchFacts(identity, broadTransitInput);
+    const broadTransitFacts = await traceConversationAsync(
+      identity,
+      'broad transit fact search',
+      () => factIndex.searchFacts(identity, broadTransitInput),
+      {
+        sourceKinds: broadTransitInput.sourceKinds,
+        limit: broadTransitInput.limit
+      }
+    );
     if (broadTransitFacts.length > facts.length) {
       searchInput = broadTransitInput;
       facts = broadTransitFacts;
@@ -9483,7 +10352,16 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
       const seenFactKeys = new Set();
 
       for (const targetedInput of targetedSearchInputs) {
-        const candidateFacts = await factIndex.searchFacts(identity, targetedInput);
+        const candidateFacts = await traceConversationAsync(
+          identity,
+          'targeted planet fact search',
+          () => factIndex.searchFacts(identity, targetedInput),
+          {
+            sourceKinds: targetedInput.sourceKinds,
+            tags: targetedInput.tags,
+            limit: targetedInput.limit
+          }
+        );
         for (const fact of candidateFacts) {
           if (seenFactKeys.has(fact.factKey)) {
             continue;
@@ -9526,7 +10404,15 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
       cacheMonth: null,
       limit: 12
     };
-    const broadNatalFacts = await factIndex.searchFacts(identity, broadNatalInput);
+    const broadNatalFacts = await traceConversationAsync(
+      identity,
+      'broad natal fact search',
+      () => factIndex.searchFacts(identity, broadNatalInput),
+      {
+        sourceKinds: broadNatalInput.sourceKinds,
+        limit: broadNatalInput.limit
+      }
+    );
     const currentConcreteCount = countConcreteRawNatalFacts(facts);
     const broadConcreteCount = countConcreteRawNatalFacts(broadNatalFacts);
     const currentUsableCount = countUsableRawCards(locale, facts, {
@@ -9548,11 +10434,14 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     }
   }
 
+  facts = await enrichChartPatternRelatedFacts(identity, subjectProfile, searchInput, facts);
+
   if (facts.length < 2) {
     return null;
   }
 
   const answerStyle = plannedRoute?.answerStyle || deriveDefaultAnswerStyle(intent, userText);
+  const responseShape = plannedRoute?.responseShape || 'synthesis';
   const topMonthlyTransitOverview = isMonthlyTransitListingRoute(plannedRoute);
   const transitTimeframe = options.queryState?.parameters?.timeframe
     || (/\b(today|aujourd'hui|aujourdhui|du jour|heute|hoy)\b/i.test(String(userText || '')) ? 'current_day' : null)
@@ -9573,7 +10462,7 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     isBroadRawNatalQuestion(userText, answerStyle) &&
     !structureFocusedRawNatal
   )
-    ? await factIndex.searchFacts(identity, {
+    ? await traceConversationAsync(identity, 'aspect fact search', () => factIndex.searchFacts(identity, {
         primaryProfileId: subjectProfile.profileId,
         secondaryProfileId: null,
         sourceKinds: [factIndex.NATAL_SOURCE_KIND],
@@ -9581,8 +10470,13 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
         tags: ['kind:aspect'],
         cacheMonth: null,
         limit: 5
+      }), {
+        sourceKinds: [factIndex.NATAL_SOURCE_KIND],
+        tags: ['kind:aspect'],
+        limit: 5
       })
     : [];
+  const draftStartedAt = performance.now();
   const draftAnswer = rawMode
     ? (
         topMonthlyTransitOverview
@@ -9630,7 +10524,7 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
                         userText,
                         subjectProfile,
                         answerStyle,
-                        limit: 5
+                        limit: routeCardLimit
                       })
               )
             )
@@ -9641,6 +10535,11 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
         routeId: requestedMonthlyPlanet ? 'monthly_transits_for_planet' : null,
         queryState: options.queryState || null
       });
+  traceConversationStep(identity, 'build fact draft answer', draftStartedAt, {
+    facts: facts.length,
+    responseShape,
+    rawMode
+  });
   if (!draftAnswer) {
     return null;
   }
@@ -9689,13 +10588,23 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
       })
     : null;
 
+  const usedTools = buildIndexedFactUsedTools(searchInput, facts);
   let rewrittenAnswer = draftAnswer;
   let rewriteDurationMs = 0;
+  const shouldGenerateProgressively = (
+    !rawMode &&
+    !topMonthlyTransitOverview &&
+    responseShape === 'factual_cards' &&
+    plannedRoute?.deliveryMode === 'progressive_generate_sections' &&
+    typeof options.onProgressSection === 'function'
+  );
 
-  if (!rawMode && !topMonthlyTransitOverview) {
+  if (shouldGenerateProgressively) {
+    const deliveredSections = [];
     try {
       const rewriteStartedAt = performance.now();
-      rewrittenAnswer = await maybeRewriteFactAnswer(
+      const generatedSections = await generateProgressiveFactSections(
+        identity,
         locale,
         userText,
         facts,
@@ -9703,7 +10612,81 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
         subjectProfile,
         draftAnswer,
         answerStyle,
-        options.responsePerspective || 'second_person'
+        responseShape,
+        options.responsePerspective || 'second_person',
+        {
+          cardLimit: routeCardLimit,
+          factLimit: routeFactLimit,
+          responseInstructions: plannedRoute?.responseInstructions || null,
+          blockedPhrases: plannedRoute?.blockedPhrases || [],
+          onProgressSection: async (sectionText, meta) => {
+            deliveredSections.push(sectionText);
+            await options.onProgressSection(sectionText, meta);
+          }
+        }
+      );
+      if (generatedSections?.length > 0) {
+        rewrittenAnswer = generatedSections.join('\n\n');
+        rewriteDurationMs = Math.round(performance.now() - rewriteStartedAt);
+        return {
+          text: rewrittenAnswer,
+          textParts: generatedSections,
+          alreadyDelivered: true,
+          renderMode: 'plain',
+          usedTools,
+          durationMs: Math.round(performance.now() - startedAt),
+          rewriteDurationMs
+        };
+      }
+    } catch (error) {
+      info('conversation progressive fact generation failed', {
+        stateKey: `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`,
+        intent: intent.id,
+        error: error.message || 'unknown'
+      });
+      if (deliveredSections.length > 0) {
+        rewrittenAnswer = deliveredSections.join('\n\n');
+        return {
+          text: rewrittenAnswer,
+          textParts: deliveredSections,
+          alreadyDelivered: true,
+          renderMode: 'plain',
+          usedTools,
+          durationMs: Math.round(performance.now() - startedAt),
+          rewriteDurationMs: Math.round(performance.now() - startedAt)
+        };
+      }
+    }
+  }
+
+  if (!rawMode && !topMonthlyTransitOverview) {
+    try {
+      const rewriteStartedAt = performance.now();
+      rewrittenAnswer = await traceConversationAsync(
+        identity,
+        'Gemini fact answer rewrite',
+        () => maybeRewriteFactAnswer(
+          locale,
+          userText,
+          facts,
+          intent,
+          subjectProfile,
+          draftAnswer,
+          answerStyle,
+          responseShape,
+          options.responsePerspective || 'second_person',
+          {
+            cardLimit: plannedRoute?.responseShape === 'factual_cards' ? routeCardLimit : 4,
+            factLimit: routeFactLimit,
+            responseInstructions: plannedRoute?.responseInstructions || null,
+            blockedPhrases: plannedRoute?.blockedPhrases || []
+          }
+        ),
+        {
+          facts: facts.length,
+          responseShape,
+          cardLimit: routeCardLimit
+        }
       );
       rewriteDurationMs = Math.round(performance.now() - rewriteStartedAt);
     } catch (error) {
@@ -9715,30 +10698,24 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
     }
   }
 
+  const factualCardTextParts = (
+    !telegramRawTransitTable &&
+    !telegramRawNatalHtmlParts &&
+    !rawMode &&
+    responseShape === 'factual_cards'
+  )
+    ? buildFactualCardTextParts(rewrittenAnswer, routeCardLimit)
+    : undefined;
+
   return {
     text: telegramRawTransitTable || telegramRawNatalHtmlParts?.[0] || rewrittenAnswer,
-    textParts: telegramRawTransitTable ? undefined : (telegramRawNatalHtmlParts || undefined),
+    textParts: telegramRawTransitTable ? undefined : (telegramRawNatalHtmlParts || factualCardTextParts),
     renderMode: telegramRawTransitTable
       ? 'telegram_pre'
       : telegramRawNatalHtmlParts
       ? 'telegram_html'
       : (rawMode && intent.id === 'transits' ? 'telegram_pre' : 'plain'),
-    usedTools: [{
-      name: 'search_cached_profile_facts',
-      args: searchInput,
-      result: {
-        available: true,
-        facts: facts.map((fact) => ({
-          category: fact.category,
-          title: fact.title,
-          tags: fact.tags,
-          fact_text: fact.factText,
-          fact_payload: fact.factPayload,
-          source_kind: fact.sourceKind,
-          cache_month: fact.cacheMonth
-        }))
-      }
-    }],
+    usedTools,
     durationMs: Math.round(performance.now() - startedAt),
     rewriteDurationMs
   };
@@ -9754,6 +10731,10 @@ async function rewriteGroundedToolAnswer(locale, userText, draftText, toolResult
     return draftText;
   }
 
+  const responseShape = options.responseShape || 'synthesis';
+  const shapeInstructions = getResponseShapeInstructions(responseShape);
+  const routeInstructions = String(options.responseInstructions || '').trim();
+  const cardLimit = Number(options.cardLimit || 0);
   const systemInstruction = [
     options.responseMode === 'raw'
       ? 'You filter and rewrite grounded astrology tool output into a factual user-facing answer.'
@@ -9764,6 +10745,13 @@ async function rewriteGroundedToolAnswer(locale, userText, draftText, toolResult
     `Response perspective: ${options.responsePerspective || 'second_person'}.`,
     `Execution family: ${options.executionFamily || 'unknown'}.`,
     `Response mode: ${options.responseMode || 'interpreted'}.`,
+    `Response shape: ${responseShape}.`,
+    ...shapeInstructions,
+    ...(responseShape === 'factual_cards' ? [
+      `Return ${cardLimit > 0 ? `up to ${cardLimit}` : 'a small set of'} short factual cards or visibly separated sections.`,
+      'Each card must be grounded in the tool result and should keep one distinct fact, timing, placement, or theme separate.'
+    ] : []),
+    ...(routeInstructions ? [`Route-specific response instructions: ${routeInstructions}`] : []),
     `Structured refinements: ${JSON.stringify(options.queryState?.parameters || {})}.`,
     'First apply the user-requested filters and scope to the grounded data.',
     'You may omit grounded items that do not match the user request.',
@@ -9973,6 +10961,13 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
         lines,
         { itemType: 'line', chunkSize: 18 }
       ),
+      suppressTextResponse: true,
+      mediaPayload: {
+        natalAspects: {
+          title,
+          lines
+        }
+      },
       usedTools: !minorOnly && indexedLines.length > 0
         ? [{
             name: 'search_cached_profile_facts',
@@ -10468,47 +11463,179 @@ function summarizeIdentityForLogs(identity) {
   };
 }
 
-async function answerConversation(identity, userText) {
+function traceConversationStep(identity, label, startedAt, extra = {}) {
+  if (typeof identity?.__simulatorTrace !== 'function') {
+    return;
+  }
+  identity.__simulatorTrace(label, startedAt, extra);
+}
+
+async function traceConversationAsync(identity, label, fn, extra = {}) {
+  const startedAt = performance.now();
+  try {
+    const result = await fn();
+    traceConversationStep(identity, label, startedAt, extra);
+    return result;
+  } catch (error) {
+    traceConversationStep(identity, label, startedAt, {
+      ...extra,
+      error: true,
+      errorMessage: error?.message || String(error)
+    });
+    throw error;
+  }
+}
+
+function shouldLoadMcpBeforeFastPath(mode, plannedRoute, executionIntent) {
+  const normalizedMode = String(mode || 'auto');
+  if (normalizedMode === 'never' || normalizedMode === 'after_fast_path') {
+    return false;
+  }
+  if (normalizedMode === 'before_fast_path') {
+    return true;
+  }
+  return executionIntent?.target === 'mcp' && plannedRoute?.target !== 'indexed_facts';
+}
+
+function shouldLoadMcpAfterFastPath(mode) {
+  return String(mode || 'auto') !== 'never';
+}
+
+function resolveRouteMediaAttachments(...routes) {
+  const attachments = [];
+  for (const route of routes) {
+    if (!Array.isArray(route?.mediaAttachments)) {
+      continue;
+    }
+    for (const attachment of route.mediaAttachments) {
+      const value = String(attachment || '').trim();
+      if (value && !attachments.includes(value)) {
+        attachments.push(value);
+      }
+    }
+  }
+  return attachments;
+}
+
+function buildProgressiveTextParts(text, deliveryMode) {
+  if (deliveryMode !== 'progressive_sections') {
+    return undefined;
+  }
+  const parts = splitConversationReply(text, 90, 1400);
+  return parts.length > 1 ? parts : undefined;
+}
+
+function buildFactualCardTextParts(text, cardLimit) {
+  const limit = Math.max(1, Math.min(Number(cardLimit || 5), 12));
+  const sections = normalizeAssistantText(text)
+    .split(/\n{2,}/)
+    .map((section) => section.trim())
+    .filter(Boolean);
+
+  if (sections.length <= 1) {
+    return undefined;
+  }
+
+  if (sections.length <= limit) {
+    return sections;
+  }
+
+  return [
+    ...sections.slice(0, Math.max(1, limit - 1)),
+    sections.slice(Math.max(1, limit - 1)).join('\n\n')
+  ];
+}
+
+async function answerConversation(identity, userText, options = {}) {
   const chatState = getChatState(identity);
   const locale = getLocale(chatState);
   const responseMode = 'interpreted';
   const conversationContext = getConversationContext(identity);
-  const isDeterministicPlacementMeaningFollowUp = (
+  const followUpsEnabled = CONVERSATION_FOLLOW_UPS_ENABLED;
+  const isDeterministicPlacementMeaningFollowUp = followUpsEnabled && (
     (looksLikeReferentialFollowUp(userText) || /\b(this|that|it|ce|cela|ça|ca|das|eso|esto)\b/i.test(String(userText || ''))) &&
     looksLikePlacementMeaningQuestion(userText) &&
     !looksLikeCurrentTransitCue(userText) &&
     Boolean(getRecentPlacementPointId(chatState.lastToolResults, conversationContext))
   );
+  const matchedCommonRouteForFollowUpPolicy = getMatchedCommonRouteForFollowUpPolicy(userText);
+  const matchedRouteIsStandalone = matchedCommonRouteForFollowUpPolicy?.followUpPolicy === 'standalone';
   const shouldBypassFollowUpInheritance = isBroadRelocationRecommendationQuestion(userText)
+    || matchedRouteIsStandalone
     || looksLikeStandaloneAstrologyQuery(userText)
     || looksLikeDirectPlanetPlacementQuestion(userText)
     || looksLikeRisingPlacementQuestion(userText)
-    || looksLikePlanetOnlyPlacementFollowUp(userText, chatState.lastToolResults, conversationContext)
+    || (followUpsEnabled && looksLikePlanetOnlyPlacementFollowUp(userText, chatState.lastToolResults, conversationContext))
     || isDeterministicPlacementMeaningFollowUp;
-  let explicitFollowUp = shouldBypassFollowUpInheritance
+  const followUpStartedAt = performance.now();
+  let explicitFollowUp = (!followUpsEnabled || shouldBypassFollowUpInheritance)
     ? null
     : detectExplicitFollowUp(userText, conversationContext, chatState.history);
-  if (!explicitFollowUp && !shouldBypassFollowUpInheritance) {
+  if (followUpsEnabled && !explicitFollowUp && !shouldBypassFollowUpInheritance) {
     explicitFollowUp = detectArtifactFollowUpLocally(userText, conversationContext, chatState.history);
   }
-  if (!explicitFollowUp && !shouldBypassFollowUpInheritance) {
+  if (followUpsEnabled && !explicitFollowUp && !shouldBypassFollowUpInheritance) {
     explicitFollowUp = await resolveArtifactFollowUpWithAi(locale, userText, conversationContext, chatState.history, null);
   }
-  if (!explicitFollowUp && !shouldBypassFollowUpInheritance) {
+  if (followUpsEnabled && !explicitFollowUp && !shouldBypassFollowUpInheritance) {
     explicitFollowUp = await resolveFollowUpWithAi(locale, userText, conversationContext, null);
   }
+  traceConversationStep(identity, 'follow-up detection', followUpStartedAt, {
+    inherited: Boolean(explicitFollowUp),
+    bypassed: Boolean(shouldBypassFollowUpInheritance),
+    enabled: followUpsEnabled
+  });
+
+  if (
+    !followUpsEnabled &&
+    looksLikeContextDependentFollowUp(userText) &&
+    !looksLikeStandaloneAstrologyQuery(userText) &&
+    !looksLikeDirectPlanetPlacementQuestion(userText) &&
+    !looksLikeRisingPlacementQuestion(userText)
+  ) {
+    const text = buildFollowUpsDisabledResponse(locale);
+    pushHistory(identity, 'user', userText);
+    pushHistory(identity, 'model', text);
+    setLastToolResults(identity, []);
+    setConversationContext(identity, {
+      lastReferencedProfileId: null,
+      lastComparedProfileId: null,
+      lastResponseProfileId: null,
+      lastResponseRoute: 'follow_up_disabled',
+      lastIntentId: 'follow_up_disabled',
+      lastExecutionTarget: null,
+      lastResultFamily: null,
+      lastAnswerStyle: null,
+      lastResolvedQuestion: userText,
+      lastCommonRouteId: null,
+      lastQueryState: null,
+      lastAnswerArtifact: null
+    }, { notify: false });
+    return {
+      text,
+      usedTools: [],
+      intent: 'follow_up_disabled'
+    };
+  }
+
   const routeSeedText = explicitFollowUp?.rewrittenQuestion || userText;
+  const localRouteStartedAt = performance.now();
   const detectedRoute = detectConversationRoute(routeSeedText, chatState.history);
-  const inheritedRoute = inheritRouteFromConversation(detectedRoute, conversationContext, userText);
+  const inheritedRoute = followUpsEnabled
+    ? inheritRouteFromConversation(detectedRoute, conversationContext, userText)
+    : detectedRoute;
+  traceConversationStep(identity, 'local route detection', localRouteStartedAt, {
+    routeKind: inheritedRoute?.kind || detectedRoute?.kind || null
+  });
   let route = inheritedRoute;
-  let commonRoute = null;
+  let commonRoute = matchedCommonRouteForFollowUpPolicy || null;
   let canonicalRoute = null;
-  let executionIntent = null;
+  let executionIntent = buildExecutionIntentFromCommonRoute(commonRoute);
   let plannerQuestionText = explicitFollowUp?.rewrittenQuestion || resolveQuestionForPlanner(route, userText, chatState.history);
   const stateKey = chatState.stateKey || `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`;
 
-  await profiles.ensureHydrated(identity);
-  const activeProfile = await profiles.getActiveProfile(identity);
+  await traceConversationAsync(identity, 'profile hydration', () => profiles.ensureHydrated(identity));
+  const activeProfile = await traceConversationAsync(identity, 'load active profile', () => profiles.getActiveProfile(identity));
 
   const intent = route.intent;
 
@@ -10548,7 +11675,11 @@ async function answerConversation(identity, userText) {
     };
   }
 
-  const targetContext = await resolveConversationTargets(identity, userText, route, activeProfile);
+  const targetContext = await traceConversationAsync(
+    identity,
+    'resolve target profile',
+    () => resolveConversationTargets(identity, userText, route, activeProfile)
+  );
   const subjectProfile = targetContext.subjectProfile || activeProfile;
   const secondaryProfile = targetContext.secondaryProfile || null;
   const effectiveUserQuestion = buildEffectiveUserQuestion(route, userText, plannerQuestionText, subjectProfile);
@@ -10628,11 +11759,15 @@ async function answerConversation(identity, userText) {
     };
   }
 
+  const deterministicStartedAt = performance.now();
   const deterministicNatalResult = buildDeterministicNatalResponse(locale, subjectProfile, userText, {
     effectiveUserQuestion,
     plannerQuestionText,
     toolResults: chatState.lastToolResults,
     conversationContext
+  });
+  traceConversationStep(identity, 'deterministic natal check', deterministicStartedAt, {
+    matched: Boolean(deterministicNatalResult?.text)
   });
   if (deterministicNatalResult?.text) {
     const usedTools = deterministicNatalResult.usedTools || [];
@@ -10699,46 +11834,81 @@ async function answerConversation(identity, userText) {
     };
   }
 
+  const declarationsStartedAt = performance.now();
   const localDeclarations = createLocalFunctionDeclarations();
-  await toolCache.ensureNatalInsights(identity, subjectProfile, { source: 'runtime' });
+  traceConversationStep(identity, 'prepare local tools', declarationsStartedAt, {
+    count: Array.isArray(localDeclarations) ? localDeclarations.length : 0
+  });
+  await traceConversationAsync(
+    identity,
+    'ensure natal cache',
+    () => toolCache.ensureNatalInsights(identity, subjectProfile, { source: 'runtime' })
+  );
   if (route.kind === 'astrology_transits') {
-    await toolCache.ensureMonthlyTransitInsights(identity, subjectProfile, { source: 'runtime' });
+    await traceConversationAsync(
+      identity,
+      'ensure monthly transit cache',
+      () => toolCache.ensureMonthlyTransitInsights(identity, subjectProfile, { source: 'runtime' })
+    );
   }
-  const monthlyTransitCache = await toolCache.getCurrentMonthTransitCache(identity, subjectProfile);
+  const monthlyTransitCache = await traceConversationAsync(
+    identity,
+    'load monthly transit cache',
+    () => toolCache.getCurrentMonthTransitCache(identity, subjectProfile)
+  );
   const factAvailability = subjectProfile.profileId === getChatState(identity).activeProfileId
-    ? await factIndex.syncActiveProfileFactAvailability(identity, subjectProfile, {
+    ? await traceConversationAsync(identity, 'sync fact availability', () => factIndex.syncActiveProfileFactAvailability(identity, subjectProfile, {
         cacheMonth: monthlyTransitCache?.cacheMonth || null,
         notify: false
-      })
-    : await factIndex.getProfileFactAvailability(identity, subjectProfile, {
+      }))
+    : await traceConversationAsync(identity, 'load fact availability', () => factIndex.getProfileFactAvailability(identity, subjectProfile, {
         cacheMonth: monthlyTransitCache?.cacheMonth || null
-      });
+      }));
+
+  let embeddingRouteMatch = null;
+  if (route.kind !== 'system_meta' && route.kind !== 'profile_management' && route.kind !== 'clarification') {
+    embeddingRouteMatch = await traceConversationAsync(
+      identity,
+      'embedding route match',
+      () => matchRouteByEmbedding(effectiveUserQuestion, { topK: 8 })
+    );
+    if (embeddingRouteMatch?.accepted) {
+      if (embeddingRouteMatch.definition.kind === 'canonical') {
+        canonicalRoute = embeddingRouteMatch.route;
+      } else if (embeddingRouteMatch.definition.kind === 'common') {
+        commonRoute = embeddingRouteMatch.route;
+      }
+      executionIntent = buildExecutionIntentFromEmbeddingMatch(embeddingRouteMatch);
+    }
+  }
 
   if (route.kind !== 'system_meta' && route.kind !== 'profile_management' && route.kind !== 'clarification') {
-    try {
-      executionIntent = await routeConversationExecutionWithAi(
-        locale,
-        effectiveUserQuestion,
-        route,
-        subjectProfile,
-        factAvailability,
-        conversationContext,
-        currentQueryState
-      );
-    } catch (error) {
-      if (error?.code === 'EXECUTION_ROUTE_AI_UNAVAILABLE') {
-        const text = buildExecutionRouterUnavailableResponse(locale);
-        pushHistory(identity, 'user', userText);
-        pushHistory(identity, 'model', text);
-        setLastToolResults(identity, []);
-        persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, null, text, []);
-        return {
-          text,
-          usedTools: [],
-          intent: route.kind
-        };
+    if (!executionIntent) {
+      try {
+        executionIntent = await traceConversationAsync(identity, 'AI execution router', () => routeConversationExecutionWithAi(
+          locale,
+          effectiveUserQuestion,
+          route,
+          subjectProfile,
+          factAvailability,
+          conversationContext,
+          currentQueryState
+        ));
+      } catch (error) {
+        if (error?.code === 'EXECUTION_ROUTE_AI_UNAVAILABLE') {
+          const text = buildExecutionRouterUnavailableResponse(locale);
+          pushHistory(identity, 'user', userText);
+          pushHistory(identity, 'model', text);
+          setLastToolResults(identity, []);
+          persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, null, text, []);
+          return {
+            text,
+            usedTools: [],
+            intent: route.kind
+          };
+        }
+        throw error;
       }
-      throw error;
     }
 
     if (!executionIntent) {
@@ -10795,9 +11965,13 @@ async function answerConversation(identity, userText) {
     }
 
     const canonicalHintRoute = buildCanonicalHintRouteForExecutionFamily(route, executionIntent?.family);
-    if (!canonicalRoute) {
+    if (!canonicalRoute && !commonRoute) {
       try {
-        canonicalRoute = await resolveCanonicalCommonRouteWithAi(locale, plannerQuestionText, canonicalHintRoute);
+          canonicalRoute = await traceConversationAsync(
+            identity,
+            'AI canonical route resolver',
+            () => resolveCanonicalCommonRouteWithAi(locale, plannerQuestionText, canonicalHintRoute)
+          );
       } catch (error) {
         if (error?.code !== 'CANONICAL_ROUTE_AI_UNAVAILABLE') {
           throw error;
@@ -10826,6 +12000,10 @@ async function answerConversation(identity, userText) {
       }
     }
 
+    if (!canonicalRoute && commonRoute) {
+      canonicalRoute = findCanonicalRouteForCommonRoute(commonRoute);
+    }
+
     if (canonicalRoute) {
       route = applyCanonicalRoute(route, canonicalRoute, plannerQuestionText);
       plannerQuestionText = canonicalRoute.responseShape === 'full_listing' || route.kind === 'astrology_relocation'
@@ -10834,6 +12012,28 @@ async function answerConversation(identity, userText) {
       commonRoute = canonicalRoute?.commonRouteId
         ? getCommonQuestionRouteById(canonicalRoute.commonRouteId)
         : null;
+      currentQueryState = buildStructuredQueryState({
+        route,
+        canonicalRoute,
+        commonRoute,
+        userText,
+        plannerQuestionText: effectiveUserQuestion,
+        conversationContext,
+        subjectProfile,
+        explicitFollowUp,
+        timezone: subjectProfile?.timezone || subjectProfile?.birthTimezone || subjectProfile?.rawNatalPayload?.subject?.location?.timezone || 'UTC'
+      });
+    }
+
+    if (!canonicalRoute && commonRoute) {
+      route = {
+        ...route,
+        kind: commonRoute.routeKind || route.kind,
+        intent: detectConversationIntent(commonRoute.intentSample || plannerQuestionText),
+        answerStyle: commonRoute.answerStyle || route.answerStyle,
+        commonRouteId: commonRoute.id,
+        commonRouteScore: embeddingRouteMatch?.score || route.commonRouteScore || null
+      };
       currentQueryState = buildStructuredQueryState({
         route,
         canonicalRoute,
@@ -10857,6 +12057,9 @@ async function answerConversation(identity, userText) {
     canonicalRouteId: canonicalRoute?.id || currentQueryState?.canonicalRouteId || null,
     executionTarget: executionIntent?.target || null,
     executionFamily: executionIntent?.family || null,
+    embeddingRouteId: embeddingRouteMatch?.routeId || null,
+    embeddingRouteAccepted: Boolean(embeddingRouteMatch?.accepted),
+    embeddingRouteScore: embeddingRouteMatch?.score || null,
     subjectProfileId: subjectProfile?.profileId || null,
     subjectProfileName: subjectProfile?.profileName || null,
     secondaryProfileId: secondaryProfile?.profileId || null,
@@ -10910,11 +12113,15 @@ async function answerConversation(identity, userText) {
     }
   }
 
-  currentQueryState = await maybeRefineStructuredQueryStateWithAi(
-    locale,
-    effectiveUserQuestion,
-    subjectProfile,
-    currentQueryState
+  currentQueryState = await traceConversationAsync(
+    identity,
+    'refine structured query',
+    () => maybeRefineStructuredQueryStateWithAi(
+      locale,
+      effectiveUserQuestion,
+      subjectProfile,
+      currentQueryState
+    )
   );
 
   if (canonicalRoute?.responseShape === 'full_listing') {
@@ -10934,28 +12141,89 @@ async function answerConversation(identity, userText) {
       const textParts = Array.isArray(fullListingResult.textParts)
         ? fullListingResult.textParts
         : [fullListingResult.text].filter(Boolean);
+      const finalText = fullListingResult.suppressTextResponse ? '' : textParts.join('\n\n');
       pushHistory(identity, 'user', userText);
-      pushHistory(identity, 'model', textParts.join('\n\n'));
+      pushHistory(identity, 'model', finalText);
       setLastToolResults(identity, fullListingResult.usedTools || []);
-      persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, textParts.join('\n\n'), fullListingResult.usedTools || []);
+      persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, fullListingResult.usedTools || []);
 
       return {
-        text: textParts[0] || '',
-        textParts,
+        text: fullListingResult.suppressTextResponse ? '' : (textParts[0] || ''),
+        textParts: fullListingResult.suppressTextResponse ? undefined : textParts,
         renderMode: fullListingResult.renderMode || 'plain',
         usedTools: fullListingResult.usedTools || [],
+        mediaAttachments: resolveRouteMediaAttachments(canonicalRoute, route),
+        mediaPayload: fullListingResult.mediaPayload || null,
+        suppressTextResponse: Boolean(fullListingResult.suppressTextResponse),
         intent: route.kind
       };
     }
   }
 
+  const plannedRouteStartedAt = performance.now();
   const commonPlannedRoute = buildPlannedRouteFromCommonQuestion(commonRoute, subjectProfile, factAvailability);
   const canonicalPlannedRoute = buildCanonicalIndexedRoute(canonicalRoute, effectiveUserQuestion, subjectProfile, factAvailability);
   const executionPlannedRoute = buildPlannedRouteFromExecutionIntent(executionIntent, subjectProfile, factAvailability, currentQueryState);
   const plannedRoute = commonPlannedRoute || canonicalPlannedRoute || executionPlannedRoute;
+  traceConversationStep(identity, 'build planned route', plannedRouteStartedAt, {
+    target: plannedRoute?.target || null,
+    responseShape: plannedRoute?.responseShape || null,
+    commonRouteId: plannedRoute?.commonRouteId || null
+  });
+  const routeFactFilters = route && typeof route === 'object'
+    ? {
+        sourceKinds: Array.isArray(route.sourceKinds) ? route.sourceKinds : [],
+        factSourceTools: Array.isArray(route.factSourceTools) ? route.factSourceTools : [],
+        categories: Array.isArray(route.categories) ? route.categories : [],
+        tags: Array.isArray(route.tags) ? route.tags : []
+      }
+    : null;
+  const hasRouteFactFilters = Boolean(
+    plannedRoute?.target === 'indexed_facts' &&
+    routeFactFilters &&
+    (
+      routeFactFilters.sourceKinds.length > 0 ||
+      routeFactFilters.factSourceTools.length > 0 ||
+      routeFactFilters.categories.length > 0 ||
+      routeFactFilters.tags.length > 0
+    )
+  );
+  if (hasRouteFactFilters) {
+    plannedRoute.sourceKinds = routeFactFilters.sourceKinds.length > 0
+      ? routeFactFilters.sourceKinds
+      : plannedRoute.sourceKinds;
+    plannedRoute.categories = routeFactFilters.categories;
+    plannedRoute.tags = routeFactFilters.tags;
+    plannedRoute.factSourceTools = routeFactFilters.factSourceTools;
+  }
   if (plannedRoute && !plannedRoute.answerStyle) {
     plannedRoute.answerStyle = route.answerStyle;
   }
+  if (plannedRoute && !plannedRoute.responseShape) {
+    plannedRoute.responseShape = canonicalRoute?.responseShape || route.responseShape || 'synthesis';
+  }
+  if (plannedRoute && !plannedRoute.cardLimit) {
+    plannedRoute.cardLimit = canonicalRoute?.cardLimit || route.cardLimit || (plannedRoute.responseShape === 'factual_cards' ? 5 : null);
+  }
+  if (plannedRoute && !plannedRoute.factLimit) {
+    plannedRoute.factLimit = canonicalRoute?.factLimit || route.factLimit || (plannedRoute.responseShape === 'factual_cards' ? resolveRouteFactLimit(plannedRoute.cardLimit || 5) : null);
+  }
+  if (plannedRoute && !plannedRoute.responseInstructions) {
+    plannedRoute.responseInstructions = canonicalRoute?.responseInstructions || route.responseInstructions || null;
+  }
+  if (plannedRoute && !plannedRoute.mcpLoadingMode) {
+    plannedRoute.mcpLoadingMode = canonicalRoute?.mcpLoadingMode || route.mcpLoadingMode || 'auto';
+  }
+  if (plannedRoute && !plannedRoute.deliveryMode) {
+    plannedRoute.deliveryMode = canonicalRoute?.deliveryMode || route.deliveryMode || 'standard';
+  }
+  if (plannedRoute && !Array.isArray(plannedRoute.mediaAttachments)) {
+    plannedRoute.mediaAttachments = resolveRouteMediaAttachments(canonicalRoute, route);
+  }
+  if (plannedRoute && !Array.isArray(plannedRoute.blockedPhrases)) {
+    plannedRoute.blockedPhrases = canonicalRoute?.blockedPhrases || route.blockedPhrases || [];
+  }
+  const mediaAttachments = resolveRouteMediaAttachments(plannedRoute, canonicalRoute, route);
   const shouldPreferIndexedFacts = plannedRoute?.target === 'indexed_facts';
   const effectiveIntent = intent;
   const synastryContext = {
@@ -10968,16 +12236,52 @@ async function answerConversation(identity, userText) {
   if (pendingComparisonText && secondaryProfile) {
     userText = pendingComparisonText;
   }
-  const mcpStatus = 'enabled';
-  const localExecutor = await createLocalToolExecutor(identity, subjectProfile, factAvailability);
+  const mcpLoadingMode = plannedRoute?.mcpLoadingMode || canonicalRoute?.mcpLoadingMode || route.mcpLoadingMode || 'auto';
+  const mcpStatus = mcpLoadingMode === 'never' ? 'disabled_by_route' : 'enabled';
+  const localExecutor = await traceConversationAsync(
+    identity,
+    'prepare local executor',
+    () => createLocalToolExecutor(identity, subjectProfile, factAvailability)
+  );
   const mcpFamilyForLoop = executionIntent?.target === 'mcp'
     ? executionIntent.family
     : (executionIntent?.family === 'indexed_monthly_transits' ? 'mcp_transits' : null);
   const exactTransitSearchExecution = isExactTransitSearchExecution(executionIntent, currentQueryState);
-  const mcpDeclarations = filterMcpDeclarationsByFamily(
-    await mcpService.getFunctionDeclarations(),
-    mcpFamilyForLoop
-  );
+  let mcpDeclarations = [];
+  let mcpDeclarationsLoaded = false;
+  const loadMcpDeclarations = async (reason) => {
+    if (mcpDeclarationsLoaded) {
+      return mcpDeclarations;
+    }
+    if (!shouldLoadMcpAfterFastPath(mcpLoadingMode)) {
+      traceConversationStep(identity, 'skip MCP tool declarations', performance.now(), {
+        reason: 'route_setting_never',
+        mcpLoadingMode
+      });
+      mcpDeclarationsLoaded = true;
+      mcpDeclarations = [];
+      return mcpDeclarations;
+    }
+    mcpDeclarations = filterMcpDeclarationsByFamily(
+      await traceConversationAsync(
+        identity,
+        'load MCP tool declarations',
+        () => mcpService.getFunctionDeclarations(),
+        { reason, mcpLoadingMode }
+      ),
+      mcpFamilyForLoop
+    );
+    mcpDeclarationsLoaded = true;
+    return mcpDeclarations;
+  };
+  if (shouldLoadMcpBeforeFastPath(mcpLoadingMode, plannedRoute, executionIntent)) {
+    await loadMcpDeclarations('before_fast_path');
+  } else {
+    traceConversationStep(identity, 'defer MCP tool declarations', performance.now(), {
+      mcpLoadingMode,
+      routeTarget: plannedRoute?.target || null
+    });
+  }
   const toolCallCache = new Map();
   const toolFamilyCounts = new Map();
   const toolFamilyLimits = new Map([
@@ -11006,7 +12310,12 @@ async function answerConversation(identity, userText) {
     }
 
     if (name === 'search_cached_profile_facts' || name.startsWith('get_cached_') || name === 'get_profile_completeness') {
-      const localResult = await localExecutor(name, args);
+      const localResult = await traceConversationAsync(
+        identity,
+        `local tool: ${name}`,
+        () => localExecutor(name, args),
+        { tool: name }
+      );
       toolCallCache.set(cacheKey, cloneToolResult(localResult));
       return localResult;
     }
@@ -11031,7 +12340,12 @@ async function answerConversation(identity, userText) {
         return blockedResult;
       }
 
-      const mcpResult = await mcpService.callSanitizedTool(name, args);
+      const mcpResult = await traceConversationAsync(
+        identity,
+        `MCP tool: ${name}`,
+        () => mcpService.callSanitizedTool(name, args),
+        { tool: name, family }
+      );
       if (family) {
         toolFamilyCounts.set(family, currentCount + 1);
       }
@@ -11042,6 +12356,7 @@ async function answerConversation(identity, userText) {
     throw new Error(`Unknown tool call: ${name}`);
   };
 
+  const systemInstructionStartedAt = performance.now();
   const systemInstruction = buildSystemInstruction(chatState, mcpStatus, effectiveIntent, {
     activeProfileName: subjectProfile.profileName,
     factAvailability,
@@ -11053,6 +12368,7 @@ async function answerConversation(identity, userText) {
     routeKind: route.kind,
     commonRouteId: route.commonRouteId || null,
     answerStyle: plannedRoute?.answerStyle || route.answerStyle,
+    responseShape: plannedRoute?.responseShape || canonicalRoute?.responseShape || route.responseShape || 'synthesis',
     executionTarget: executionIntent?.target || 'auto',
     executionFamily: executionIntent?.family || 'auto',
     responseMode,
@@ -11062,6 +12378,9 @@ async function answerConversation(identity, userText) {
       activeProfile: subjectProfile,
       secondaryProfile
     }
+  });
+  traceConversationStep(identity, 'build system instruction', systemInstructionStartedAt, {
+    responseShape: plannedRoute?.responseShape || canonicalRoute?.responseShape || route.responseShape || 'synthesis'
   });
   const toolDisciplineLines = [];
   if (executionIntent?.family === 'mcp_transits' && currentQueryState?.parameters?.transitPlanet && currentQueryState?.parameters?.aspectTypes?.length > 0) {
@@ -11075,11 +12394,12 @@ async function answerConversation(identity, userText) {
     : localDeclarations;
 
   const fastPathResult = shouldPreferIndexedFacts
-    ? await tryFactFastPath(identity, effectiveUserQuestion, effectiveIntent, subjectProfile, factAvailability, locale, plannedRoute, {
+    ? await traceConversationAsync(identity, 'indexed fact fast path', () => tryFactFastPath(identity, effectiveUserQuestion, effectiveIntent, subjectProfile, factAvailability, locale, plannedRoute, {
         responsePerspective,
         responseMode,
-        queryState: currentQueryState
-      })
+        queryState: currentQueryState,
+        onProgressSection: options.onProgressSection
+      }), { routeTarget: plannedRoute?.target || null })
     : null;
   if (fastPathResult) {
     info('conversation fact fast-path complete', {
@@ -11092,6 +12412,7 @@ async function answerConversation(identity, userText) {
       factCount: fastPathResult.usedTools[0]?.result?.facts?.length || 0
     });
 
+    const saveStartedAt = performance.now();
     pushHistory(identity, 'user', userText);
     const rawTransitTable = (
       responseMode === 'raw' &&
@@ -11125,6 +12446,9 @@ async function answerConversation(identity, userText) {
             channel: identity?.channel || null,
             responsePerspective,
             responseMode,
+            responseShape: canonicalRoute?.responseShape || route.responseShape || plannedRoute?.responseShape || 'synthesis',
+            cardLimit: canonicalRoute?.cardLimit || route.cardLimit || plannedRoute?.cardLimit || null,
+            responseInstructions: canonicalRoute?.responseInstructions || route.responseInstructions || plannedRoute?.responseInstructions || null,
             executionFamily: executionIntent?.family || null,
             executionIntent,
             queryState: currentQueryState,
@@ -11135,38 +12459,122 @@ async function answerConversation(identity, userText) {
     const finalText = responseMode === 'raw'
       ? validateRawAnswer(aiFilteredFastPath?.text || rawDraftText, locale)
       : validateFinalAnswer(fastPathResult.text, route, locale);
+    const progressiveTextParts = responseMode === 'raw' || fastPathResult.alreadyDelivered
+      ? undefined
+      : buildProgressiveTextParts(finalText, plannedRoute?.deliveryMode || 'standard');
     pushHistory(identity, 'model', finalText);
     setLastToolResults(identity, fastPathResult.usedTools);
     persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, fastPathResult.usedTools);
+    traceConversationStep(identity, 'save conversation state', saveStartedAt, {
+      path: 'indexed_fact_fast_path'
+    });
 
     return {
       text: finalText,
       textParts: (responseMode === 'raw' && aiFilteredFastPath?.usedAiFilter)
         ? undefined
-        : (rawTransitTable ? undefined : fastPathResult.textParts),
+        : (rawTransitTable ? undefined : (progressiveTextParts || fastPathResult.textParts)),
       renderMode: (responseMode === 'raw' && aiFilteredFastPath?.usedAiFilter)
         ? 'plain'
         : (rawTransitTable ? 'telegram_pre' : (fastPathResult.renderMode || 'plain')),
       usedTools: fastPathResult.usedTools,
-      intent: route.kind
+      mediaAttachments,
+      intent: route.kind,
+      alreadyDelivered: Boolean(fastPathResult.alreadyDelivered)
     };
   }
 
-  if (executionIntent?.target === 'mcp' && currentQueryState?.canonicalRouteId === 'transit_search_exact') {
-    const exactTransitRoute = getWesternCanonicalRouteById('transit_search_exact');
-    if (exactTransitRoute) {
-      const exactTransitResult = await executeCanonicalToolRoute(
+  if (shouldUseConfiguredCanonicalFallback(canonicalRoute, plannedRoute)) {
+    info('conversation configured canonical fallback starting', {
+      ...summarizeIdentityForLogs(identity),
+      userText,
+      canonicalRouteId: canonicalRoute?.id || null,
+      toolTarget: canonicalRoute?.toolTarget || null,
+      cacheStrategy: canonicalRoute?.cacheStrategy || null
+    });
+    const configuredFallbackResult = await traceConversationAsync(
+      identity,
+      'configured fallback tool route',
+      () => executeCanonicalToolRoute(
         identity,
-        exactTransitRoute,
-        effectiveUserQuestion,
+        canonicalRoute,
+        explicitFollowUp?.rewrittenQuestion || effectiveUserQuestion,
         subjectProfile,
         secondaryProfile,
         locale,
         responseMode,
         currentQueryState
+      )
+    );
+
+    if (configuredFallbackResult) {
+      const saveStartedAt = performance.now();
+      pushHistory(identity, 'user', userText);
+      const aiFilteredFallback = responseMode === 'raw'
+        ? await maybeApplyAiGroundedFilter(
+            locale,
+            effectiveUserQuestion,
+            configuredFallbackResult.text,
+            configuredFallbackResult.usedTools || [],
+            subjectProfile,
+            {
+              channel: identity?.channel || null,
+              responsePerspective,
+              responseMode,
+              executionFamily: executionIntent?.family || null,
+              executionIntent,
+              queryState: currentQueryState,
+              route: canonicalRoute || route
+            }
+          )
+        : null;
+      const finalText = responseMode === 'raw'
+        ? validateRawAnswer(aiFilteredFallback?.text || configuredFallbackResult.text, locale)
+        : validateFinalAnswer(configuredFallbackResult.text, route, locale);
+      pushHistory(identity, 'model', finalText);
+      setLastToolResults(identity, configuredFallbackResult.usedTools || []);
+      persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, configuredFallbackResult.usedTools || []);
+      traceConversationStep(identity, 'save conversation state', saveStartedAt, {
+        path: 'configured_fallback_tool_route'
+      });
+
+      return {
+        text: finalText,
+        textParts: (responseMode === 'raw' && aiFilteredFallback?.usedAiFilter)
+          ? undefined
+          : configuredFallbackResult.textParts,
+        renderMode: (responseMode === 'raw' && aiFilteredFallback?.usedAiFilter)
+          ? 'plain'
+          : (configuredFallbackResult.renderMode || 'plain'),
+        suppressTextResponse: Boolean(configuredFallbackResult.suppressTextResponse),
+        usedTools: configuredFallbackResult.usedTools || [],
+        mediaAttachments,
+        externalLinks: configuredFallbackResult.externalLinks || [],
+        intent: route.kind
+      };
+    }
+  }
+
+  if (executionIntent?.target === 'mcp' && currentQueryState?.canonicalRouteId === 'transit_search_exact') {
+    const exactTransitRoute = getWesternCanonicalRouteById('transit_search_exact');
+    if (exactTransitRoute) {
+      const exactTransitResult = await traceConversationAsync(
+        identity,
+        'exact transit tool route',
+        () => executeCanonicalToolRoute(
+          identity,
+          exactTransitRoute,
+          effectiveUserQuestion,
+          subjectProfile,
+          secondaryProfile,
+          locale,
+          responseMode,
+          currentQueryState
+        )
       );
 
       if (exactTransitResult) {
+        const saveStartedAt = performance.now();
         pushHistory(identity, 'user', userText);
         const aiFilteredExactTransit = responseMode === 'raw' && !currentQueryState?.parameters?.fullListing
           ? await maybeApplyAiGroundedFilter(
@@ -11192,6 +12600,9 @@ async function answerConversation(identity, userText) {
         pushHistory(identity, 'model', finalText);
         setLastToolResults(identity, exactTransitResult.usedTools || []);
         persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, exactTransitResult.usedTools || []);
+        traceConversationStep(identity, 'save conversation state', saveStartedAt, {
+          path: 'exact_transit_tool_route'
+        });
 
         return {
           text: finalText,
@@ -11202,6 +12613,7 @@ async function answerConversation(identity, userText) {
             ? 'plain'
             : (exactTransitResult.renderMode || 'plain'),
           usedTools: exactTransitResult.usedTools || [],
+          mediaAttachments,
           intent: route.kind
         };
       }
@@ -11218,15 +12630,19 @@ async function answerConversation(identity, userText) {
       executionFamily: executionIntent?.family || null,
       queryState: currentQueryState || null
     });
-    const directCanonicalResult = await executeCanonicalToolRoute(
+    const directCanonicalResult = await traceConversationAsync(
       identity,
-      canonicalRoute,
-      canonicalExecutionQuestion,
-      subjectProfile,
-      secondaryProfile,
-      locale,
-      responseMode,
-      currentQueryState
+      'direct canonical tool route',
+      () => executeCanonicalToolRoute(
+        identity,
+        canonicalRoute,
+        canonicalExecutionQuestion,
+        subjectProfile,
+        secondaryProfile,
+        locale,
+        responseMode,
+        currentQueryState
+      )
     );
 
     if (directCanonicalResult) {
@@ -11248,6 +12664,7 @@ async function answerConversation(identity, userText) {
           textParts: directCanonicalResult.textParts,
           renderMode: directCanonicalResult.renderMode || 'plain',
           usedTools: directCanonicalResult.usedTools || [],
+          mediaAttachments,
           intent: route.kind,
           requiresCitySelection: true,
           candidates: directCanonicalResult.candidates || [],
@@ -11293,25 +12710,36 @@ async function answerConversation(identity, userText) {
         textParts: (responseMode === 'raw' && aiFilteredDirectCanonical?.usedAiFilter)
           ? undefined
           : directCanonicalResult.textParts,
-        renderMode: (responseMode === 'raw' && aiFilteredDirectCanonical?.usedAiFilter)
+       renderMode: (responseMode === 'raw' && aiFilteredDirectCanonical?.usedAiFilter)
           ? 'plain'
           : (directCanonicalResult.renderMode || 'plain'),
+        suppressTextResponse: Boolean(directCanonicalResult.suppressTextResponse),
         usedTools: directCanonicalResult.usedTools || [],
+        mediaAttachments,
+        externalLinks: directCanonicalResult.externalLinks || [],
         intent: route.kind
       };
     }
   }
 
+  if (!mcpDeclarationsLoaded) {
+    await loadMcpDeclarations('tool_loop_needed');
+  }
+
   const toolLoopInstruction = [
     systemInstruction,
     '',
-    executionIntent?.target === 'indexed_facts'
+    mcpLoadingMode === 'never'
+      ? 'This route has MCP tool loading disabled. Use indexed facts and cached local tools only.'
+      : executionIntent?.target === 'indexed_facts'
       ? 'Prefer indexed facts and cached local tools first. If the result is weak, incomplete, or too rigid, continue with the relevant FreeAstro MCP tools.'
       : 'Prefer the relevant FreeAstro MCP tools first. Use indexed facts and cached local tools only when they clearly strengthen the grounded answer.',
     executionIntent?.family
       ? `Preferred tool family: ${executionIntent.family}.`
       : 'Preferred tool family: auto.',
-    'Never stop after a weak local-only answer if an MCP tool can answer better.',
+    mcpLoadingMode === 'never'
+      ? 'If cached/local data is not enough, say what complete question or missing data is needed instead of calling an MCP tool.'
+      : 'Never stop after a weak local-only answer if an MCP tool can answer better.',
     'Only produce a final answer after grounding it in tool results.',
     ...(transitSearchHint ? [
       'This question is an exact transit-search request.',
@@ -11322,14 +12750,16 @@ async function answerConversation(identity, userText) {
   ].join('\n');
   const toolPassStartedAt = performance.now();
   const mustCallToolBeforeAnswer = looksLikeDirectPlanetPlacementQuestion(effectiveUserQuestion);
-  let result = await runFunctionCallingLoop({
-    systemInstruction: toolLoopInstruction,
-    history: chatState.history,
-    userText: effectiveUserQuestion,
-    functionDeclarations: [...localDeclarationsForLoop, ...mcpDeclarations],
-    executeFunction,
-    toolConfigMode: mustCallToolBeforeAnswer ? FunctionCallingConfigMode.ANY : FunctionCallingConfigMode.AUTO
-  });
+  let result = await traceConversationAsync(identity, 'Gemini tool loop', () => runFunctionCallingLoop({
+      systemInstruction: toolLoopInstruction,
+      history: chatState.history,
+      userText: effectiveUserQuestion,
+      functionDeclarations: [...localDeclarationsForLoop, ...mcpDeclarations],
+      executeFunction,
+      toolConfigMode: mustCallToolBeforeAnswer ? FunctionCallingConfigMode.ANY : FunctionCallingConfigMode.AUTO
+    }), {
+      toolDeclarations: localDeclarationsForLoop.length + mcpDeclarations.length
+    });
 
   info('conversation tool pass complete', {
     stateKey,
@@ -11396,27 +12826,31 @@ async function answerConversation(identity, userText) {
       ...result,
       text: bestTransitSearchPayload
         ? buildTransitSearchInterpretiveResponse(locale, bestTransitSearchPayload, subjectProfile)
-        : await rewriteGroundedToolAnswer(
-            locale,
-            effectiveUserQuestion,
-            result.text,
-            result.toolResults,
-            subjectProfile,
-            {
-              channel: identity?.channel || null,
-              responsePerspective,
-              executionFamily: executionIntent?.family || null
-            }
-          )
+        : await traceConversationAsync(identity, 'rewrite grounded tool answer', () => rewriteGroundedToolAnswer(
+          locale,
+          effectiveUserQuestion,
+          result.text,
+          result.toolResults,
+          subjectProfile,
+          {
+            channel: identity?.channel || null,
+            responsePerspective,
+            responseShape: canonicalRoute?.responseShape || route.responseShape || plannedRoute?.responseShape || 'synthesis',
+            cardLimit: canonicalRoute?.cardLimit || route.cardLimit || plannedRoute?.cardLimit || null,
+            responseInstructions: canonicalRoute?.responseInstructions || route.responseInstructions || plannedRoute?.responseInstructions || null,
+            executionFamily: executionIntent?.family || null
+          }
+        ))
     };
   }
 
+  const finalSaveStartedAt = performance.now();
   pushHistory(identity, 'user', userText);
   const finalText = responseMode === 'raw'
     ? validateRawAnswer(result.text, locale)
     : validateFinalAnswer(result.text, route, locale);
   if (!validateNatalPlacementIntegrity(finalText, subjectProfile)) {
-    const fallbackPlacementFollowUp = looksLikePlanetOnlyPlacementFollowUp(userText, chatState.lastToolResults, conversationContext);
+    const fallbackPlacementFollowUp = CONVERSATION_FOLLOW_UPS_ENABLED && looksLikePlanetOnlyPlacementFollowUp(userText, chatState.lastToolResults, conversationContext);
     const fallbackPlacementQuestionText = fallbackPlacementFollowUp
       ? userText
       : effectiveUserQuestion || plannerQuestionText || userText;
@@ -11434,6 +12868,7 @@ async function answerConversation(identity, userText) {
       return {
         text: fallbackPlacementText,
         usedTools,
+        mediaAttachments,
         intent: route.kind
       };
     }
@@ -11441,12 +12876,16 @@ async function answerConversation(identity, userText) {
   pushHistory(identity, 'model', finalText);
   setLastToolResults(identity, result.toolResults);
   persistConversationAnswerState(identity, route, subjectProfile, secondaryProfile, plannerQuestionText, currentQueryState, executionIntent, finalText, result.toolResults);
+  traceConversationStep(identity, 'save conversation state', finalSaveStartedAt, {
+    path: 'tool_loop'
+  });
 
   return {
     text: finalText,
     textParts: result.textParts,
     renderMode: result.renderMode || 'plain',
     usedTools: result.toolResults,
+    mediaAttachments,
     intent: route.kind
   };
 }
@@ -11471,6 +12910,7 @@ module.exports = {
     detectArtifactFollowUpLocally,
     inferElectionalRouteConfigFromQuestion,
     extractRequestedExternalProfileName,
+    looksLikeStandaloneAstrologyQuery,
     parseExplicitSingleDateFromQuestion,
     buildDirectPlanetPlacementResponse,
     buildDeterministicNatalResponse,

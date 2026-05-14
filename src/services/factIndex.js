@@ -1024,6 +1024,7 @@ function normalizeSearchTags(tags) {
 function filterFacts(records, input) {
   const categories = new Set(toArray(input.categories).map(String));
   const sourceKinds = new Set(toArray(input.sourceKinds).map(String));
+  const sourceToolNames = new Set(toArray(input.sourceToolNames || input.factSourceTools).map(String));
   const tags = normalizeSearchTags(input.tags);
   const cacheMonth = input.cacheMonth === undefined || input.cacheMonth === null
     ? null
@@ -1039,6 +1040,7 @@ function filterFacts(records, input) {
       : record.secondaryProfileId === secondaryProfileId)
     .filter((record) => categories.size === 0 || categories.has(record.category))
     .filter((record) => sourceKinds.size === 0 || sourceKinds.has(record.sourceKind))
+    .filter((record) => sourceToolNames.size === 0 || sourceToolNames.has(record.sourceToolName))
     .filter((record) => cacheMonth === null || record.cacheMonth === cacheMonth)
     .filter((record) => tags.every((tag) => record.tags.includes(tag)))
     .sort(compareFacts);
@@ -1053,6 +1055,7 @@ async function searchFacts(identity, input) {
     secondaryProfileId: input.secondaryProfileId ? String(input.secondaryProfileId) : null,
     categories: toArray(input.categories),
     sourceKinds: toArray(input.sourceKinds),
+    sourceToolNames: toArray(input.sourceToolNames || input.factSourceTools),
     tags: normalizeSearchTags(input.tags),
     cacheMonth: input.cacheMonth ? String(input.cacheMonth) : null
   };
@@ -1067,6 +1070,7 @@ async function searchFacts(identity, input) {
       stateKey,
       primaryProfileId: normalizedInput.primaryProfileId,
       sourceKinds: normalizedInput.sourceKinds,
+      sourceToolNames: normalizedInput.sourceToolNames,
       categories: normalizedInput.categories,
       cacheMonth: normalizedInput.cacheMonth,
       count: result.length,
@@ -1096,6 +1100,10 @@ async function searchFacts(identity, input) {
     query = query.in('source_kind', normalizedInput.sourceKinds);
   }
 
+  if (normalizedInput.sourceToolNames.length > 0) {
+    query = query.in('source_tool_name', normalizedInput.sourceToolNames);
+  }
+
   if (normalizedInput.cacheMonth !== null) {
     query = query.eq('cache_month', normalizedInput.cacheMonth);
   }
@@ -1114,6 +1122,7 @@ async function searchFacts(identity, input) {
     stateKey,
     primaryProfileId: normalizedInput.primaryProfileId,
     sourceKinds: normalizedInput.sourceKinds,
+    sourceToolNames: normalizedInput.sourceToolNames,
     categories: normalizedInput.categories,
     cacheMonth: normalizedInput.cacheMonth,
     count: result.length,

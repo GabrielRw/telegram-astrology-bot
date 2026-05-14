@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "routes": {
+    "natal_overview": {
+      "toolTargets": [
+        "v1_western_natal_insights"
+      ],
+      "toolTarget": "v1_western_natal_insights",
+      "sourceKinds": [
+        "natal"
+      ],
+      "mediaAttachments": [
+        "natal_chart_png"
+      ],
+      "cacheStrategy": "indexed_natal_then_tool",
+      "responseShape": "factual_cards",
+      "cardLimit": 7,
+      "factLimit": 20,
+      "responseInstructions": "Return exactly 7 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nCore identity:\nStart with the Sun sign, Ascendant/Rising sign, and their houses if available. Then give a short meaning.\n\nMoon and emotional pattern:\nStart with the Moon sign and Moon house if available. Then explain what is distinctive about this Moon placement.\n\nKey aspects and stelliums:\nMention the most important natal aspects available. If a stellium is available, explain the top stellium factors instead.\n\nChart structure:\nMention one or two important chart structure, pattern, emphasis, or configuration. If none is available, use another notable grounded chart fact. \nFor the structure mention the handle or the important details about that structure\n\nRelationship patterns : \nMention some important relationships facts for this person \n\nShadow to watch : \nMention some important shadow facts for this chart\n\nSummary:\nEnd with one concise sentence describing the type of person this chart suggests.\n\nUse only available chart facts. If a requested fact is missing, say what is available instead without inventing.",
+      "mcpLoadingMode": "after_fast_path",
+      "deliveryMode": "progressive_generate_sections",
+      "productionStatus": "ready"
+    },
+    "all_monthly_transits": {
+      "toolTargets": [
+        "v1_western_transits_timeline"
+      ],
+      "toolTarget": "v1_western_transits_timeline",
+      "deliveryMode": "progressive_generate_sections",
+      "productionNotes": "This route is to return a full transit list of a month"
+    },
+    "personal_horoscope": {
+      "responseShape": "factual_cards",
+      "cardLimit": 6,
+      "responseInstructions": "You are writing a detailed but readable daily astrology forecast for a user.\n\nReturn exactly 6 sections, in this exact order.\nDo not write \"Card 1\", \"Card 2\", etc.\nEach section should be 1 focused paragraph of 3-5 sentences.\nUse the detailed daily horoscope V3 tool result as the only source of truth.\n\nDaily energy forecast\nWrite a grounded overview of the day. Mention the date if provided. Explain the emotional tone, main life area, and why this day matters.\n\nActive windows\nList the most relevant active timing windows currently in effect, up to 5 if provided. For each one, include the transit planet, aspect, natal target, in-effect-until date/time if provided, and a practical meaning for the day.\n\nExact hits today\nMention today’s exact hit or hits if provided. Include transit planet, aspect, natal target, exact time/date, and what kind of moment it describes.\n\nNext exact peak\nMention the next exact peak after today if provided. Explain what is building toward that peak and how the user can prepare.\n\nOpportunity\nGive 2-3 practical actions the user can take today, grounded only in the returned data. Connect each action to the relevant transit or daily theme.\n\nCaution\nExplain the main pressure point, sensitive period, or thing to watch today. Include what to avoid and how to handle it constructively.\n\nUse only the daily horoscope V3 tool result. Do not invent placements, dates, exact hits, peaks, or advice. If a requested item is missing, say the tool result does not provide it.",
+      "mcpLoadingMode": "never",
+      "deliveryMode": "progressive_generate_sections",
+      "productionStatus": "ready"
+    },
+    "ephemeris": {
+      "productionStatus": "ready"
+    },
+    "daily_ephemeris": {
+      "productionStatus": "ready"
+    },
+    "all_natal_aspects": {
+      "mcpLoadingMode": "never"
+    },
+    "chart_structures": {
+      "categories": [
+        "structure"
+      ],
+      "tags": [],
+      "cardLimit": 3,
+      "factLimit": 10,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc. (if the chart doesn't inclue any special structure just return one section explaining that the chart doesn't have any special structure)\n\nMain structure\nReturn the most important chart structure of the theme as well as it's relevant details, planets, handle or coach of they are.\n\nAdd a detailed meaningful explanation on what this main structure means for the person \n\nMention other notable chart structures and how they can also affect the person's life or destiny.",
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready"
+    },
+    "dominant_element": {
+      "sourceKinds": [
+        "natal"
+      ],
+      "categories": [
+        "identity"
+      ],
+      "cacheStrategy": "indexed_natal_then_tool",
+      "mcpLoadingMode": "never"
+    },
+    "career_signature": {
+      "toolTargets": [],
+      "toolTarget": null,
+      "factSourceTools": [
+        "v1_natal_calculate",
+        "rest_western_natal_insights"
+      ],
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready",
+      "matchHint": "What natal chart can tell about the user's career"
+    },
+    "current_mental_transits": {
+      "toolTargets": [],
+      "toolTarget": null,
+      "sourceKinds": [
+        "monthly_transit"
+      ],
+      "factSourceTools": [
+        "rest_western_transits_insights"
+      ],
+      "categories": [
+        "mind",
+        "identity",
+        "emotions"
+      ],
+      "tags": [
+        "planet:mercury"
+      ],
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nUse only the cached monthly transit insight facts provided. Focus on current mental weather, thinking, communication, decision-making, Mercury, Moon-Mercury, Sun-Mercury, Ascendant-Mercury, 3rd/9th-house, and mindset themes. Do not use broad career, relationship, or unrelated house stellium facts unless they are explicitly tied to Mercury, the mind, communication, identity processing, or emotional regulation.\n\nSource rule:\nEvery section must name the source transit fact that supports it. When mentioning a peak, pressure, support window, timing window, or activation, include the exact source if available: transit planet, aspect type, natal target/focus point, house, window, and peak. Do not say only \"a pressure window\" or \"this transit\" without naming what creates it.\n\nCurrent mental weather:\nStart with the strongest Mercury or mind-related transit window currently active. Mention the source transit, aspect type, natal target/focus point, house, window, and peak if provided.\n\nWhat it brings up:\nExplain the mental, communicative, emotional, or identity-processing pattern being activated. Tie the interpretation to the named source fact.\n\nHow to work with it:\nGive practical advice for thinking clearly, writing, speaking, studying, planning, decision-making, or nervous-system pacing based only on the facts. Name which transit fact the advice comes from.\n\nWatch point:\nEnd with the main mental pressure point or sensitivity right now. Explicitly name the source, such as Pressure Window Mercury, the involved transit planets, aspect types, natal Mercury/focus point, house, window, and peak if available. Include exact windows only if they are available in the cached facts.",
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready"
+    },
+    "current_relationship_transits": {
+      "toolTargets": [],
+      "toolTarget": null,
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready"
+    },
+    "current_saturn_transits": {
+      "toolTargets": [],
+      "toolTarget": null,
+      "sourceKinds": [
+        "monthly_transit"
+      ],
+      "factSourceTools": [
+        "rest_western_transits_insights"
+      ],
+      "categories": [
+        "structure",
+        "transformation",
+        "identity",
+        "growth"
+      ],
+      "tags": [
+        "planet:saturn"
+      ],
+      "fallbackTools": [],
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nUse only cached monthly transit insight facts that explicitly include Saturn. Every section must name the exact source fact behind the interpretation, such as Transit Stellium In House 8, Pressure Window Saturn, Activation Cluster Saturn, Support Window Midheaven, or another returned Saturn-tagged fact. Do not use broad monthly transit facts that do not include Saturn. Do not mention a date, peak, house, aspect, planet, or life area unless it appears in the returned cached fact.\n\nSource rule:\nEvery section must cite the source evidence in plain language. If mentioning a peak or timing window, include the source fact title plus its window and peak if available. If mentioning an aspect, include the aspect type only if the cached fact provides it. Do not say \"around May 23\" or \"a pressure window\" without naming what creates it.\n\nCurrent Saturn weather:\nStart with the strongest Saturn-specific fact currently available. Prefer a fact whose title directly names Saturn, or a Saturn-including house/sign stellium if it is the clearest current window. Name the house, involved planets, window, and peak if provided.\n\nWhat Saturn is asking:\nExplain the concrete Saturn theme: boundaries, responsibility, consolidation, maturity, commitments, pressure, structure, or long-term correction. Tie each interpretation to the named source fact.\n\nHow to work with it:\nGive practical advice based only on the returned Saturn facts. Keep it grounded in the named house, aspect type, pressure/support window, or activation cluster.\n\nWatch point:\nEnd with the main Saturn pressure or sensitivity. Explicitly name the source fact, the involved planets, aspect types, house, window, and peak if available. If the returned facts do not provide a Saturn pressure fact, say which Saturn support or background fact is available instead.",
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready"
+    },
+    "attachment_style": {
+      "productionStatus": "ready"
+    }
+  }
+}
