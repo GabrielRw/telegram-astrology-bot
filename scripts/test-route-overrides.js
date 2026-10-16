@@ -148,7 +148,7 @@ const written = writeRouteOverrides({
       factLimit: 12,
       mcpLoadingMode: 'after_fast_path',
       deliveryMode: 'progressive_generate_sections',
-      mediaAttachments: ['natal_chart_png'],
+      mediaAttachments: ['natal_chart_png', 'moon_phase_svg'],
       productionStatus: 'check',
       productionNotes: 'Needs one more simulator run.',
       responseInstructions: 'Use one card per grounded fact.',
@@ -183,11 +183,21 @@ assert.equal(merged[0].cardLimit, 4);
 assert.equal(merged[0].factLimit, 12);
 assert.equal(merged[0].mcpLoadingMode, 'after_fast_path');
 assert.equal(merged[0].deliveryMode, 'progressive_generate_sections');
-assert.deepEqual(merged[0].mediaAttachments, ['natal_chart_png']);
+assert.deepEqual(merged[0].mediaAttachments, ['natal_chart_png', 'moon_phase_svg']);
 assert.equal(merged[0].productionStatus, 'check');
 assert.equal(merged[0].productionNotes, 'Needs one more simulator run.');
 assert.equal(merged[0].responseInstructions, 'Use one card per grounded fact.');
 assert.equal(merged[0].followUpPolicy, 'standalone');
 assert.deepEqual(merged[0].blockedPhrases, ['current atmosphere']);
+
+const projectOverrides = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'data', 'routing', 'route-overrides.json'), 'utf8')
+);
+const mentalTransitInstructions = projectOverrides.routes?.current_mental_transits?.responseInstructions || '';
+assert.match(mentalTransitInstructions, /Timing guidance:/);
+assert.match(mentalTransitInstructions, /Include precise dates only where timing materially helps/);
+assert.match(mentalTransitInstructions, /at most two sections total/);
+assert.match(mentalTransitInstructions, /What helps mentally right now:/);
+assert.match(mentalTransitInstructions, /Do not repeat dates in every card/);
 
 process.stdout.write('ok route override tests\n');

@@ -1,11 +1,11 @@
 const { createTelegramChannelApi, createTelegramEvent } = require('../channels/telegram/api');
-const { ACTIONS, handleIncomingAction, promptForLanguage } = require('../core/controller');
+const { ACTIONS } = require('../application/actionIds');
 const { SUPPORTED_LOCALES } = require('../services/locale');
 
-module.exports = function registerLanguageCommand(bot) {
+module.exports = function registerLanguageCommand(bot, routeIncomingEvent) {
   bot.command('language', async (ctx) => {
-    await promptForLanguage(
-      createTelegramEvent(ctx, { type: 'start' }),
+    await routeIncomingEvent(
+      createTelegramEvent(ctx, { type: 'text', text: '/language' }),
       createTelegramChannelApi(ctx)
     );
   });
@@ -14,7 +14,7 @@ module.exports = function registerLanguageCommand(bot) {
     const actionId = `${ACTIONS.LANGUAGE_PREFIX}${locale}`;
 
     bot.action(actionId, async (ctx) => {
-      await handleIncomingAction(
+      await routeIncomingEvent(
         createTelegramEvent(ctx, { type: 'action', actionId }),
         createTelegramChannelApi(ctx)
       );

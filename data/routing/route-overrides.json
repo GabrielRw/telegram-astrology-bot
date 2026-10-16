@@ -95,12 +95,20 @@
       "tags": [
         "planet:mercury"
       ],
+      "blockedPhrases": [
+        "Pressure Window",
+        "Support Window",
+        "Activation Cluster",
+        "Topic Window",
+        "activation involving"
+      ],
       "responseShape": "factual_cards",
       "cardLimit": 4,
       "factLimit": 8,
-      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nUse only the cached monthly transit insight facts provided. Focus on current mental weather, thinking, communication, decision-making, Mercury, Moon-Mercury, Sun-Mercury, Ascendant-Mercury, 3rd/9th-house, and mindset themes. Do not use broad career, relationship, or unrelated house stellium facts unless they are explicitly tied to Mercury, the mind, communication, identity processing, or emotional regulation.\n\nSource rule:\nEvery section must name the source transit fact that supports it. When mentioning a peak, pressure, support window, timing window, or activation, include the exact source if available: transit planet, aspect type, natal target/focus point, house, window, and peak. Do not say only \"a pressure window\" or \"this transit\" without naming what creates it.\n\nCurrent mental weather:\nStart with the strongest Mercury or mind-related transit window currently active. Mention the source transit, aspect type, natal target/focus point, house, window, and peak if provided.\n\nWhat it brings up:\nExplain the mental, communicative, emotional, or identity-processing pattern being activated. Tie the interpretation to the named source fact.\n\nHow to work with it:\nGive practical advice for thinking clearly, writing, speaking, studying, planning, decision-making, or nervous-system pacing based only on the facts. Name which transit fact the advice comes from.\n\nWatch point:\nEnd with the main mental pressure point or sensitivity right now. Explicitly name the source, such as Pressure Window Mercury, the involved transit planets, aspect types, natal Mercury/focus point, house, window, and peak if available. Include exact windows only if they are available in the cached facts.",
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with the user-facing section label followed by natural source evidence in parentheses, for example \"Current mental weather (Mercury square Mars in House 9):\". Do not start a section with bare \"Source:\". Do not expose internal cached fact titles such as \"Pressure Window Mercury\", \"Support Window Mercury\", \"Activation Cluster Mercury\", or \"Topic Window Mercury\".\n\nUse only the cached monthly transit insight facts provided. Focus on current mental weather, thinking, communication, decision-making, Mercury, Moon-Mercury, Sun-Mercury, Ascendant-Mercury, 3rd/9th-house, and mindset themes. Do not use broad career, relationship, or unrelated house stellium facts unless they are explicitly tied to Mercury, the mind, communication, identity processing, or emotional regulation.\n\nSource rule:\nEvery section must name the concrete transit evidence that supports it. When mentioning a timing window, aspect, or activation, include the transit planet, aspect type, natal target/focus point, house, window, and peak if available. Do not call it a pressure/support/activation window, and do not say only \"this transit\" without naming what creates it.\n\nTiming guidance:\nInclude precise dates only where timing materially helps the answer. Use exact timing in at most two sections total, normally current mental weather and watch point. Do not include dates in What it brings up or What helps mentally right now unless they use a different exact window that changes the meaning of that section. Do not repeat dates in every card. You may write the timing as a natural sentence inside the paragraph, for example \"This runs from February 4, 2026 at 01:53 UTC to June 29, 2026 at 22:25 UTC, peaking May 15, 2026 at 10:42 UTC.\" Use only exact windows and peaks returned by the cached facts; do not invent, round, or shift dates.\n\nCurrent mental weather:\nStart with the strongest Mercury or mind-related transit evidence currently active. If the fact provides an active window or peak, include it naturally here because the user asked what is happening right now.\n\nWhat it brings up:\nExplain the mental, communicative, emotional, or identity-processing pattern being activated. Tie the interpretation to the named evidence. Usually omit dates here; include them only if a different exact window is essential to the meaning.\n\nWhat helps mentally right now:\nName the concrete Mercury or mind-related evidence that offers support, then give practical advice for thinking clearly, writing, speaking, studying, planning, decision-making, or nervous-system pacing based only on that evidence. Omit timing here unless the advice depends on a different exact window or peak.\n\nWatch point:\nEnd with the main mental pressure point or sensitivity right now. If the watch-point evidence has its own active window or peak, include it naturally as text in this section.",
       "mcpLoadingMode": "never",
-      "productionStatus": "ready"
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied with clearer mental-support section label and selective exact transit timing; needs UI review."
     },
     "current_relationship_transits": {
       "toolTargets": [],
@@ -126,15 +134,324 @@
       "tags": [
         "planet:saturn"
       ],
-      "fallbackTools": [],
+      "blockedPhrases": [
+        "Pressure Window",
+        "Support Window",
+        "Activation Cluster",
+        "Topic Window",
+        "activation involving"
+      ],
       "responseShape": "factual_cards",
       "cardLimit": 4,
       "factLimit": 8,
-      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nUse only cached monthly transit insight facts that explicitly include Saturn. Every section must name the exact source fact behind the interpretation, such as Transit Stellium In House 8, Pressure Window Saturn, Activation Cluster Saturn, Support Window Midheaven, or another returned Saturn-tagged fact. Do not use broad monthly transit facts that do not include Saturn. Do not mention a date, peak, house, aspect, planet, or life area unless it appears in the returned cached fact.\n\nSource rule:\nEvery section must cite the source evidence in plain language. If mentioning a peak or timing window, include the source fact title plus its window and peak if available. If mentioning an aspect, include the aspect type only if the cached fact provides it. Do not say \"around May 23\" or \"a pressure window\" without naming what creates it.\n\nCurrent Saturn weather:\nStart with the strongest Saturn-specific fact currently available. Prefer a fact whose title directly names Saturn, or a Saturn-including house/sign stellium if it is the clearest current window. Name the house, involved planets, window, and peak if provided.\n\nWhat Saturn is asking:\nExplain the concrete Saturn theme: boundaries, responsibility, consolidation, maturity, commitments, pressure, structure, or long-term correction. Tie each interpretation to the named source fact.\n\nHow to work with it:\nGive practical advice based only on the returned Saturn facts. Keep it grounded in the named house, aspect type, pressure/support window, or activation cluster.\n\nWatch point:\nEnd with the main Saturn pressure or sensitivity. Explicitly name the source fact, the involved planets, aspect types, house, window, and peak if available. If the returned facts do not provide a Saturn pressure fact, say which Saturn support or background fact is available instead.",
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with the user-facing section label followed by natural source evidence in parentheses, for example \"Current Saturn weather (Saturn square Mars in House 9):\". Do not start a section with bare \"Source:\". Do not expose internal cached fact titles such as \"Pressure Window Saturn\", \"Support Window Saturn\", \"Activation Cluster Saturn\", or \"Topic Window Saturn\".\n\nUse only cached monthly transit insight facts that explicitly include Saturn. Every section must name the concrete evidence behind the interpretation in plain language, such as Saturn square/trine named planets, supportive Saturn contacts, Saturn named transit-to-natal contacts, or a returned house/sign stellium that explicitly includes Saturn. Do not use broad monthly transit facts that do not include Saturn. Do not mention a date, peak, house, aspect, planet, or life area unless it appears in the returned cached fact.\n\nSource rule:\nEvery section must cite evidence in natural language. If mentioning a peak or timing window, include the window and peak if available, but do not call it a pressure/support/activation window. If mentioning an aspect, include the aspect type only if the cached fact provides it. Do not say \"around a date\", \"a pressure window\", or \"this transit\" without naming what creates it.\n\nCurrent Saturn weather:\nStart with the strongest Saturn-specific fact currently available. Prefer evidence that directly names Saturn, or a Saturn-including house/sign stellium if it is the clearest current factor. Name the house, involved planets, window, and peak if provided.\n\nWhat Saturn is asking:\nExplain the concrete Saturn theme: boundaries, responsibility, consolidation, maturity, commitments, pressure, structure, and long-term correction. Tie each interpretation to the named evidence.\n\nHow to work with it:\nGive practical advice based only on the returned Saturn facts. Keep it grounded in the named house, aspect type, planet contact, activation, or stellium.\n\nWatch point:\nIf friction evidence is present, describe the watch point as Saturn plus the aspect and named planets in the named house; do not use the internal pressure-window label. End with the main Saturn sensitivity. Explicitly name the involved planets, aspect types, house, window, and peak if available. If the returned facts do not provide friction evidence, say which Saturn support or background fact is available instead.",
       "mcpLoadingMode": "never",
-      "productionStatus": "ready"
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied with naturalized transit evidence labels; needs UI review."
     },
     "attachment_style": {
+      "productionStatus": "ready"
+    },
+    "current_sun_transits": {
+      "toolTargets": [],
+      "toolTarget": null,
+      "sourceKinds": [
+        "monthly_transit"
+      ],
+      "factSourceTools": [
+        "rest_western_transits_insights"
+      ],
+      "categories": [
+        "identity",
+        "growth",
+        "chart_pattern"
+      ],
+      "tags": [
+        "planet:sun"
+      ],
+      "blockedPhrases": [
+        "Pressure Window",
+        "Support Window",
+        "Activation Cluster",
+        "Topic Window",
+        "activation involving"
+      ],
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with the user-facing section label followed by natural source evidence in parentheses, for example \"Current Sun weather (Sun square Mars in House 9):\". Do not start a section with bare \"Source:\". Do not expose internal cached fact titles such as \"Pressure Window Sun\", \"Support Window Sun\", \"Activation Cluster Sun\", or \"Topic Window Sun\".\n\nUse only cached monthly transit insight facts that explicitly include Sun. Every section must name the concrete evidence behind the interpretation in plain language, such as Sun square/trine named planets, supportive Sun contacts, Sun named transit-to-natal contacts, or a returned house/sign stellium that explicitly includes Sun. Do not use broad monthly transit facts that do not include Sun. Do not mention a date, peak, house, aspect, planet, or life area unless it appears in the returned cached fact.\n\nSource rule:\nEvery section must cite evidence in natural language. If mentioning a peak or timing window, include the window and peak if available, but do not call it a pressure/support/activation window. If mentioning an aspect, include the aspect type only if the cached fact provides it. Do not say \"around a date\", \"a pressure window\", or \"this transit\" without naming what creates it.\n\nCurrent Sun weather:\nStart with the strongest Sun-specific fact currently available. Prefer evidence that directly names Sun, or a Sun-including house/sign stellium if it is the clearest current factor. Name the house, involved planets, window, and peak if provided.\n\nWhat Sun activates:\nExplain the concrete Sun theme: identity, vitality, confidence, visibility, purpose, leadership, and life direction. Tie each interpretation to the named evidence.\n\nHow to work with it:\nGive practical advice based only on the returned Sun facts. Keep it grounded in the named house, aspect type, planet contact, activation, or stellium.\n\nWatch point:\nIf friction evidence is present, describe the watch point as Sun plus the aspect and named planets in the named house; do not use the internal pressure-window label. End with the main Sun sensitivity. Explicitly name the involved planets, aspect types, house, window, and peak if available. If the returned facts do not provide friction evidence, say which Sun support or background fact is available instead.",
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied with naturalized transit evidence labels; needs UI review."
+    },
+    "current_moon_transits": {
+      "toolTargets": [],
+      "toolTarget": null,
+      "sourceKinds": [
+        "monthly_transit"
+      ],
+      "factSourceTools": [
+        "rest_western_transits_insights"
+      ],
+      "categories": [
+        "emotions",
+        "relationships",
+        "identity"
+      ],
+      "tags": [
+        "planet:moon"
+      ],
+      "blockedPhrases": [
+        "Pressure Window Moon",
+        "Support Window Moon",
+        "Activation Cluster Moon",
+        "Topic Window Moon",
+        "Pressure Window",
+        "Support Window",
+        "Activation Cluster",
+        "Topic Window",
+        "activation involving"
+      ],
+      "mediaAttachments": [
+        "moon_phase_svg"
+      ],
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with the user-facing section label followed by natural source evidence in parentheses, for example \"Current Moon weather (Waxing Gibbous Moon + Moon square Mercury, Uranus, and Venus in House 11):\". Do not start a section with bare \"Source:\". Do not expose internal cached fact titles in the user-facing answer. Do not write \"Pressure Window Moon\", \"Support Window Moon\", \"Activation Cluster Moon\", or \"Topic Window Moon\".\n\nUse only cached monthly transit insight facts that explicitly include Moon. You may also use a provided Current Moon Phase fact from the FreeAstro moon phase endpoint as current-sky context only. Every section must name the concrete evidence behind the interpretation in plain language, such as Waxing Gibbous Moon, Moon square Mercury/Uranus/Venus in House 11, supportive Moon trines/sextiles, Moon named transit-to-natal contacts, or a returned house/sign stellium that explicitly includes Moon. Do not use broad monthly transit facts that do not include Moon. Do not mention a date, peak, house, aspect, planet, life area, phase, special Moon label, eclipse marker, illumination, or zodiac position unless it appears in the returned fact.\n\nSource rule:\nEvery section must cite evidence in natural language. If mentioning a peak or timing window, include the window and peak if available, but do not call it a pressure/support/activation window. If mentioning a Moon phase, illumination, zodiac sign, special Moon label, traditional Moon name, eclipse marker, or next full/new Moon, use the Current Moon Phase endpoint fact. If mentioning an aspect, include the aspect type only if the cached fact provides it. Do not say \"around a date\", \"a pressure window\", or \"this transit\" without naming what creates it.\n\nCurrent Moon weather:\nIf the question asks what the Moon is doing to the person right now, the first section must cite both the current phase and one personal Moon transit evidence phrase in the heading, for example \"Current Moon weather (Waxing Gibbous Moon + Moon square Mercury, Uranus, and Venus in House 11):\". Start with one sentence on the phase, then immediately connect it to the strongest Moon-specific personal transit fact currently available. Do not make the first section phase-only unless the user asked only for the Moon phase. Prefer a fact whose evidence directly names Moon, or a Moon-including house/sign stellium if it is the clearest current factor. Name the house, involved planets, window, and peak if provided. If the endpoint returns a special Moon, traditional Moon name, or eclipse marker, mention it briefly here only.\n\nWhat Moon activates:\nExplain the concrete Moon theme: emotions, needs, instincts, mood, safety, family patterns, belonging, and nervous-system rhythm. Tie each interpretation to the named evidence. Use the phase as sky context, not as proof of a personal house or life area.\n\nHow to work with it:\nGive practical advice based only on the returned Moon facts. Keep it grounded in the named house, aspect type, planet contact, activation, or current phase fact.\n\nWatch point:\nIf Moon square evidence is present, describe the watch point as Moon square the named planets in the named house; do not use the internal pressure-window label. End with the main Moon sensitivity. Explicitly name the involved planets, aspect types, house, window, and peak if available. If the returned facts do not provide square or friction evidence, say which Moon support, background, or current phase fact is available instead.",
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied; needs UI review."
+    },
+    "current_mercury_transits": {
+      "toolTargets": [],
+      "toolTarget": null,
+      "sourceKinds": [
+        "monthly_transit"
+      ],
+      "factSourceTools": [
+        "rest_western_transits_insights"
+      ],
+      "categories": [
+        "mind",
+        "identity",
+        "emotions"
+      ],
+      "tags": [
+        "planet:mercury"
+      ],
+      "blockedPhrases": [
+        "Pressure Window",
+        "Support Window",
+        "Activation Cluster",
+        "Topic Window",
+        "activation involving"
+      ],
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with the user-facing section label followed by natural source evidence in parentheses, for example \"Current Mercury weather (Mercury square Mars in House 9):\". Do not start a section with bare \"Source:\". Do not expose internal cached fact titles such as \"Pressure Window Mercury\", \"Support Window Mercury\", \"Activation Cluster Mercury\", or \"Topic Window Mercury\".\n\nUse only cached monthly transit insight facts that explicitly include Mercury. Every section must name the concrete evidence behind the interpretation in plain language, such as Mercury square/trine named planets, supportive Mercury contacts, Mercury named transit-to-natal contacts, or a returned house/sign stellium that explicitly includes Mercury. Do not use broad monthly transit facts that do not include Mercury. Do not mention a date, peak, house, aspect, planet, or life area unless it appears in the returned cached fact.\n\nSource rule:\nEvery section must cite evidence in natural language. If mentioning a peak or timing window, include the window and peak if available, but do not call it a pressure/support/activation window. If mentioning an aspect, include the aspect type only if the cached fact provides it. Do not say \"around a date\", \"a pressure window\", or \"this transit\" without naming what creates it.\n\nCurrent Mercury weather:\nStart with the strongest Mercury-specific fact currently available. Prefer evidence that directly names Mercury, or a Mercury-including house/sign stellium if it is the clearest current factor. Name the house, involved planets, window, and peak if provided.\n\nWhat Mercury activates:\nExplain the concrete Mercury theme: thinking, communication, decision-making, learning, writing, planning, movement, and mental processing. Tie each interpretation to the named evidence.\n\nHow to work with it:\nGive practical advice based only on the returned Mercury facts. Keep it grounded in the named house, aspect type, planet contact, activation, or stellium.\n\nWatch point:\nIf friction evidence is present, describe the watch point as Mercury plus the aspect and named planets in the named house; do not use the internal pressure-window label. End with the main Mercury sensitivity. Explicitly name the involved planets, aspect types, house, window, and peak if available. If the returned facts do not provide friction evidence, say which Mercury support or background fact is available instead.",
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied with naturalized transit evidence labels; needs UI review."
+    },
+    "current_venus_transits": {
+      "toolTargets": [],
+      "toolTarget": null,
+      "sourceKinds": [
+        "monthly_transit"
+      ],
+      "factSourceTools": [
+        "rest_western_transits_insights"
+      ],
+      "categories": [
+        "relationships",
+        "growth",
+        "identity"
+      ],
+      "tags": [
+        "planet:venus"
+      ],
+      "blockedPhrases": [
+        "Pressure Window",
+        "Support Window",
+        "Activation Cluster",
+        "Topic Window",
+        "activation involving"
+      ],
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with the user-facing section label followed by natural source evidence in parentheses, for example \"Current Venus weather (Venus square Mars in House 9):\". Do not start a section with bare \"Source:\". Do not expose internal cached fact titles such as \"Pressure Window Venus\", \"Support Window Venus\", \"Activation Cluster Venus\", or \"Topic Window Venus\".\n\nUse only cached monthly transit insight facts that explicitly include Venus. Every section must name the concrete evidence behind the interpretation in plain language, such as Venus square/trine named planets, supportive Venus contacts, Venus named transit-to-natal contacts, or a returned house/sign stellium that explicitly includes Venus. Do not use broad monthly transit facts that do not include Venus. Do not mention a date, peak, house, aspect, planet, or life area unless it appears in the returned cached fact.\n\nSource rule:\nEvery section must cite evidence in natural language. If mentioning a peak or timing window, include the window and peak if available, but do not call it a pressure/support/activation window. If mentioning an aspect, include the aspect type only if the cached fact provides it. Do not say \"around a date\", \"a pressure window\", or \"this transit\" without naming what creates it.\n\nCurrent Venus weather:\nStart with the strongest Venus-specific fact currently available. Prefer evidence that directly names Venus, or a Venus-including house/sign stellium if it is the clearest current factor. Name the house, involved planets, window, and peak if provided.\n\nWhat Venus activates:\nExplain the concrete Venus theme: relationships, affection, attraction, pleasure, value, beauty, money, receptivity, and social harmony. Tie each interpretation to the named evidence.\n\nHow to work with it:\nGive practical advice based only on the returned Venus facts. Keep it grounded in the named house, aspect type, planet contact, activation, or stellium.\n\nWatch point:\nIf friction evidence is present, describe the watch point as Venus plus the aspect and named planets in the named house; do not use the internal pressure-window label. End with the main Venus sensitivity. Explicitly name the involved planets, aspect types, house, window, and peak if available. If the returned facts do not provide friction evidence, say which Venus support or background fact is available instead.",
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied with naturalized transit evidence labels; needs UI review."
+    },
+    "current_mars_transits": {
+      "toolTargets": [],
+      "toolTarget": null,
+      "sourceKinds": [
+        "monthly_transit"
+      ],
+      "factSourceTools": [
+        "rest_western_transits_insights"
+      ],
+      "categories": [
+        "drive",
+        "identity",
+        "growth"
+      ],
+      "tags": [
+        "planet:mars"
+      ],
+      "blockedPhrases": [
+        "Pressure Window",
+        "Support Window",
+        "Activation Cluster",
+        "Topic Window",
+        "activation involving"
+      ],
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with the user-facing section label followed by natural source evidence in parentheses, for example \"Current Mars weather (Mars square Saturn in House 9):\". Do not start a section with bare \"Source:\". Do not expose internal cached fact titles such as \"Pressure Window Mars\", \"Support Window Mars\", \"Activation Cluster Mars\", or \"Topic Window Mars\".\n\nUse only cached monthly transit insight facts that explicitly include Mars. Every section must name the concrete evidence behind the interpretation in plain language, such as Mars square/trine named planets, supportive Mars contacts, Mars named transit-to-natal contacts, or a returned house/sign stellium that explicitly includes Mars. Do not use broad monthly transit facts that do not include Mars. Do not mention a date, peak, house, aspect, planet, or life area unless it appears in the returned cached fact.\n\nSource rule:\nEvery section must cite evidence in natural language. If mentioning a peak or timing window, include the window and peak if available, but do not call it a pressure/support/activation window. If mentioning an aspect, include the aspect type only if the cached fact provides it. Do not say \"around a date\", \"a pressure window\", or \"this transit\" without naming what creates it.\n\nCurrent Mars weather:\nStart with the strongest Mars-specific fact currently available. Prefer evidence that directly names Mars, or a Mars-including house/sign stellium if it is the clearest current factor. Name the house, involved planets, window, and peak if provided.\n\nWhat Mars activates:\nExplain the concrete Mars theme: drive, assertion, anger, desire, courage, conflict, initiative, stamina, and decisive action. Tie each interpretation to the named evidence.\n\nHow to work with it:\nGive practical advice based only on the returned Mars facts. Keep it grounded in the named house, aspect type, planet contact, activation, or stellium.\n\nWatch point:\nIf friction evidence is present, describe the watch point as Mars plus the aspect and named planets in the named house; do not use the internal pressure-window label. End with the main Mars sensitivity. Explicitly name the involved planets, aspect types, house, window, and peak if available. If the returned facts do not provide friction evidence, say which Mars support or background fact is available instead.",
+      "mcpLoadingMode": "never",
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied with naturalized transit evidence labels; needs UI review."
+    },
+    "relationship_patterns": {
+      "toolTargets": [
+        "v1_western_natal_insights"
+      ],
+      "toolTarget": "v1_western_natal_insights",
+      "sourceKinds": [
+        "natal"
+      ],
+      "categories": [
+        "relationships",
+        "identity",
+        "emotions"
+      ],
+      "tags": [
+        "relationship",
+        "love",
+        "patterns",
+        "house:7"
+      ],
+      "cacheStrategy": "indexed_natal_then_tool",
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 10,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with a natural user-facing section label followed by the exact source fact in parentheses, for example \"Relationship signature (Descendant in Sagittarius):\" or \"Core Sun expression (Sun in Capricorn):\". Do not start a section with bare \"Source:\". The source fact should read like visible evidence for the user, not an internal citation.\n\nUse only available natal chart facts, cached natal insight facts, or the natal insights tool result. Stay focused on relationship patterns: attachment style, attraction patterns, partnership needs, relational strengths, and recurring tensions. Do not turn this into a full natal overview. Do not invent placements, houses, rulers, aspects, or relationship themes that are not present in the facts.\n\nSource rule:\nEvery section must name the source placement, house, ruler, aspect, angle, pattern, or natal insight fact that supports it. If a requested relationship factor is missing, say what relationship-relevant chart evidence is available instead.\n\nRelationship signature:\nStart with the strongest relationship-specific chart fact. Prefer 7th-house, Venus, Moon, Descendant, ruler, or returned relationship insight facts when available.\n\nEmotional pattern in partnership:\nExplain how the person tends to bond, seek safety, or respond emotionally in relationships. Tie the interpretation to named Moon, Venus, 7th-house, aspect, or relationship fact evidence.\n\nWhat they need from others:\nDescribe the clearest partnership need, attraction pattern, or compatibility preference grounded in the returned facts.\n\nWatch point and integration:\nEnd with the main relational shadow or growth edge, then give one practical integration cue. Name the exact source fact behind this advice.",
+      "mcpLoadingMode": "after_fast_path",
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied; needs UI review."
+    },
+    "money_pattern": {
+      "toolTargets": [
+        "v1_western_natal_insights"
+      ],
+      "toolTarget": "v1_western_natal_insights",
+      "sourceKinds": [
+        "natal"
+      ],
+      "categories": [
+        "growth",
+        "life_path",
+        "identity"
+      ],
+      "tags": [
+        "money",
+        "resources",
+        "house:2",
+        "house:8"
+      ],
+      "cacheStrategy": "indexed_natal_then_tool",
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 10,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with a natural user-facing section label followed by the exact source fact in parentheses, for example \"Relationship signature (Descendant in Sagittarius):\" or \"Core Sun expression (Sun in Capricorn):\". Do not start a section with bare \"Source:\". The source fact should read like visible evidence for the user, not an internal citation.\n\nUse only available natal chart facts, cached natal insight facts, or the natal insights tool result. Stay focused on money, resources, earning style, spending patterns, shared resources, security needs, and value systems. Do not turn this into a full career or natal overview. Do not invent placements, houses, rulers, aspects, or financial themes that are not present in the facts.\n\nSource rule:\nEvery section must name the source placement, house, ruler, aspect, angle, pattern, or natal insight fact that supports it. Prefer 2nd-house, 8th-house, Venus, Jupiter, Saturn, Taurus/Scorpio, ruler, or returned money/resource facts when available.\n\nCore money signature:\nStart with the strongest money or resource-specific chart fact. Name the exact placement, house, ruler, aspect, or insight fact.\n\nHow value and security work:\nExplain how the person tends to build security, choose what is worth investing in, or define value. Tie it to the named source fact.\n\nStrengths and opportunities:\nDescribe the strongest practical resource-building advantage shown by the facts. Include only opportunities supported by available evidence.\n\nWatch point and integration:\nEnd with the main financial shadow, fear, excess, or blind spot, then give one grounded integration cue. Name the exact source fact behind this advice.",
+      "mcpLoadingMode": "after_fast_path",
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied; needs UI review."
+    },
+    "sun_sign": {
+      "toolTargets": [
+        "v1_western_signs_sun"
+      ],
+      "toolTarget": "v1_western_signs_sun",
+      "sourceKinds": [
+        "natal"
+      ],
+      "categories": [
+        "identity",
+        "life_path"
+      ],
+      "tags": [
+        "planet:sun"
+      ],
+      "cacheStrategy": "indexed_natal_then_tool",
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with a natural user-facing section label followed by the exact source fact in parentheses, for example \"Relationship signature (Descendant in Sagittarius):\" or \"Core Sun expression (Sun in Capricorn):\". Do not start a section with bare \"Source:\". The source fact should read like visible evidence for the user, not an internal citation.\n\nUse only available natal chart facts, cached natal facts, or the Sun sign tool result. Stay focused on the Sun: identity, vitality, confidence, creative life force, visibility, and purpose. Do not drift into a full chart overview and do not invent placements, houses, aspects, chart rulers, or psychological claims that are not present in the facts.\n\nSource rule:\nEvery section must name the source placement, house, ruler, aspect, angle, or natal fact that supports it. If the sign is available but house, ruler, or aspects are missing, say that those modifiers are not available and interpret only the available Sun evidence.\n\nCore Sun expression:\nStart with the exact Sun sign or placement returned by the facts/tool. Explain the core expression in plain language.\n\nHouse and life area:\nExplain the lived pattern shown by the Sun. Name the house, life area, or available source fact if provided.\n\nAspects or modifiers:\nMention the strongest available modifier: house, ruler, close aspect, angle, or returned natal insight. If no modifier is available, explicitly stay with the main Sun placement.\n\nIntegration:\nEnd with one practical integration cue based only on the named Sun evidence.",
+      "mcpLoadingMode": "after_fast_path",
+      "productionStatus": "check",
+      "productionNotes": "Grounded answer logic applied; needs UI review."
+    },
+    "moon_sign": {
+      "toolTargets": [
+        "v1_western_signs_moon"
+      ],
+      "toolTarget": "v1_western_signs_moon",
+      "sourceKinds": [
+        "natal"
+      ],
+      "categories": [
+        "emotions",
+        "identity",
+        "relationships"
+      ],
+      "tags": [
+        "planet:moon",
+        "emotions"
+      ],
+      "cacheStrategy": "indexed_natal_then_tool",
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with a natural user-facing section label followed by the exact source fact in parentheses, for example \"Relationship signature (Descendant in Sagittarius):\" or \"Core Sun expression (Sun in Capricorn):\". Do not start a section with bare \"Source:\". The source fact should read like visible evidence for the user, not an internal citation.\n\nUse only available natal chart facts, cached natal facts, or the Moon sign tool result. Stay focused on the Moon: emotional needs, instincts, mood, safety, attachment, memory, and inner life. Do not drift into a full chart overview and do not invent placements, houses, aspects, chart rulers, or psychological claims that are not present in the facts.\n\nSource rule:\nEvery section must name the source placement, house, ruler, aspect, angle, or natal fact that supports it. If the sign is available but house, ruler, or aspects are missing, say that those modifiers are not available and interpret only the available Moon evidence.\n\nCore Moon expression:\nStart with the exact Moon sign or placement returned by the facts/tool. Explain the core expression in plain language.\n\nNeeds and safety pattern:\nExplain the lived pattern shown by the Moon. Name the house, life area, or available source fact if provided.\n\nHouse and aspects:\nMention the strongest available modifier: house, ruler, close aspect, angle, or returned natal insight. If no modifier is available, explicitly stay with the main Moon placement.\n\nIntegration:\nEnd with one practical integration cue based only on the named Moon evidence.",
+      "mcpLoadingMode": "after_fast_path",
+      "productionStatus": "ready",
+      "productionNotes": "Grounded answer logic applied; needs UI review."
+    },
+    "rising_sign": {
+      "toolTargets": [
+        "v1_western_signs_rising"
+      ],
+      "toolTarget": "v1_western_signs_rising",
+      "sourceKinds": [
+        "natal"
+      ],
+      "categories": [
+        "identity",
+        "chart_pattern",
+        "life_path"
+      ],
+      "tags": [
+        "angle:asc",
+        "rising"
+      ],
+      "cacheStrategy": "indexed_natal_then_tool",
+      "responseShape": "factual_cards",
+      "cardLimit": 4,
+      "factLimit": 8,
+      "responseInstructions": "Return exactly 4 short sections. Do not write \"Card 1\", \"Card 2\", etc.\n\nFormat rule:\nStart each section with a natural user-facing section label followed by the exact source fact in parentheses, for example \"Relationship signature (Descendant in Sagittarius):\" or \"Core Sun expression (Sun in Capricorn):\". Do not start a section with bare \"Source:\". The source fact should read like visible evidence for the user, not an internal citation.\n\nUse only available natal chart facts, cached natal facts, or the Ascendant/Rising sign sign tool result. Stay focused on the Ascendant/Rising sign: presentation, first response to life, embodiment, chart entry point, and the way the person meets the world. Do not drift into a full chart overview and do not invent placements, houses, aspects, chart rulers, or psychological claims that are not present in the facts.\n\nSource rule:\nEvery section must name the source placement, house, ruler, aspect, angle, or natal fact that supports it. If the sign is available but house, ruler, or aspects are missing, say that those modifiers are not available and interpret only the available Ascendant/Rising sign evidence.\n\nCore rising expression:\nStart with the exact Ascendant/Rising sign sign or placement returned by the facts/tool. Explain the core expression in plain language.\n\nHow they meet life:\nExplain the lived pattern shown by the Ascendant/Rising sign. Name the house, life area, or available source fact if provided.\n\nChart ruler or modifiers:\nMention the strongest available modifier: house, ruler, close aspect, angle, or returned natal insight. If no modifier is available, explicitly stay with the main Ascendant/Rising sign placement.\n\nIntegration:\nEnd with one practical integration cue based only on the named Ascendant/Rising sign evidence.",
+      "mcpLoadingMode": "after_fast_path",
+      "productionStatus": "check",
+      "productionNotes": "Grounded answer logic applied; needs UI review."
+    },
+    "hidden_strength": {
       "productionStatus": "ready"
     }
   }

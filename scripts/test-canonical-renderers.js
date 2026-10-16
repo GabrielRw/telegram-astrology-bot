@@ -7,6 +7,7 @@ const {
   buildEphemerisWebAppUrl,
   renderEphemerisMonthPng
 } = require('../src/services/ephemerisTable');
+const { renderMonthlyTransitsPng } = require('../src/services/monthlyTransitTable');
 
 function testSecondaryProgressions() {
   const payload = {
@@ -350,6 +351,35 @@ async function testEphemerisSummaryAndPng() {
   assert.equal(buffer.subarray(1, 4).toString('ascii'), 'PNG');
 }
 
+async function testMonthlyTransitTablePng() {
+  const pages = await renderMonthlyTransitsPng({
+    title: 'All monthly transits for Chart User',
+    month: '2026-06',
+    rows: [
+      {
+        title: 'Saturn square Moon',
+        window: '2026-06-01 to 2026-06-10',
+        peak: '2026-06-05',
+        focus: 'Saturn Square Moon',
+        houses: '4, 10',
+        notes: 'Carries over'
+      }
+    ]
+  });
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].buffer.subarray(1, 4).toString('ascii'), 'PNG');
+  assert.equal(pages[0].filename, 'monthly-transits.png');
+}
+
+async function testMonthlyTransitTablePagination() {
+  const pages = await renderMonthlyTransitsPng({
+    title: 'All monthly transits',
+    rows: Array.from({ length: 31 }, (_, index) => ({ title: `Transit ${index + 1}` }))
+  });
+  assert.equal(pages.length, 2);
+  assert.equal(pages[1].filename, 'monthly-transits-2.png');
+}
+
 function testTransitSearchRawRenderer() {
   const payload = {
     input: {
@@ -399,6 +429,8 @@ function testTransitSearchRawRenderer() {
   testRelocationRenderer();
   testEphemerisRenderer();
   await testEphemerisSummaryAndPng();
+  await testMonthlyTransitTablePng();
+  await testMonthlyTransitTablePagination();
   testTransitSearchRawRenderer();
 
   console.log('ok');

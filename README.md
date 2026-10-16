@@ -513,6 +513,30 @@ node --check src/state/chatState.js
 node --check src/utils/format.js
 ```
 
+### Answer quality eval
+
+`npm run eval:answers` sends the questions in [answer-cases.jsonl](data/eval/answer-cases.jsonl) through the full bot pipeline (real FreeAstro and Gemini calls) for the birth profile in [fixture-profile.json](data/eval/fixture-profile.json). It then scores what the user would actually receive. Supabase, Stripe, Telegram and WhatsApp are switched off for the run, so nothing is written to production.
+
+Each case can check:
+
+- the route and the resolved date window
+- chart facts that must appear in the answer (`venus.sign`, `sun.house`, `strongest_aspect`, …), computed from the real chart
+- sign or house claims that contradict the chart
+- required and forbidden patterns
+- the answer validator: meta/tool leaks, internal ids, wrong language, ignored "in 3 paragraphs" requests, markdown
+- latency (soft)
+
+```bash
+npm run eval:answers                                   # all cases
+npm run eval:answers -- --category electional --locale fr
+npm run eval:answers -- --ids placement_rising_en --judge
+npm run eval:answers -- --save-baseline                # later runs report regressions against it
+```
+
+`--judge` adds an LLM groundedness audit of natal claims (set `GEMINI_JUDGE_MODEL` to use a different model). Reports are written to `var/eval/`: a full JSON report, plus `answers-latest.md` with every failed answer.
+
+The same validator runs in production on every plain-text answer. It repairs safe problems (headings glued to their paragraph, sentences about "the provided data" or "the tool") and logs an `answer quality` event with any remaining issues.
+
 ### Manual Telegram test
 
 1. Start the bot locally with `npm run dev`

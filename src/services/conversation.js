@@ -33,7 +33,7 @@ const {
   setLastToolResults
 } = require('../state/chatState');
 const { getLocale } = require('./locale');
-const { getEphemeris, searchCities } = require('./freeastro');
+const { getEphemeris, getMoonPhase, searchCities } = require('./freeastro');
 const { splitConversationReply } = require('../utils/format');
 
 const LOCALE_INSTRUCTION = {
@@ -531,6 +531,18 @@ function inferStructuredQueryParameters(routeId, text, subjectProfile, timezone 
   const durationDays = parseDurationDaysFromQuestion(value);
 
   if (ELECTIONAL_ROUTE_IDS.has(routeId)) {
+    const relativeWindow = (explicitDateRange || explicitSingleDate)
+      ? null
+      : parseRelativeDateWindowFromQuestion(value, timezone);
+    if (relativeWindow) {
+      return sanitizeStructuredQueryPatch({
+        rangeStart: relativeWindow.start,
+        rangeEnd: relativeWindow.end,
+        timeframe: 'explicit_range',
+        durationDays,
+        limit
+      });
+    }
     const wantsCurrentMonth = /\b(this month|ce mois|ce mois ci|dieser monat|este mes)\b/i.test(value);
     const wantsCurrentYear = /\b(this year|cette annee|cette année|dieses jahr|este ano|este año)\b/i.test(value);
     return sanitizeStructuredQueryPatch({
@@ -740,15 +752,40 @@ function looksLikeReferentialFollowUp(text) {
   return (referentialCue && followUpCue) || shortReferential || followUpCue;
 }
 
+// Demonstratives that point at a time, not at a previous answer ("this week", "ce mois-ci").
+const TIME_DEICTIC_PATTERN = /\b(?:this|that|next|coming|these|those) (?:week|weekend|month|year|morning|afternoon|evening|night|time|period|season|days|weeks|months)\b|\b(?:en )?ce (?:moment|mois(?: ci)?|matin|soir|week end|weekend)\b|\bcette (?:semaine|annee|periode|saison)\b|\bces (?:jours|semaines|mois)(?: ci)?\b|\bdiese(?:n|r|s)? (?:woche|monat|jahr|tage|zeit)\b|\b(?:esta|esa) (?:semana|temporada)\b|\b(?:este|ese) (?:mes|ano|momento)\b|\b(?:estos|estas) (?:dias|semanas)\b/g;
+// Dummy "it/this" in timing questions ("Is it a good time to...", "Is this a good month for...").
+const EXPLETIVE_PRONOUN_PATTERN = /\b(?:is|will|would|was) (?:it|this|that)(?: going to be| be)? (?:a )?(?:good|bad|great|right|wise|ok|okay|favorable|favourable|the best|the right|safe)\b|\bit(?: is|s) (?:a )?(?:good|bad|right|wise|the best|the right) (?:time|day|moment|idea|month|week|year)\b/g;
+const REFERENTIAL_PRONOUN_PATTERN = /\b(?:this|that|these|those|it|them|ce|cela|ca|ces|das|dies|diese|dieser|esto|eso|estos|esas|esa)\b/;
+const SHORT_CONTEXT_CUE_PATTERN = /^(?:ok|okay|d accord|dac|alors|et|and|und|y|verify|recheck|check|confirm|clarify|explain|details?|meaning|why|pourquoi|warum|por que|verifie|confirme|explique|detaille)\b/;
+// Questions about something said earlier: "what does that mean", "explain this", "qu'est-ce que ça veut dire".
+const ASKS_ABOUT_REFERENT_PATTERN = /\b(?:what does (?:this|that|it) (?:mean|say|imply)|what about (?:this|that|it|them)|(?:explain|clarify) (?:this|that|it)|tell me (?:more )?about (?:this|that|it)|more about (?:this|that|it)|why is (?:this|that|it)|is (?:this|that|it) (?:true|right|correct|accurate)|(?:ca|cela) (?:veut dire|signifie|dit)|qu est ce que (?:ca|cela)|explique(?:z)?(?: moi)? (?:ca|cela)|was (?:bedeutet|sagt) (?:das|dies)(?= (?:fur|uber|mir|mich|denn|genau|eigentlich)\\b|$)|erklar(?:e|en sie)? (?:das|dies)|que significa (?:eso|esto)|que quiere decir (?:eso|esto)|explica(?:me)? (?:eso|esto))\b/;
+const ASTROLOGY_SUBJECT_PATTERN = /\b(?:sun|moon|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto|chiron|lilith|soleil|lune|mercure|saturne|pluton|sonne|mond|merkur|neptun|sol|luna|mercurio|marte|saturno|urano|neptuno|aries|taurus|gemini|cancer|leo|virgo|libra|scorpio|sagittarius|capricorn|aquarius|pisces|belier|taureau|gemeaux|lion|vierge|balance|scorpion|sagittaire|capricorne|verseau|poissons|widder|stier|zwillinge|krebs|lowe|jungfrau|waage|skorpion|schutze|steinbock|wassermann|fische|tauro|geminis|escorpio|sagitario|capricornio|acuario|piscis|chart|birth chart|natal|theme|horoscope|horoskop|horoscopo|transits?|transite?|transitos?|aspects?|aspekte?|aspectos?|houses?|maisons?|haus|hauser|casas?|ascendant|aszendent|ascendente|rising|midheaven|milieu du ciel|medium coeli|medio cielo|nodes?|noeuds?|stellium|elements?|modality|profections?|solar return|retour solaire|progressions?|progressed|ephemeris|ephemerides|moon phase|synastry|synastrie|compatibility|compatibilite|relocation|astrocartography|retrograde|retrograd|retrogrado|election|best time|good time|best day|good day|meilleur moment|bon moment|guter zeitpunkt|buen momento|mejor momento)\b/;
+
 function looksLikeContextDependentFollowUp(text) {
-  const value = String(text || '').trim().toLowerCase();
+  const value = normalizeMatchingText(String(text || '').trim()).replace(/[’'?!.,;:¿¡"«»“”()-]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!value || value.length > 220) {
     return false;
   }
 
-  const referentialCue = /\b(this|that|these|those|it|them|ce|cette|ces|cela|ca|ça|das|diese|dieser|esto|eso|estos|esas|esa)\b/i.test(value);
-  const shortContextCue = /^(?:ok|okay|d accord|dac|alors|et|and|und|y|verify|recheck|check|confirm|clarify|explain|details?|meaning|why|pourquoi|verifie|vérifie|confirme|explique|detaille|détaille)\b/i.test(value);
-  return referentialCue || shortContextCue;
+  const wordCount = value.split(' ').length;
+  if (SHORT_CONTEXT_CUE_PATTERN.test(value) && wordCount <= 4) {
+    return true;
+  }
+
+  const withoutDeixis = value.replace(TIME_DEICTIC_PATTERN, ' ').replace(EXPLETIVE_PRONOUN_PATTERN, ' ');
+  if (!REFERENTIAL_PRONOUN_PATTERN.test(withoutDeixis)) {
+    return false;
+  }
+
+  // "What does that mean for love?" needs the previous answer, unless the same message already
+  // names the subject ("Do I have a stellium? What does it mean?").
+  const referentMatch = withoutDeixis.match(ASKS_ABOUT_REFERENT_PATTERN);
+  if (referentMatch) {
+    return !ASTROLOGY_SUBJECT_PATTERN.test(withoutDeixis.slice(0, referentMatch.index));
+  }
+
+  return !ASTROLOGY_SUBJECT_PATTERN.test(withoutDeixis);
 }
 
 function buildFollowUpsDisabledResponse(locale) {
@@ -1012,7 +1049,8 @@ function detectExplicitFollowUp(userText, conversationContext, history = []) {
     };
   }
 
-  const explicitElectionalRange = parseExplicitDateRangeFromQuestion(value);
+  const explicitElectionalRange = parseExplicitDateRangeFromQuestion(value)
+    || parseRelativeDateWindowFromQuestion(value);
   const explicitElectionalSingleDate = explicitElectionalRange ? null : parseExplicitSingleDateFromQuestion(value);
   if (
     (explicitElectionalRange || explicitElectionalSingleDate) &&
@@ -2253,6 +2291,27 @@ function buildExecutionIntentFromCommonRoute(route) {
   };
 }
 
+function shouldKeepLocalCommonRouteOverEmbedding(localRoute, embeddingMatch, userText) {
+  if (!localRoute || !embeddingMatch?.accepted) {
+    return false;
+  }
+
+  const localSourceKinds = Array.isArray(localRoute.sourceKinds) ? localRoute.sourceKinds : [];
+  const localFamily = localSourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+    ? 'indexed_monthly_transits'
+    : 'indexed_natal';
+  const embeddingFamily = embeddingMatch.expectedFamily || null;
+  const localScore = Number(localRoute.score || 0);
+
+  if (localScore >= 0.95 && embeddingFamily && localFamily !== embeddingFamily) {
+    return true;
+  }
+
+  return localSourceKinds.includes(factIndex.MONTHLY_TRANSIT_SOURCE_KIND)
+    && embeddingFamily === 'indexed_natal'
+    && looksLikeCurrentTransitCue(userText);
+}
+
 async function routeConversationExecutionWithAi(locale, userText, route, subjectProfile, factAvailability, conversationContext, queryState = null) {
   const electionalConfig = inferElectionalRouteConfigFromQuestion(userText)
     || getElectionalRouteConfig(queryState?.canonicalRouteId);
@@ -2685,6 +2744,416 @@ function getCurrentLocalDateParts(timezone = 'UTC') {
 function getDateStringInTimezone(timezone = 'UTC') {
   const { year, month, day } = getCurrentLocalDateParts(timezone);
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function getDateTimeStringInTimezone(timezone = 'UTC') {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = formatter.formatToParts(new Date());
+  const partValue = (type) => parts.find((part) => part.type === type)?.value || '00';
+
+  return [
+    `${partValue('year')}-${partValue('month')}-${partValue('day')}`,
+    `${partValue('hour')}:${partValue('minute')}:${partValue('second')}`
+  ].join('T');
+}
+
+function firstPresentValue(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+  return null;
+}
+
+function toFiniteNumberOrNull(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatMoonPercent(value) {
+  const number = toFiniteNumberOrNull(value);
+  if (number === null) {
+    return null;
+  }
+
+  const percent = number >= 0 && number <= 1 ? number * 100 : number;
+  return `${Math.round(percent)}%`;
+}
+
+function formatMoonDecimal(value, digits = 1) {
+  const number = toFiniteNumberOrNull(value);
+  if (number === null) {
+    return null;
+  }
+  return Number(number.toFixed(digits)).toString();
+}
+
+function normalizeMoonPhasePayload(payload) {
+  if (payload?.data && !Array.isArray(payload.data) && typeof payload.data === 'object') {
+    return payload.data;
+  }
+  if (payload?.result && typeof payload.result === 'object') {
+    return payload.result;
+  }
+  if (payload?.structuredContent && typeof payload.structuredContent === 'object') {
+    return payload.structuredContent;
+  }
+  return payload && typeof payload === 'object' ? payload : {};
+}
+
+function collectSpecialMoonLabels(specialMoon) {
+  if (!specialMoon || typeof specialMoon !== 'object') {
+    return [];
+  }
+
+  const labels = new Set(asArray(specialMoon.labels).map(formatScalarValue).filter(Boolean));
+  [
+    ['is_supermoon', 'Supermoon'],
+    ['is_micromoon', 'Micromoon'],
+    ['is_blue_moon', 'Blue Moon'],
+    ['is_black_moon', 'Black Moon'],
+    ['is_harvest_moon', 'Harvest Moon'],
+    ['is_hunter_moon', "Hunter's Moon"]
+  ].forEach(([flag, label]) => {
+    if (specialMoon[flag]) {
+      labels.add(label);
+    }
+  });
+
+  return [...labels];
+}
+
+function formatMoonEclipseLabel(eclipse) {
+  if (!eclipse || typeof eclipse !== 'object' || !eclipse.is_eclipse) {
+    return null;
+  }
+
+  const pieces = [
+    eclipse.type ? `${humanizeRawKey(eclipse.type)} lunar eclipse` : 'lunar eclipse',
+    eclipse.is_blood_moon ? 'Blood Moon' : null,
+    eclipse.date ? `date ${eclipse.date}` : null,
+    eclipse.visibility ? `visibility ${eclipse.visibility}` : null,
+    eclipse.visible_at_location === true ? 'visible at the profile location' : null,
+    eclipse.visible_at_location === false ? 'not visible at the profile location' : null
+  ].filter(Boolean);
+
+  return pieces.join(', ');
+}
+
+function formatMoonForecastLabel(forecast) {
+  if (!forecast || typeof forecast !== 'object') {
+    return null;
+  }
+
+  const fullMoonDays = formatMoonDecimal(forecast.days_until_full_moon);
+  const newMoonDays = formatMoonDecimal(forecast.days_until_new_moon);
+  const nextSpecial = forecast.next_special_moon && typeof forecast.next_special_moon === 'object'
+    ? [
+        forecast.next_special_moon.type,
+        forecast.next_special_moon.subtype,
+        formatMoonDecimal(forecast.next_special_moon.days_until)
+          ? `in ${formatMoonDecimal(forecast.next_special_moon.days_until)} days`
+          : null
+      ].filter(Boolean).join(' ')
+    : null;
+  const nextEclipse = forecast.next_eclipse && typeof forecast.next_eclipse === 'object'
+    ? [
+        forecast.next_eclipse.type ? `${humanizeRawKey(forecast.next_eclipse.type)} eclipse` : 'eclipse',
+        forecast.next_eclipse.is_blood_moon ? 'Blood Moon' : null,
+        forecast.next_eclipse.date ? `on ${forecast.next_eclipse.date}` : null,
+        formatMoonDecimal(forecast.next_eclipse.days_until)
+          ? `in ${formatMoonDecimal(forecast.next_eclipse.days_until)} days`
+          : null
+      ].filter(Boolean).join(' ')
+    : null;
+
+  return [
+    fullMoonDays ? `full Moon in ${fullMoonDays} days` : null,
+    newMoonDays ? `new Moon in ${newMoonDays} days` : null,
+    nextSpecial ? `next special Moon: ${nextSpecial}` : null,
+    nextEclipse ? `next eclipse: ${nextEclipse}` : null
+  ].filter(Boolean).join('; ') || null;
+}
+
+function extractCurrentMoonPhaseDetails(payload) {
+  const data = normalizeMoonPhasePayload(payload);
+  const phase = data.phase && typeof data.phase === 'object' ? data.phase : {};
+  const zodiac = data.zodiac && typeof data.zodiac === 'object' ? data.zodiac : {};
+  const traditionalMoon = data.traditional_moon && typeof data.traditional_moon === 'object'
+    ? data.traditional_moon
+    : {};
+  const nextPhases = data.next_phases && typeof data.next_phases === 'object' ? data.next_phases : {};
+  const phaseName = formatScalarValue(firstPresentValue(
+    phase.name,
+    phase.label,
+    data.phase_name,
+    data.phaseLabel
+  ));
+  const illumination = formatMoonPercent(firstPresentValue(phase.illumination, data.illumination));
+  const ageDays = formatMoonDecimal(firstPresentValue(phase.age_days, phase.ageDays, data.age_days, data.ageDays));
+  const distanceKm = formatMoonDecimal(firstPresentValue(phase.distance_km, phase.distanceKm, data.distance_km, data.distanceKm), 0);
+  const phaseAngleDeg = formatMoonDecimal(firstPresentValue(phase.phase_angle_deg, phase.phaseAngleDeg), 1);
+  const specialLabels = collectSpecialMoonLabels(data.special_moon);
+  const eclipseLabel = formatMoonEclipseLabel(data.eclipse);
+  const forecastLabel = formatMoonForecastLabel(data.forecast);
+  const zodiacSign = formatScalarValue(zodiac.sign);
+  const zodiacDegree = formatMoonDecimal(zodiac.degree, 1);
+
+  return {
+    timestamp: formatScalarValue(data.timestamp),
+    phaseName,
+    phaseAngleDeg,
+    illumination,
+    ageDays,
+    distanceKm,
+    isWaxing: typeof phase.is_waxing === 'boolean' ? phase.is_waxing : null,
+    zodiacSign,
+    zodiacSignId: formatScalarValue(zodiac.sign_id),
+    zodiacDegree,
+    zodiacLabel: zodiacSign
+      ? [zodiacSign, zodiacDegree ? `${zodiacDegree}°` : null].filter(Boolean).join(' ')
+      : null,
+    specialLabels,
+    eclipseLabel,
+    forecastLabel,
+    traditionalMoonName: formatScalarValue(traditionalMoon.name),
+    traditionalMoonAppliesAt: formatScalarValue(traditionalMoon.applies_to_full_moon_at),
+    traditionalMoonIsCurrent: typeof traditionalMoon.is_current_full_moon === 'boolean'
+      ? traditionalMoon.is_current_full_moon
+      : null,
+    nextNewMoon: formatScalarValue(nextPhases.new_moon),
+    nextFirstQuarter: formatScalarValue(nextPhases.first_quarter),
+    nextFullMoon: formatScalarValue(nextPhases.full_moon),
+    nextLastQuarter: formatScalarValue(nextPhases.last_quarter)
+  };
+}
+
+function resolveCurrentMoonPhaseLocation(subjectProfile = {}) {
+  const natal = subjectProfile?.natalRequestPayload || {};
+  const rawLocation = subjectProfile?.rawNatalPayload?.subject?.location || {};
+  const chartLocation = subjectProfile?.chartRequestPayload?.subject?.location || {};
+  const lat = toFiniteNumberOrNull(firstPresentValue(
+    subjectProfile.lat,
+    natal.lat,
+    rawLocation.lat,
+    chartLocation.lat
+  ));
+  const lon = toFiniteNumberOrNull(firstPresentValue(
+    subjectProfile.lon,
+    subjectProfile.lng,
+    natal.lon,
+    natal.lng,
+    rawLocation.lon,
+    rawLocation.lng,
+    chartLocation.lon,
+    chartLocation.lng
+  ));
+
+  return { lat, lon };
+}
+
+function buildCurrentMoonPhaseRequest(subjectProfile = {}, options = {}) {
+  const timezone = firstPresentValue(
+    options.timezone,
+    subjectProfile?.timezone,
+    subjectProfile?.birthTimezone,
+    subjectProfile?.natalRequestPayload?.tz_str,
+    subjectProfile?.rawNatalPayload?.subject?.location?.timezone,
+    'UTC'
+  );
+  const { lat, lon } = resolveCurrentMoonPhaseLocation(subjectProfile);
+  const params = {
+    date: options.date || getDateTimeStringInTimezone(timezone),
+    tz_str: timezone,
+    include_zodiac: true,
+    include_special: true,
+    include_eclipse: true,
+    include_forecast: true,
+    include_traditional_moon: true,
+    include_visuals: true
+  };
+
+  if (lat !== null) {
+    params.lat = lat;
+  }
+  if (lon !== null) {
+    params.lon = lon;
+  }
+
+  return {
+    params,
+    timezone,
+    localDate: options.localDate || getDateStringInTimezone(timezone)
+  };
+}
+
+function buildCurrentMoonPhaseFact(payload, subjectProfile = {}, options = {}) {
+  const details = extractCurrentMoonPhaseDetails(payload);
+  if (!details.phaseName) {
+    return null;
+  }
+
+  const timezone = options.timezone || subjectProfile?.timezone || 'UTC';
+  const localDate = options.localDate || getDateStringInTimezone(timezone);
+  const sourceLabel = 'FreeAstro /api/v1/moon/phase';
+  const titleSuffix = details.specialLabels.length > 0
+    ? ` (${details.specialLabels.join(', ')})`
+    : '';
+  const phaseQualifiers = [
+    details.illumination ? `${details.illumination} illuminated` : null,
+    details.ageDays ? `${details.ageDays} days old` : null,
+    details.phaseAngleDeg ? `${details.phaseAngleDeg}° phase angle` : null,
+    details.isWaxing === true ? 'waxing' : null,
+    details.isWaxing === false ? 'waning' : null
+  ].filter(Boolean);
+  const factText = [
+    `Current Moon phase from ${sourceLabel} for ${localDate} (${timezone}): ${details.phaseName}.`,
+    phaseQualifiers.length > 0 ? `Phase details: ${phaseQualifiers.join(', ')}.` : null,
+    details.zodiacLabel ? `Current Moon zodiac sign returned by the endpoint: ${details.zodiacLabel}.` : null,
+    details.specialLabels.length > 0 ? `Special Moon marker returned: ${details.specialLabels.join(', ')}.` : null,
+    details.eclipseLabel ? `Eclipse marker returned: ${details.eclipseLabel}.` : null,
+    details.traditionalMoonName
+      ? `Traditional Moon name returned: ${details.traditionalMoonName}${details.traditionalMoonAppliesAt ? `, applying to the full Moon at ${details.traditionalMoonAppliesAt}` : ''}${details.traditionalMoonIsCurrent === true ? ', current full Moon' : ''}.`
+      : null,
+    details.nextFullMoon || details.nextNewMoon
+      ? [
+          details.nextFullMoon ? `Next full Moon: ${details.nextFullMoon}` : null,
+          details.nextNewMoon ? `Next new Moon: ${details.nextNewMoon}` : null
+        ].filter(Boolean).join('. ') + '.'
+      : null,
+    details.forecastLabel ? `Forecast returned by the endpoint: ${details.forecastLabel}.` : null
+  ].filter(Boolean).join(' ');
+
+  return {
+    factKey: `moon-phase:${localDate}:${String(details.phaseName).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    category: 'emotions',
+    title: `Current Moon Phase: ${details.phaseName}${titleSuffix}`,
+    tags: ['current', 'today', 'planet:moon', 'moon_phase'],
+    factText,
+    factPayload: {
+      raw: {
+        kind: 'moon_phase',
+        endpoint: '/api/v1/moon/phase',
+        sourceToolName: 'rest_moon_phase',
+        evidence: {
+          phase_name: details.phaseName,
+          illumination: details.illumination,
+          age_days: details.ageDays,
+          phase_angle_deg: details.phaseAngleDeg,
+          is_waxing: details.isWaxing,
+          zodiac_sign: details.zodiacSign,
+          zodiac_sign_id: details.zodiacSignId,
+          zodiac_degree: details.zodiacDegree,
+          special_moon_labels: details.specialLabels,
+          eclipse: details.eclipseLabel,
+          traditional_moon_name: details.traditionalMoonName,
+          next_full_moon: details.nextFullMoon,
+          next_new_moon: details.nextNewMoon,
+          local_date: localDate,
+          timezone
+        },
+        entities: {
+          planets: ['moon'],
+          signs: details.zodiacSignId ? [details.zodiacSignId] : []
+        }
+      }
+    },
+    sourceKind: factIndex.MONTHLY_TRANSIT_SOURCE_KIND,
+    sourceToolName: 'rest_moon_phase',
+    cacheMonth: String(localDate).slice(0, 7),
+    importance: 95
+  };
+}
+
+function buildCurrentMoonPhaseUsedTool(requestContext, payload, fact) {
+  return {
+    name: 'rest_moon_phase',
+    args: requestContext.params,
+    result: {
+      available: Boolean(fact),
+      endpoint: '/api/v1/moon/phase',
+      local_date: requestContext.localDate,
+      timezone: requestContext.timezone,
+      moon_visual: normalizeMoonPhasePayload(payload).moon_visual || null,
+      moon_phase: extractCurrentMoonPhaseDetails(payload),
+      fact: fact
+        ? {
+            category: fact.category,
+            title: fact.title,
+            tags: fact.tags,
+            fact_text: fact.factText,
+            source_kind: fact.sourceKind,
+            source_tool_name: fact.sourceToolName,
+            cache_month: fact.cacheMonth
+          }
+        : null
+    }
+  };
+}
+
+function shouldAttachCurrentMoonPhaseContext(plannedRoute = null, options = {}) {
+  const routeIds = [
+    plannedRoute?.commonRouteId,
+    plannedRoute?.id,
+    options.queryState?.canonicalRouteId,
+    options.queryState?.routeId
+  ].filter(Boolean);
+
+  return routeIds.includes('current_moon_transits');
+}
+
+async function maybeBuildCurrentMoonPhaseContext(identity, subjectProfile, plannedRoute = null, options = {}) {
+  if (!shouldAttachCurrentMoonPhaseContext(plannedRoute, options)) {
+    return null;
+  }
+
+  const requestContext = buildCurrentMoonPhaseRequest(subjectProfile);
+  try {
+    const payload = await traceConversationAsync(
+      identity,
+      'FreeAstro moon phase',
+      () => getMoonPhase(requestContext.params),
+      {
+        endpoint: '/api/v1/moon/phase',
+        localDate: requestContext.localDate,
+        timezone: requestContext.timezone,
+        hasLocation: requestContext.params.lat !== undefined && requestContext.params.lon !== undefined
+      }
+    );
+    const fact = buildCurrentMoonPhaseFact(payload, subjectProfile, requestContext);
+    if (!fact) {
+      info('conversation moon phase response missing phase name', {
+        stateKey: `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`,
+        endpoint: '/api/v1/moon/phase'
+      });
+      return null;
+    }
+
+    return {
+      fact,
+      usedTools: [buildCurrentMoonPhaseUsedTool(requestContext, payload, fact)]
+    };
+  } catch (error) {
+    info('conversation moon phase lookup failed', {
+      stateKey: `${identity?.channel || 'unknown'}:${identity?.chatId || identity?.userId || 'unknown'}`,
+      endpoint: '/api/v1/moon/phase',
+      error: error?.message || String(error)
+    });
+    return null;
+  }
 }
 
 function buildFlatNatalRequestFromProfile(profile) {
@@ -3403,6 +3872,46 @@ function buildMonthDateRange(monthInfo) {
   };
 }
 
+const RELATIVE_TOMORROW_PATTERN = /\b(tomorrow|demain|morgen|manana)\b/;
+const RELATIVE_TOMORROW_EXCLUSION_PATTERN = /\b(?:am|guten|jeden|heute) morgen\b|\b(?:la|esta|por la|de la) manana\b/;
+const RELATIVE_NEXT_WEEK_PATTERN = /\b(next week|(?:la )?semaine prochaine|(?:la )?prochaine semaine|nachste[n]? woche|kommende[n]? woche|(?:la )?proxima semana|(?:la )?semana (?:que viene|proxima))\b/;
+const RELATIVE_NEXT_MONTH_PATTERN = /\b(next month|(?:le )?mois prochain|(?:le )?prochain mois|nachste[nr]? monat|kommende[nr]? monat|(?:el )?proximo mes|(?:el )?mes (?:que viene|proximo))\b/;
+
+function parseRelativeDateWindowFromQuestion(text, timezone = 'UTC') {
+  const value = normalizeMatchingText(text);
+  if (!value) {
+    return null;
+  }
+
+  const toDateString = (date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+  const current = getCurrentLocalDateParts(timezone);
+
+  if (RELATIVE_NEXT_MONTH_PATTERN.test(value)) {
+    const range = buildMonthDateRange({
+      year: current.month === 12 ? current.year + 1 : current.year,
+      month: current.month === 12 ? 1 : current.month + 1
+    });
+    return range ? { ...range, unit: 'month' } : null;
+  }
+
+  if (RELATIVE_NEXT_WEEK_PATTERN.test(value)) {
+    const currentWeek = buildCurrentWeekRange(timezone);
+    const start = new Date(`${currentWeek.start}T00:00:00Z`);
+    start.setUTCDate(start.getUTCDate() + 7);
+    const end = new Date(start);
+    end.setUTCDate(start.getUTCDate() + 6);
+    return { start: toDateString(start), end: toDateString(end), unit: 'week' };
+  }
+
+  if (RELATIVE_TOMORROW_PATTERN.test(value) && !RELATIVE_TOMORROW_EXCLUSION_PATTERN.test(value)) {
+    const tomorrow = new Date(Date.UTC(current.year, current.month - 1, current.day + 1));
+    const date = toDateString(tomorrow);
+    return { start: date, end: date, unit: 'day' };
+  }
+
+  return null;
+}
+
 function buildElectionalSearchTuningForRange(range) {
   const start = range?.start ? new Date(`${range.start}T00:00:00Z`) : null;
   const end = range?.end ? new Date(`${range.end}T00:00:00Z`) : null;
@@ -3661,6 +4170,15 @@ function buildElectionalSearchWindow(userText, queryState = null, timezone = 'UT
     return {
       searchWindow: explicitSingleDate,
       searchTuning: { mode: 'direct' }
+    };
+  }
+
+  const relativeWindow = parseRelativeDateWindowFromQuestion(userText, timezone);
+  if (relativeWindow) {
+    const range = { start: relativeWindow.start, end: relativeWindow.end };
+    return {
+      searchWindow: range,
+      searchTuning: buildElectionalSearchTuningForRange(range)
     };
   }
 
@@ -7436,6 +7954,958 @@ function extractFactTagValues(fact, prefix) {
     .filter(Boolean);
 }
 
+function formatNaturalList(items = []) {
+  const values = [...new Set(items.map((item) => String(item || '').trim()).filter(Boolean))];
+  if (values.length <= 1) {
+    return values[0] || '';
+  }
+  if (values.length === 2) {
+    return `${values[0]} and ${values[1]}`;
+  }
+  return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
+}
+
+const CURRENT_TRANSIT_ROUTE_BODY_BY_ID = Object.freeze({
+  current_sun_transits: 'Sun',
+  current_moon_transits: 'Moon',
+  current_mercury_transits: 'Mercury',
+  current_venus_transits: 'Venus',
+  current_mars_transits: 'Mars',
+  current_jupiter_transits: 'Jupiter',
+  current_saturn_transits: 'Saturn',
+  current_uranus_transits: 'Uranus',
+  current_neptune_transits: 'Neptune',
+  current_pluto_transits: 'Pluto',
+  current_chiron_transits: 'Chiron',
+  current_true_node_transits: 'True Node',
+  current_ascendant_transits: 'Ascendant',
+  current_descendant_transits: 'Descendant',
+  current_midheaven_transits: 'Midheaven',
+  current_mental_transits: 'Mercury'
+});
+
+function normalizeTransitEvidenceLabel(value) {
+  return normalizeMatchingText(value)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function transitLabelAliases(value) {
+  const normalized = normalizeTransitEvidenceLabel(value);
+  if (!normalized) {
+    return [];
+  }
+
+  const aliases = new Set([normalized]);
+  if (normalized === 'midheaven') aliases.add('mc');
+  if (normalized === 'mc') aliases.add('midheaven');
+  if (normalized === 'asc') aliases.add('ascendant');
+  if (normalized === 'ascendant') aliases.add('asc');
+  if (normalized === 'desc') aliases.add('descendant');
+  if (normalized === 'descendant') aliases.add('desc');
+  if (normalized === 'true node') aliases.add('north node');
+  if (normalized === 'north node') aliases.add('true node');
+  return [...aliases];
+}
+
+function transitLabelsMatch(left, right) {
+  const leftAliases = transitLabelAliases(left);
+  const rightAliases = new Set(transitLabelAliases(right));
+  return leftAliases.some((alias) => rightAliases.has(alias));
+}
+
+function dedupeTransitLabels(values = []) {
+  const deduped = [];
+  for (const value of values.map((item) => humanizeRawKey(formatScalarValue(item))).filter(Boolean)) {
+    if (!deduped.some((existing) => transitLabelsMatch(existing, value))) {
+      deduped.push(value);
+    }
+  }
+  return deduped;
+}
+
+function parseTransitContactSource(value) {
+  const source = String(value || '').trim().split('@')[0];
+  const match = source.match(/^transit[._:-]([^._:]+)[._:-]([^._:]+)[._:-]([^._:]+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    aspect: humanizeRawKey(match[1]),
+    transitPlanet: humanizeRawKey(match[2]),
+    natalPoint: humanizeRawKey(match[3])
+  };
+}
+
+function collectTransitContactEvidence(fact) {
+  const { evidence } = getRawFactCore(fact);
+  const sources = [
+    ...asArray(evidence.sourcePassIds),
+    ...asArray(evidence.source_pass_ids),
+    ...asArray(evidence.sourceSeriesKeys),
+    ...asArray(evidence.source_series_keys)
+  ];
+  const contacts = [];
+
+  for (const source of sources) {
+    const parsed = parseTransitContactSource(source);
+    if (!parsed) {
+      continue;
+    }
+    const key = [
+      normalizeTransitEvidenceLabel(parsed.aspect),
+      normalizeTransitEvidenceLabel(parsed.transitPlanet),
+      normalizeTransitEvidenceLabel(parsed.natalPoint)
+    ].join('|');
+    if (!contacts.some((contact) => contact.key === key)) {
+      contacts.push({ ...parsed, key });
+    }
+  }
+
+  return contacts.map(({ key, ...contact }) => contact);
+}
+
+function collectTransitRoleLabels(fact) {
+  const { evidence } = getRawFactCore(fact);
+  const contacts = collectTransitContactEvidence(fact);
+  const transitPlanets = dedupeTransitLabels([
+    evidence.transitPlanet,
+    evidence.transit_planet,
+    ...asArray(evidence.transitPlanets),
+    ...asArray(evidence.transit_planets),
+    ...contacts.map((contact) => contact.transitPlanet)
+  ]);
+  const natalPoints = dedupeTransitLabels([
+    evidence.natalPoint,
+    evidence.natal_point,
+    evidence.focusPoint,
+    evidence.focus_point,
+    evidence.anglePoint,
+    evidence.angle_point,
+    ...asArray(evidence.natalPoints),
+    ...asArray(evidence.natal_points),
+    ...contacts.map((contact) => contact.natalPoint)
+  ]);
+
+  return { transitPlanets, natalPoints, contacts };
+}
+
+function formatAspectContactVerb(aspect) {
+  const normalized = normalizeTransitEvidenceLabel(aspect);
+  if (normalized === 'conjunction') return 'conjunct';
+  if (normalized === 'opposition') return 'opposite';
+  if (normalized === 'semi square') return 'semi-square';
+  if (normalized === 'sesquiquadrate') return 'sesquiquadrate';
+  return normalized || 'aspecting';
+}
+
+function formatNatalContactLabel(label) {
+  const normalized = normalizeTransitEvidenceLabel(label);
+  if (['ascendant', 'descendant', 'midheaven', 'mc', 'imum coeli', 'ic'].includes(normalized)) {
+    return humanizeRawKey(label);
+  }
+  return `natal ${humanizeRawKey(label)}`;
+}
+
+function formatTransitContactTitleFromRoles(fact, focusBody, houses = []) {
+  if (!focusBody) {
+    return null;
+  }
+
+  const { transitPlanets, natalPoints, contacts } = collectTransitRoleLabels(fact);
+  const focusLabel = humanizeRawKey(focusBody);
+  const houseText = houses.length > 0 ? ` in ${formatNaturalList(houses)}` : '';
+  const focusTransitContacts = contacts.filter((contact) => transitLabelsMatch(contact.transitPlanet, focusBody));
+
+  if (focusTransitContacts.length > 0) {
+    const primary = focusTransitContacts[0];
+    const sameTargetCompanions = contacts
+      .filter((contact) => (
+        !transitLabelsMatch(contact.transitPlanet, focusBody) &&
+        normalizeTransitEvidenceLabel(contact.aspect) === normalizeTransitEvidenceLabel(primary.aspect) &&
+        transitLabelsMatch(contact.natalPoint, primary.natalPoint)
+      ))
+      .map((contact) => contact.transitPlanet);
+    const companionText = sameTargetCompanions.length > 0
+      ? `, alongside ${formatNaturalList(dedupeTransitLabels(sameTargetCompanions))}`
+      : '';
+
+    return `${focusLabel} ${formatAspectContactVerb(primary.aspect)} ${formatNatalContactLabel(primary.natalPoint)}${companionText}${houseText}`;
+  }
+
+  const focusNatalContacts = contacts.filter((contact) => transitLabelsMatch(contact.natalPoint, focusBody));
+  if (focusNatalContacts.length > 0) {
+    const primaryAspect = focusNatalContacts[0].aspect;
+    const sameAspectContacts = focusNatalContacts.filter((contact) => (
+      normalizeTransitEvidenceLabel(contact.aspect) === normalizeTransitEvidenceLabel(primaryAspect)
+    ));
+    const transitLabels = dedupeTransitLabels(sameAspectContacts.map((contact) => (
+      transitLabelsMatch(contact.transitPlanet, focusBody)
+        ? `transiting ${humanizeRawKey(contact.transitPlanet)}`
+        : contact.transitPlanet
+    )));
+
+    return `${formatNaturalList(transitLabels)} ${formatAspectContactVerb(primaryAspect)} ${formatNatalContactLabel(focusLabel)}${houseText}`;
+  }
+
+  const focusIsTransit = transitPlanets.some((label) => transitLabelsMatch(label, focusBody));
+  if (focusIsTransit && natalPoints.length > 0) {
+    return `${focusLabel} activating ${formatNaturalList(natalPoints.map(formatNatalContactLabel))}${houseText}`;
+  }
+
+  const focusIsNatalPoint = natalPoints.some((label) => transitLabelsMatch(label, focusBody));
+  if (focusIsNatalPoint && transitPlanets.length > 0) {
+    return `${formatNaturalList(transitPlanets)} activating ${formatNatalContactLabel(focusLabel)}${houseText}`;
+  }
+
+  return null;
+}
+
+function resolveCurrentTransitRouteFocusBody(plannedRoute, options = {}) {
+  const routeIds = [
+    plannedRoute?.commonRouteId,
+    options.queryState?.canonicalRouteId
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+
+  for (const routeId of routeIds) {
+    if (CURRENT_TRANSIT_ROUTE_BODY_BY_ID[routeId]) {
+      return CURRENT_TRANSIT_ROUTE_BODY_BY_ID[routeId];
+    }
+  }
+
+  return null;
+}
+
+function collectTransitBodyLabels(fact, focusBody = null) {
+  const { evidence, entities } = getRawFactCore(fact);
+  const rawValues = [
+    ...asArray(evidence.subjects),
+    ...asArray(evidence.bodies),
+    ...asArray(evidence.planets),
+    ...asArray(evidence.transitPlanets),
+    ...asArray(evidence.transit_planets),
+    ...asArray(evidence.natalPoints),
+    ...asArray(evidence.natal_points),
+    ...asArray(entities.planets),
+    ...asArray(entities.points),
+    ...asArray(entities.angles),
+    ...extractFactTagValues(fact, 'planet:')
+      .map((value) => value === 'mc' ? 'Midheaven' : value),
+    ...extractFactTagValues(fact, 'point:'),
+    ...extractFactTagValues(fact, 'angle:')
+  ]
+    .map((value) => humanizeRawKey(formatScalarValue(value)))
+    .filter(Boolean);
+
+  const values = [];
+  for (const value of rawValues) {
+    if (!values.some((existing) => transitLabelsMatch(existing, value))) {
+      values.push(value);
+    }
+  }
+
+  if (!focusBody) {
+    return values;
+  }
+
+  const focus = values.find((value) => transitLabelsMatch(value, focusBody)) || humanizeRawKey(focusBody);
+  const others = values.filter((value) => !transitLabelsMatch(value, focusBody));
+  return [focus, ...others];
+}
+
+function collectTransitAspectLabels(fact) {
+  const { evidence, entities } = getRawFactCore(fact);
+  const values = [
+    evidence.aspectType,
+    evidence.aspect_type,
+    ...asArray(evidence.aspectTypes),
+    ...asArray(evidence.aspect_types),
+    ...asArray(entities.aspect_types),
+    ...extractFactTagValues(fact, 'aspect_type:')
+  ]
+    .map((value) => humanizeRawKey(formatScalarValue(value)))
+    .filter(Boolean);
+
+  const deduped = [];
+  for (const value of values) {
+    if (!deduped.some((existing) => normalizeTransitEvidenceLabel(existing) === normalizeTransitEvidenceLabel(value))) {
+      deduped.push(value);
+    }
+  }
+  return deduped;
+}
+
+function collectTransitHouseLabels(fact) {
+  const { evidence, entities } = getRawFactCore(fact);
+  return [
+    evidence.house,
+    evidence.houseId,
+    evidence.house_id,
+    ...asArray(evidence.houses),
+    ...asArray(entities.houses),
+    ...extractFactTagValues(fact, 'house:')
+  ]
+    .map(formatScalarValue)
+    .filter(Boolean)
+    .map((value) => `House ${value}`);
+}
+
+function getInternalTransitWindowKind(fact, rawTitle) {
+  const { raw, evidence } = getRawFactCore(fact);
+  const candidates = [
+    raw?.kind,
+    raw?.category,
+    evidence.kind,
+    evidence.windowType,
+    evidence.window_type,
+    rawTitle
+  ]
+    .map(normalizeTransitEvidenceLabel)
+    .filter(Boolean);
+
+  if (candidates.some((value) => value.includes('pressure window') || value === 'pressure')) {
+    return 'pressure';
+  }
+  if (candidates.some((value) => value.includes('support window') || value === 'support')) {
+    return 'support';
+  }
+  if (candidates.some((value) => value.includes('activation cluster') || value.includes('activation'))) {
+    return 'activation';
+  }
+  if (candidates.some((value) => value.includes('topic window'))) {
+    return 'topic';
+  }
+
+  return null;
+}
+
+function factIncludesTransitFocus(fact, focusBody) {
+  if (!focusBody) {
+    return true;
+  }
+
+  const title = normalizeRawTitle(fact?.title);
+  const normalizedTitle = title ? ` ${normalizeTransitEvidenceLabel(title)} ` : '';
+  if (
+    normalizedTitle &&
+    transitLabelAliases(focusBody).some((alias) => normalizedTitle.includes(` ${alias} `))
+  ) {
+    return true;
+  }
+
+  return collectTransitBodyLabels(fact).some((value) => transitLabelsMatch(value, focusBody));
+}
+
+function buildUserFacingCurrentTransitTitle(fact, focusBody = null) {
+  const rawTitle = normalizeRawTitle(fact?.title);
+  if (!rawTitle || /^Current Moon Phase:/i.test(rawTitle)) {
+    return rawTitle;
+  }
+
+  const kind = getInternalTransitWindowKind(fact, rawTitle);
+  if (!kind || !factIncludesTransitFocus(fact, focusBody)) {
+    return rawTitle;
+  }
+
+  const bodies = collectTransitBodyLabels(fact, focusBody);
+  const focus = focusBody
+    ? (bodies.find((value) => transitLabelsMatch(value, focusBody)) || humanizeRawKey(focusBody))
+    : bodies[0];
+  const others = bodies.filter((value) => !transitLabelsMatch(value, focus));
+  const aspects = collectTransitAspectLabels(fact);
+  const houses = collectTransitHouseLabels(fact);
+  const houseText = houses.length > 0 ? ` in ${formatNaturalList(houses)}` : '';
+  const contactTitle = formatTransitContactTitleFromRoles(fact, focusBody, houses);
+
+  if (!focus) {
+    return rawTitle;
+  }
+
+  if (contactTitle && (kind === 'pressure' || kind === 'support' || kind === 'activation')) {
+    return contactTitle;
+  }
+
+  if (kind === 'pressure' && others.length > 0) {
+    if (aspects.length === 1) {
+      return `${focus} ${aspects[0].toLowerCase()} ${formatNaturalList(others)}${houseText}`;
+    }
+    const aspectText = aspects.length > 1
+      ? formatNaturalList(aspects).toLowerCase()
+      : 'challenging';
+    const contactLabel = aspects.length === 1 ? 'contact' : 'contacts';
+    return `${focus} ${aspectText} ${contactLabel} with ${formatNaturalList(others)}${houseText}`;
+  }
+
+  if (kind === 'support' && others.length > 0) {
+    const aspectText = aspects.length > 0 ? ` through ${formatNaturalList(aspects).toLowerCase()} aspects` : '';
+    return `Supportive ${focus} contacts${aspectText} with ${formatNaturalList(others)}${houseText}`;
+  }
+
+  if (kind === 'activation' && others.length > 0) {
+    return `${focus} activation involving ${formatNaturalList(others)}${houseText}`;
+  }
+
+  if (kind === 'topic' && others.length > 0) {
+    return `${focus} theme involving ${formatNaturalList(others)}${houseText}`;
+  }
+
+  return `Current ${focus} transit focus${houseText}`;
+}
+
+function buildUserFacingCurrentTransitFactText(fact, title) {
+  const { evidence, importance } = getRawFactCore(fact);
+  const windowText = formatRawDateWindow(
+    evidence.startDatetime || evidence.start_datetime,
+    evidence.endDatetime || evidence.end_datetime
+  );
+  const peak = formatRawDate(
+    evidence.peakDatetime || evidence.peak_datetime || importance?.peak_datetime
+  );
+  const timingText = windowText && peak
+    ? `Timing: active ${windowText}; peak ${peak}.`
+    : (windowText ? `Timing: active ${windowText}.` : (peak ? `Timing: peak ${peak}.` : null));
+
+  return [
+    `${title}.`,
+    timingText
+  ].filter(Boolean).join(' ');
+}
+
+function buildUserFacingCurrentTransitFacts(facts = [], options = {}) {
+  const focusBody = options.focusBody || null;
+  return facts.map((fact) => {
+    const title = buildUserFacingCurrentTransitTitle(fact, focusBody);
+    if (!title || title === normalizeRawTitle(fact?.title)) {
+      return fact;
+    }
+
+    return {
+      ...fact,
+      title,
+      factText: buildUserFacingCurrentTransitFactText(fact, title)
+    };
+  });
+}
+
+function buildUserFacingCurrentMoonTransitFacts(facts = []) {
+  return buildUserFacingCurrentTransitFacts(facts, { focusBody: 'Moon' });
+}
+
+const TRANSIT_TIMING_DATE_PATTERN = String.raw`(?:\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?(?:Z| UTC)?)?|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}(?:\s+at\s+\d{1,2}:\d{2}\s+UTC)?)`;
+const TRANSIT_TIMING_RANGE_PATTERN = String.raw`${TRANSIT_TIMING_DATE_PATTERN}(?:\s*(?:→|to|until|through|-|and)\s*${TRANSIT_TIMING_DATE_PATTERN})?`;
+
+function transitTimingRegex(pattern, flags = 'gi') {
+  return new RegExp(pattern, flags);
+}
+
+function sectionHasTransitTiming(section) {
+  return transitTimingRegex(TRANSIT_TIMING_DATE_PATTERN).test(String(section || ''));
+}
+
+function formatCurrentMentalTimingSentence(value) {
+  const timing = String(value || '')
+    .replace(/^Timing:\s*/i, '')
+    .replace(/\s*\.$/, '')
+    .trim();
+
+  if (!timing) {
+    return null;
+  }
+
+  const active = timing.match(/^active\s+(.+?)(?:\s*;\s*peak\s+(.+))?$/i);
+  if (active) {
+    const activeWindow = active[1].trim();
+    const peak = active[2]?.trim();
+    const until = activeWindow.match(/^until\s+(.+)$/i);
+    const through = activeWindow.match(/^through\s+(.+)$/i);
+    const range = activeWindow.match(new RegExp(`^(${TRANSIT_TIMING_DATE_PATTERN})\\s*(?:→|to|-)\\s*(${TRANSIT_TIMING_DATE_PATTERN})$`, 'i'));
+    const activeSentence = range
+      ? `This runs from ${range[1]} to ${range[2]}`
+      : until
+        ? `This remains active until ${until[1]}`
+        : through
+          ? `This remains active through ${through[1]}`
+          : `This is active ${activeWindow}`;
+    return `${activeSentence}${peak ? `, peaking ${peak}` : ''}.`;
+  }
+
+  const peak = timing.match(/^(?:peaking|peaks?)\s*(on|around|at)?\s*(.+)$/i);
+  if (peak) {
+    const preposition = peak[1]?.toLowerCase();
+    const date = peak[2].trim();
+    if (preposition === 'around') {
+      return `This peaks around ${date}.`;
+    }
+    if (preposition === 'at') {
+      return `This peaks at ${date}.`;
+    }
+    return `This peaks on ${date}.`;
+  }
+
+  return `This timing is ${timing}.`;
+}
+
+function extractTransitTimingTextFromFact(fact) {
+  const text = String(fact?.factText || fact?.fact_text || '');
+  const match = text.match(/\bTiming:\s*([^.\n]+)/i);
+  if (!match) {
+    return null;
+  }
+  const timing = match[1].trim().replace(/\s*\.$/, '');
+  return formatCurrentMentalTimingSentence(timing);
+}
+
+function tokenizeTransitEvidence(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length > 2 && !['and', 'the', 'with', 'alongside', 'house'].includes(token));
+}
+
+function extractCurrentMentalSectionEvidence(section) {
+  return (String(section || '').match(/^[^(]+\(([^)]*)\)/) || [])[1] || '';
+}
+
+function scoreCurrentMentalTimingFact(section, fact) {
+  const sectionTokens = tokenizeTransitEvidence(extractCurrentMentalSectionEvidence(section));
+  const factTokens = new Set(tokenizeTransitEvidence(fact?.title || fact?.factText || fact?.fact_text || ''));
+  return sectionTokens.reduce((score, token) => score + (factTokens.has(token) ? 1 : 0), 0);
+}
+
+function currentMentalSectionEvidenceIncludes(section, pattern) {
+  return pattern.test(extractCurrentMentalSectionEvidence(section));
+}
+
+function scoreCurrentMentalSupportFact(fact) {
+  const text = `${fact?.title || ''} ${fact?.factText || fact?.fact_text || ''}`;
+  let score = 0;
+  if (/\b(trine|sextile|supportive)\b/i.test(text)) score += 8;
+  if (/\bMercury trine natal Mercury\b/i.test(text)) score += 8;
+  if (/\bMercury\b/i.test(text)) score += 3;
+  if (/\bnatal Mercury\b/i.test(text)) score += 3;
+  if (/\bHouse 9\b/i.test(text)) score += 1;
+  if (/\b(square|opposition|quincunx)\b/i.test(text)) score -= 8;
+  return score;
+}
+
+function getCurrentMentalFactTitle(fact) {
+  const title = normalizeRawTitle(fact?.title);
+  if (title) {
+    return title;
+  }
+
+  const firstSentence = String(fact?.factText || fact?.fact_text || '').split('.')[0];
+  return normalizeRawTitle(firstSentence);
+}
+
+function scoreCurrentMentalRoleFact(fact, role, section = '') {
+  const title = getCurrentMentalFactTitle(fact) || '';
+  const text = `${title} ${fact?.factText || fact?.fact_text || ''}`;
+  const lower = text.toLowerCase();
+  const sectionLower = String(section || '').toLowerCase();
+  let score = /\bmercury\b/i.test(text) ? 3 : 0;
+
+  if (role === 'current') {
+    if (/\bascendant\b/i.test(text)) score += 12;
+    if (/\b(conjunct|activating)\b/i.test(text)) score += 7;
+    if (/\bhouse 1\b/i.test(text)) score += 4;
+    if (/\b(square|opposition|quincunx)\b/i.test(text)) score -= 4;
+    if (/\btrine\b/i.test(text) && !/\bascendant\b/i.test(text)) score -= 2;
+  } else if (role === 'what') {
+    if (/\b(square|opposition|quincunx)\b/i.test(text)) score += 7;
+    if (/\bnatal mercury\b/i.test(text)) score += 4;
+    if (/\bmoon\b/i.test(text) && /\b(emotion|feeling|mood)\b/i.test(sectionLower)) score += 5;
+    if (/\bsun\b/i.test(text) && /\b(identity|self|core)\b/i.test(sectionLower)) score += 4;
+    if (/\btrine|sextile|supportive\b/i.test(text)) score -= 5;
+  } else if (role === 'watch') {
+    if (/\b(square|opposition|quincunx)\b/i.test(text)) score += 9;
+    if (/\bmoon\b/i.test(text) && /\b(emotion|feeling|social|group|future|hopes)\b/i.test(sectionLower)) score += 6;
+    if (/\bnatal mercury\b/i.test(text) && /\b(word|argument|debate|belief|communication)\b/i.test(sectionLower)) score += 6;
+    if (/\bsun\b/i.test(text) && /\b(adjust|value|private|deep|identity|self)\b/i.test(sectionLower)) score += 5;
+    if (/\btrine|sextile|supportive\b/i.test(text)) score -= 8;
+  } else if (role === 'how') {
+    score += scoreCurrentMentalSupportFact(fact);
+  }
+
+  if (title && sectionLower.includes(title.toLowerCase())) {
+    score += 4;
+  }
+
+  return score;
+}
+
+function selectCurrentMentalFactTitleForRole(role, facts = [], section = '') {
+  const candidates = (Array.isArray(facts) ? facts : [])
+    .map((fact) => ({
+      title: getCurrentMentalFactTitle(fact),
+      score: scoreCurrentMentalRoleFact(fact, role, section)
+    }))
+    .filter((candidate) => candidate.title && candidate.score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  return candidates[0]?.title || null;
+}
+
+function sectionHasCurrentMentalEvidenceHeading(section) {
+  return /^(Current mental weather|What it brings up|What helps mentally right now|How to work with it|Watch point)\s*\([^)]*\)\s*:/i.test(String(section || ''));
+}
+
+function insertCurrentMentalEvidenceHeading(section, title) {
+  if (!title || sectionHasCurrentMentalEvidenceHeading(section)) {
+    return section;
+  }
+
+  return String(section || '').replace(
+    /^(Current mental weather|What it brings up|What helps mentally right now|How to work with it|Watch point)\s*:/i,
+    (_match, label) => `${label === 'How to work with it' ? CURRENT_MENTAL_SECTION_LABELS.how : label} (${title}):`
+  );
+}
+
+function ensureCurrentMentalSectionEvidence(answer, facts = []) {
+  const sections = cleanCurrentMentalPostprocessText(answer)
+    .split(/\n{2,}/)
+    .map((section) => cleanupCurrentMentalSectionText(section.trim()))
+    .filter(Boolean);
+
+  if (sections.length === 0) {
+    return answer;
+  }
+
+  return sections.map((section) => {
+    const role = getCurrentMentalSectionKey(section);
+    if (!role || sectionHasCurrentMentalEvidenceHeading(section)) {
+      return section;
+    }
+
+    const title = selectCurrentMentalFactTitleForRole(role, facts, section);
+    return cleanupCurrentMentalSectionText(insertCurrentMentalEvidenceHeading(section, title));
+  }).join('\n\n');
+}
+
+function buildCurrentMentalSupportSection(facts = []) {
+  const candidates = (Array.isArray(facts) ? facts : [])
+    .filter((fact) => /\b(Mercury|Moon|Sun|Ascendant|House)\b/i.test(`${fact?.title || ''} ${fact?.factText || fact?.fact_text || ''}`))
+    .map((fact) => ({ fact, score: scoreCurrentMentalSupportFact(fact) }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  const fact = candidates[0]?.fact;
+  if (!fact) {
+    return null;
+  }
+
+  const title = normalizeRawTitle(fact.title) || 'Mercury support';
+  return cleanupCurrentMentalSectionText([
+    `What helps mentally right now (${title}):`,
+    'Use this supportive Mercury flow by giving ideas room to move: write or talk through complex thoughts, study something that widens perspective, and choose curiosity before reacting.'
+  ].join(' '));
+}
+
+function ensureCurrentMentalSupportSection(answer, facts = []) {
+  const sections = cleanCurrentMentalPostprocessText(answer)
+    .split(/\n{2,}/)
+    .map((section) => cleanupCurrentMentalSectionText(section.trim()))
+    .filter(Boolean);
+
+  if (sections.length < 3) {
+    return sections.join('\n\n') || answer;
+  }
+
+  const supportIndex = sections.findIndex((section) => getCurrentMentalSectionKey(section) === 'how');
+  if (supportIndex === -1) {
+    return sections.join('\n\n');
+  }
+
+  const currentSupport = sections[supportIndex];
+  if (
+    currentMentalSectionEvidenceIncludes(currentSupport, /\b(trine|sextile|supportive)\b/i) &&
+    !currentMentalSectionEvidenceIncludes(currentSupport, /\b(square|opposition|quincunx)\b/i)
+  ) {
+    return sections.join('\n\n');
+  }
+
+  const replacement = buildCurrentMentalSupportSection(facts);
+  if (!replacement) {
+    return sections.join('\n\n');
+  }
+
+  sections[supportIndex] = replacement;
+  return sections.join('\n\n');
+}
+
+function findCurrentMentalTimingText(section, facts = []) {
+  const candidates = (Array.isArray(facts) ? facts : [])
+    .map((fact) => ({
+      fact,
+      timing: extractTransitTimingTextFromFact(fact),
+      score: scoreCurrentMentalTimingFact(section, fact)
+    }))
+    .filter((candidate) => candidate.timing)
+    .sort((left, right) => right.score - left.score);
+
+  return candidates[0]?.timing || null;
+}
+
+function ensureCurrentMentalWeatherHasTiming(answer, facts = []) {
+  const sections = cleanCurrentMentalPostprocessText(answer)
+    .split(/\n{2,}/)
+    .map((section) => cleanupCurrentMentalSectionText(section.trim()))
+    .filter(Boolean);
+
+  if (sections.length === 0 || sectionHasTransitTiming(sections[0])) {
+    return sections.join('\n\n') || answer;
+  }
+
+  const timing = findCurrentMentalTimingText(sections[0], facts);
+  if (!timing) {
+    return sections.join('\n\n');
+  }
+
+  sections[0] = cleanupCurrentMentalSectionText(`${sections[0]} ${timing}`);
+  return sections.join('\n\n');
+}
+
+function cleanCurrentMentalPostprocessText(text) {
+  return String(text || '')
+    .replace(/\*/g, '')
+    .replace(/__+/g, '')
+    .replace(/`+/g, '')
+    .trim();
+}
+
+function stripTransitTimingFromSection(section) {
+  let text = String(section || '');
+  const replacements = [
+    String.raw`\s*,?\s*especially\s+between\s+${TRANSIT_TIMING_DATE_PATTERN}\s+(?:and|to)\s+${TRANSIT_TIMING_DATE_PATTERN}`,
+    String.raw`\s*,?\s*as\s+[^.]{0,80}?\bpeaks?\s+(?:on|around|at)?\s*${TRANSIT_TIMING_DATE_PATTERN}\.?`,
+    String.raw`\s*Timing:\s*(?:active\s*)?${TRANSIT_TIMING_RANGE_PATTERN}(?:\s*;\s*peak\s*${TRANSIT_TIMING_DATE_PATTERN})?\.?`,
+    String.raw`\s*,?\s*(?:active\s+(?:from|until)|active)\s+${TRANSIT_TIMING_RANGE_PATTERN}`,
+    String.raw`\s*,?\s*(?:runs\s+from|from|between)\s+${TRANSIT_TIMING_RANGE_PATTERN}`,
+    String.raw`\s*,?\s*(?:with\s+(?:its\s+)?peak\s+(?:on|around|at)?|peaks?\s+(?:on|around|at)?|peaking\s+(?:on|around|at)?|peak)\s*${TRANSIT_TIMING_DATE_PATTERN}`,
+    String.raw`\s*,?\s*(?:until|through|around|near|on|by)\s+${TRANSIT_TIMING_DATE_PATTERN}`
+  ];
+
+  for (const pattern of replacements) {
+    text = text.replace(transitTimingRegex(pattern), '');
+  }
+
+  return text
+    .replace(/\(\s*,\s*/g, '(')
+    .replace(/,\s*\)/g, ')')
+    .replace(/\s+,/g, ',')
+    .replace(/,\s*([):.])/g, '$1')
+    .replace(/\s*,?\s*which\s+peaked\s*,?/gi, '')
+    .replace(/\bThis (transit|influence),\s+/g, 'This $1 ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function cleanupCurrentMentalSectionText(section) {
+  return String(section || '')
+    .replace(transitTimingRegex(String.raw`\bTiming:\s*((?:active\s+${TRANSIT_TIMING_RANGE_PATTERN})(?:\s*;\s*peak\s*${TRANSIT_TIMING_DATE_PATTERN})?|(?:peaking|peaks?)\s*(?:on|around|at)?\s*${TRANSIT_TIMING_DATE_PATTERN})\.?`, 'gi'), (_match, timing) => {
+      const sentence = formatCurrentMentalTimingSentence(timing);
+      return sentence ? ` ${sentence}` : '';
+    })
+    .replace(/\s*Timing:\s*\./gi, '')
+    .replace(/\s*Timing:\s*$/gi, '')
+    .replace(/\bThis placement\b/g, 'This transit')
+    .replace(/\s*This is particularly active\./gi, '')
+    .replace(/\s+This\.(?=\s*$)/gi, '')
+    .replace(/^(What it brings up\s*\([^)]+\)):\s+is\s+/i, '$1: This brings up ')
+    .replace(/^((?:How to work with it|What helps mentally right now)\s*\([^)]+\)):\s+involves\s+/i, '$1: Work with this by ')
+    .replace(/,\s*particularly\s*$/i, '.')
+    .replace(/\bparticularly\s*$/i, '')
+    .replace(/\(\s*,\s*/g, '(')
+    .replace(/[;,]\s*\)/g, ')')
+    .replace(/\s+,/g, ',')
+    .replace(/\s+\./g, '.')
+    .replace(/\.\s*\./g, '.')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+const CURRENT_MENTAL_SECTION_ORDER = ['current', 'what', 'how', 'watch'];
+const CURRENT_MENTAL_SECTION_LABELS = {
+  current: 'Current mental weather',
+  what: 'What it brings up',
+  how: 'What helps mentally right now',
+  watch: 'Watch point'
+};
+
+function getCurrentMentalSectionKey(section) {
+  const text = String(section || '').trim();
+  if (/^Current mental weather\b/i.test(text)) return 'current';
+  if (/^What it brings up\b/i.test(text)) return 'what';
+  if (/^(?:How to work with it|What helps mentally right now)\b/i.test(text)) return 'how';
+  if (/^Watch point\b/i.test(text)) return 'watch';
+  return null;
+}
+
+function relabelCurrentMentalSection(section, label) {
+  return String(section || '').replace(/^(Current mental weather|What it brings up|How to work with it|What helps mentally right now|Watch point)\b/i, label);
+}
+
+function labelCurrentMentalSectionByOrder(section, label, options = {}) {
+  const raw = String(section || '').trim();
+  if (!raw) {
+    return raw;
+  }
+  if (!options.force && /^(Current mental weather|What it brings up|How to work with it|What helps mentally right now|Watch point)\b/i.test(raw)) {
+    return raw;
+  }
+
+  const withoutExistingLabel = raw.replace(/^(Current mental weather|What it brings up|How to work with it|What helps mentally right now|Watch point)\b\s*:?\s*/i, '');
+  const parenthetical = withoutExistingLabel.match(/\(([^)]*\b(?:Mercury|Moon|Sun|Ascendant|House)\b[^)]*)\)/i);
+  if (!parenthetical) {
+    return `${label}: ${withoutExistingLabel}`;
+  }
+
+  const content = parenthetical[1].trim();
+  const [evidencePart, timingPart] = content.split(/\bTiming:\s*/i);
+  const evidence = String(evidencePart || '').replace(/[.;]\s*$/g, '').trim();
+  const timingSentence = formatCurrentMentalTimingSentence(timingPart);
+  const timingText = timingSentence ? ` ${timingSentence}` : '';
+  const body = `${withoutExistingLabel.slice(0, parenthetical.index)}${withoutExistingLabel.slice(parenthetical.index + parenthetical[0].length)}`
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return cleanupCurrentMentalSectionText(`${label}${evidence ? ` (${evidence})` : ''}: ${body}${timingText}`);
+}
+
+function moveCurrentMentalHeadingTimingToBody(section) {
+  const raw = String(section || '').trim();
+  const heading = raw.match(/^((?:Current mental weather|What it brings up|How to work with it|What helps mentally right now|Watch point)\s*)\(([^)]*)\)\s*:\s*([\s\S]*)$/i);
+  if (!heading) {
+    return cleanupCurrentMentalSectionText(raw);
+  }
+
+  let timingText = '';
+  const timingPattern = transitTimingRegex(String.raw`\s*,?\s*(?:Timing:\s*)?((?:active\s+${TRANSIT_TIMING_RANGE_PATTERN})(?:\s*;\s*peak\s*${TRANSIT_TIMING_DATE_PATTERN})?|(?:peaking|peaks?)\s*(?:on|around|at)?\s*${TRANSIT_TIMING_DATE_PATTERN})`, 'i');
+  const evidence = heading[2]
+    .replace(timingPattern, (_match, timing) => {
+      const timingSentence = formatCurrentMentalTimingSentence(timing);
+      timingText = timingSentence ? ` ${timingSentence}` : '';
+      return '';
+    })
+    .replace(/[.;,\s]+$/g, '')
+    .trim();
+  const label = heading[1].trim();
+  const body = heading[3].trim();
+
+  return cleanupCurrentMentalSectionText(`${label}${evidence ? ` (${evidence})` : ''}: ${body}${timingText}`);
+}
+
+function looksLikeWorkWithItSection(section) {
+  return /\b(trine|support|supported|easier flow|ease|clarity|insight|navigate|work with|use|lean into|practice|try|embrace|balance)\b/i.test(String(section || ''));
+}
+
+function looksLikeCurrentMentalEvidenceSection(section) {
+  return getCurrentMentalSectionKey(section) || /\([^)]*\b(?:Mercury|Moon|Sun|Ascendant|House)\b[^)]*\)/i.test(String(section || ''));
+}
+
+function normalizeCurrentMentalTransitSectionsByOrder(sections) {
+  const evidenceSections = sections.filter(looksLikeCurrentMentalEvidenceSection);
+  const orderedSections = (evidenceSections.length >= 4 ? evidenceSections : sections).slice(0, 4);
+  return CURRENT_MENTAL_SECTION_ORDER
+    .map((key, index) => labelCurrentMentalSectionByOrder(orderedSections[index], CURRENT_MENTAL_SECTION_LABELS[key], { force: true }))
+    .map(moveCurrentMentalHeadingTimingToBody)
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function normalizeCurrentMentalTransitSections(answer) {
+  const sections = cleanCurrentMentalPostprocessText(answer)
+    .split(/\n{2,}/)
+    .map((section) => section.trim())
+    .filter(Boolean);
+
+  if (sections.length <= 1) {
+    return answer;
+  }
+
+  const selected = {};
+  for (const section of sections) {
+    const key = getCurrentMentalSectionKey(section);
+    if (!key) {
+      continue;
+    }
+
+    if (!selected[key]) {
+      selected[key] = section;
+      continue;
+    }
+
+    if (key === 'what' && !selected.how) {
+      const existing = selected.what;
+      if (looksLikeWorkWithItSection(existing)) {
+        selected.how = relabelCurrentMentalSection(existing, CURRENT_MENTAL_SECTION_LABELS.how);
+        selected.what = section;
+      } else if (looksLikeWorkWithItSection(section)) {
+        selected.how = relabelCurrentMentalSection(section, CURRENT_MENTAL_SECTION_LABELS.how);
+      }
+    }
+  }
+
+  const normalizedSections = CURRENT_MENTAL_SECTION_ORDER
+    .map((key) => selected[key])
+    .filter(Boolean);
+
+  if (normalizedSections.length < 4 && sections.length >= 4) {
+    return normalizeCurrentMentalTransitSectionsByOrder(sections);
+  }
+
+  return normalizedSections.length > 0
+    ? normalizedSections.map(moveCurrentMentalHeadingTimingToBody).join('\n\n')
+    : answer;
+}
+
+function limitCurrentMentalTransitTiming(answer, maxTimedSections = 2) {
+  const sections = cleanCurrentMentalPostprocessText(answer)
+    .split(/\n{2,}/)
+    .map((section) => section.trim())
+    .filter(Boolean);
+
+  if (sections.length <= 1) {
+    return answer;
+  }
+
+  const timedSectionCount = sections.filter(sectionHasTransitTiming).length;
+  if (timedSectionCount <= maxTimedSections) {
+    return sections.map(cleanupCurrentMentalSectionText).join('\n\n');
+  }
+
+  const allowedIndexes = new Set([0, sections.length - 1]);
+  return sections
+    .map((section, index) => (
+      allowedIndexes.has(index)
+        ? cleanupCurrentMentalSectionText(section)
+        : stripTransitTimingFromSection(section)
+    ))
+    .join('\n\n');
+}
+
+function ensureCurrentMentalTransitHasTiming(answer, facts = []) {
+  const sections = cleanCurrentMentalPostprocessText(answer)
+    .split(/\n{2,}/)
+    .map((section) => cleanupCurrentMentalSectionText(section.trim()))
+    .filter(Boolean);
+
+  if (sections.length === 0 || sections.some(sectionHasTransitTiming)) {
+    return sections.join('\n\n') || answer;
+  }
+
+  const timing = findCurrentMentalTimingText(sections[0], facts);
+  if (!timing) {
+    return sections.join('\n\n');
+  }
+
+  sections[0] = cleanupCurrentMentalSectionText(`${sections[0]} ${timing}`);
+  return sections.join('\n\n');
+}
+
 function buildTransitFactLines(locale, fact) {
   const { evidence, entities, raw, importance } = getRawFactCore(fact);
   const lines = [];
@@ -7541,6 +9011,140 @@ function buildTransitFactLines(locale, fact) {
 
   const filtered = lines.filter(Boolean);
   return filtered.length > 1 ? filtered : [];
+}
+
+function buildMonthlyTransitTableColumns(locale) {
+  return [
+    { key: 'title', label: formatRawLabel(locale, { en: 'Transit', fr: 'Transit', de: 'Transit', es: 'Tránsito' }), width: 520 },
+    { key: 'window', label: formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' }), width: 390 },
+    { key: 'peak', label: formatRawLabel(locale, { en: 'Peak / exact', fr: 'Pic / exact', de: 'Höhepunkt / exakt', es: 'Pico / exacto' }), width: 340 },
+    { key: 'houses', label: formatRawLabel(locale, { en: 'Houses / notes', fr: 'Maisons / notes', de: 'Häuser / Notizen', es: 'Casas / notas' }), width: 360 }
+  ];
+}
+
+function buildMonthlyTransitTableTitle(locale, title, focus) {
+  const renderedTitle = formatScalarValue(title);
+  const renderedFocus = formatScalarValue(focus);
+  const genericTitle = formatRawLabel(locale, {
+    en: 'Transit',
+    fr: 'Transit',
+    de: 'Transit',
+    es: 'Tránsito'
+  });
+
+  if (renderedTitle && renderedTitle.toLowerCase() !== genericTitle.toLowerCase()) {
+    return renderedTitle;
+  }
+
+  return renderedFocus || renderedTitle || genericTitle;
+}
+
+function buildMonthlyTransitTableRowFromFact(locale, fact) {
+  const { evidence, entities, raw, importance } = getRawFactCore(fact);
+  const title = normalizeRawTitle(fact.title) || formatRawLabel(locale, {
+    en: 'Transit',
+    fr: 'Transit',
+    de: 'Transit',
+    es: 'Tránsito'
+  });
+  const type = evidence.windowType
+    || evidence.window_type
+    || evidence.passType
+    || raw.kind
+    || raw.category
+    || extractFactTagValues(fact, 'kind:')[0]
+    || extractFactTagValues(fact, 'category:')[0];
+  const windowText = formatRawDateWindow(
+    evidence.startDatetime || evidence.start_datetime,
+    evidence.endDatetime || evidence.end_datetime
+  );
+  const visibleWindow = (
+    evidence.visibleStartDay || evidence.visibleEndDay || evidence.visible_start_day || evidence.visible_end_day
+      ? `${evidence.visibleStartDay || evidence.visible_start_day || '?'} → ${evidence.visibleEndDay || evidence.visible_end_day || '?'}`
+      : null
+  );
+  const peak = formatRawDate(
+    evidence.peakDatetime || evidence.peak_datetime || importance?.peak_datetime
+  );
+  const exactHits = normalizeRawList(evidence.exactHitsInMonth || evidence.exact_hits_in_month, (value) => formatScalarValue(value));
+  const exactDatetimes = normalizeRawList(evidence.exactDatetimes || evidence.exact_datetimes, formatRawDate);
+  const transitPlanetSource = evidence.transitPlanet || evidence.transit_planet || asArray(evidence.transit_planets)[0] || extractFactTagValues(fact, 'planet:')[0];
+  const transitPlanet = formatScalarValue(transitPlanetSource)
+    ? humanizeRawKey(formatScalarValue(transitPlanetSource))
+    : null;
+  const natalPointSource = evidence.natalPoint || evidence.natal_point || asArray(evidence.natal_points)[0];
+  const natalPoint = formatScalarValue(natalPointSource)
+    ? humanizeRawKey(formatScalarValue(natalPointSource))
+    : null;
+  const aspectType = formatScalarValue(evidence.aspectType || evidence.aspect_type || normalizeEntityList(entities.aspect_types)[0] || extractFactTagValues(fact, 'aspect_type:')[0]);
+  const focus = [transitPlanet, aspectType ? humanizeRawKey(aspectType) : null, natalPoint].filter(Boolean).join(' ');
+  const houses = normalizeRawList(
+    evidence.houses || entities.houses || extractFactTagValues(fact, 'house:'),
+    (value) => humanizeRawKey(formatScalarValue(value))
+  );
+  const notes = [];
+
+  if (type) {
+    const normalizedType = humanizeRawKey(type);
+    const typeLabel = /window/i.test(String(raw.kind || '')) && !/window/i.test(normalizedType)
+      ? `${normalizedType} Window`
+      : normalizedType;
+    notes.push(localizeRawType(locale, typeLabel));
+  }
+  if (evidence.continuesFromPreviousMonth || evidence.continues_from_previous_month) {
+    notes.push(formatRawLabel(locale, {
+      en: 'Carries over',
+      fr: 'Se prolonge',
+      de: 'Läuft weiter',
+      es: 'Se arrastra'
+    }));
+  }
+  if (evidence.continuesToNextMonth || evidence.continues_to_next_month) {
+    notes.push(formatRawLabel(locale, {
+      en: 'Continues next month',
+      fr: 'Continue le mois suivant',
+      de: 'Läuft in den nächsten Monat',
+      es: 'Continúa el mes siguiente'
+    }));
+  }
+
+  return {
+    title: buildMonthlyTransitTableTitle(locale, title, focus),
+    window: windowText || (visibleWindow && (fact.cacheMonth || fact.cache_month)
+      ? `${formatRawLabel(locale, { en: 'Days', fr: 'Jours', de: 'Tage', es: 'Días' })}: ${visibleWindow}`
+      : ''),
+    peak: peak || exactDatetimes.join(', ') || exactHits.join(', '),
+    houses: houses.join(', '),
+    notes: notes.join(', ')
+  };
+}
+
+function buildMonthlyTransitTableRowFromTimeline(locale, transit) {
+  const title = normalizeRawTitle(transit.label) || formatRawLabel(locale, {
+    en: 'Transit',
+    fr: 'Transit',
+    de: 'Transit',
+    es: 'Tránsito'
+  });
+  const windowText = formatRawDateWindow(transit.start_datetime, transit.end_datetime);
+  const exactHits = normalizeRawList(transit.exact_datetimes, formatRawDate);
+  const peak = formatRawDate(transit.peak_datetime);
+  const focus = [transit.transit_planet, transit.aspect_type ? humanizeRawKey(transit.aspect_type) : null, transit.natal_point]
+    .map((item) => {
+      const rendered = formatScalarValue(item);
+      return rendered ? humanizeRawKey(rendered) : null;
+    })
+    .filter(Boolean)
+    .join(' ');
+  const houses = normalizeRawList(transit.houses, (value) => humanizeRawKey(formatScalarValue(value)));
+
+  return {
+    title: buildMonthlyTransitTableTitle(locale, title, focus),
+    window: windowText || '',
+    peak: peak || exactHits.slice(0, 3).join(', '),
+    houses: houses.join(', '),
+    notes: ''
+  };
 }
 
 function buildNatalFactLines(locale, fact) {
@@ -7715,6 +9319,33 @@ function looksLikePlacementMeaningQuestion(text, options = {}) {
   return /\b(what does|what do|mean|meaning|means|say about|says about|tell me about|interpret|emotion|emotionally|feelings?|personality|identity|about me|who am i|qui suis je|signifie|veut dire|parle moi|emotionnel|emocional|bedeutet|erzahl|erz[aä]hl|personalidad)\b/.test(value);
 }
 
+function looksLikeSimplePlacementRouteQuestion(text, pointId) {
+  const value = normalizeMatchingText(text);
+  const normalizedPointId = String(pointId || '').toLowerCase();
+  if (!value || value.length > 140 || !normalizedPointId) {
+    return false;
+  }
+
+  if (looksLikePlacementMeaningQuestion(value)) {
+    return false;
+  }
+
+  if (/\b(house|maison|haus|casa|where|ou|où|donde|dónde|welchem)\b/.test(value)) {
+    return false;
+  }
+
+  const asksForPlacement = /\b(what(?:\s+is|'s|s)?|which|tell me|show me|give me|dis moi|quel|quelle|cual|cu[aá]l|was ist)\b/.test(value);
+  if (!asksForPlacement) {
+    return false;
+  }
+
+  if (normalizedPointId === 'ascendant') {
+    return /\b(rising sign|rising|ascendant|asc)\b/.test(value);
+  }
+
+  return new RegExp(`\\b${escapeRegExp(normalizedPointId)}\\s+sign\\b`).test(value);
+}
+
 function looksLikeCurrentTransitCue(text) {
   return /\b(right now|today|this month|current|currently|transits?|sky|now|aujourd'hui|aujourdhui|ce mois|actuel|actuelle|heute|dieser monat|hoy|este mes)\b/i.test(String(text || ''));
 }
@@ -7837,6 +9468,22 @@ const HOUSE_MEANINGS_EN = {
   12: 'In the 12th house, it is private, subtle, reflective, and often needs solitude to become clear.'
 };
 
+function formatEnglishHouseOrdinal(houseValue) {
+  const house = Number(houseValue);
+  if (!Number.isInteger(house) || house < 1 || house > 12) {
+    return null;
+  }
+
+  if (house === 11 || house === 12 || house === 13) {
+    return `${house}th house`;
+  }
+
+  const suffix = house % 10 === 1
+    ? 'st'
+    : (house % 10 === 2 ? 'nd' : (house % 10 === 3 ? 'rd' : 'th'));
+  return `${house}${suffix} house`;
+}
+
 function buildPlacementMeaningText(locale, placement) {
   if (locale !== 'en') {
     return {
@@ -7851,6 +9498,69 @@ function buildPlacementMeaningText(locale, placement) {
   const houseMeaning = placement.houseValue ? HOUSE_MEANINGS_EN[placement.houseValue] : null;
 
   return [pointMeaning, signMeaning, houseMeaning].filter(Boolean).join(' ');
+}
+
+function buildRichPlacementRouteText(locale, placement) {
+  if (!placement) {
+    return null;
+  }
+
+  const factText = buildSinglePlacementFactText(locale, placement);
+  const degreeText = buildDegreeText(locale, placement.degree);
+
+  if (locale !== 'en') {
+    return [factText, degreeText, buildPlacementMeaningText(locale, placement)].filter(Boolean).join('\n\n');
+  }
+
+  const pointName = placement.pointName || 'The requested point';
+  const signName = placement.signName || 'the recorded sign';
+  const signMeaning = SIGN_MEANINGS_EN[placement.signId]
+    || `${signName} gives this placement its main style of expression.`;
+  const houseLabel = formatEnglishHouseOrdinal(placement.houseValue);
+  const houseMeaning = placement.houseValue
+    ? (HOUSE_MEANINGS_EN[placement.houseValue] || `In the ${placement.houseValue}th house, this placement works through that house's life area.`)
+    : 'The cached placement does not provide a house, so keep the interpretation focused on the sign and point.';
+  const pointMeaning = POINT_MEANINGS_EN[placement.pointId]
+    || `${pointName} describes a personal pattern in the natal chart.`;
+  const source = [
+    factText,
+    degreeText
+  ].filter(Boolean).join(' ');
+  const houseSource = houseLabel
+    ? `${pointName} in the ${houseLabel}`
+    : `${pointName} in ${signName}`;
+  const exactPlacement = `${pointName} in ${signName}${houseLabel ? `, ${houseLabel}` : ''}`;
+
+  return [
+    `Your ${pointName} placement: ${source}`,
+    `Core expression (${pointName} in ${signName}): ${pointMeaning} ${signMeaning}`,
+    `Life area (${houseSource}): ${houseMeaning}`,
+    `How to work with it (${exactPlacement}): Treat this as one specific chart factor rather than the whole chart. Honor the ${pointName} theme, express it through the ${signName} style, and apply it in the house area named above.`
+  ].join('\n\n');
+}
+
+function isAnglePlacementId(pointId) {
+  return ['ascendant', 'descendant', 'midheaven', 'ic'].includes(String(pointId || '').toLowerCase());
+}
+
+function buildPlacementToolResult(placement) {
+  if (!placement) {
+    return null;
+  }
+
+  if (isAnglePlacementId(placement.pointId)) {
+    return {
+      name: 'get_cached_angle_info',
+      args: { angle: placement.pointId === 'ascendant' ? 'asc' : placement.pointId },
+      result: { angle: placement.rawPoint }
+    };
+  }
+
+  return {
+    name: 'get_cached_planet_placement',
+    args: { planet: placement.pointId },
+    result: { planet: placement.rawPoint }
+  };
 }
 
 function normalizePlacement(locale, subjectProfile, pointId) {
@@ -7901,6 +9611,16 @@ function buildPointPlacementResponse(locale, subjectProfile, pointId, options = 
     return null;
   }
 
+  if (looksLikeSimplePlacementRouteQuestion(options.userText, placement.pointId)) {
+    return {
+      text: buildRichPlacementRouteText(locale, placement),
+      pointIds: [placement.pointId],
+      routeId: placement.pointId === 'ascendant' ? 'rising_sign' : `${placement.pointId}_sign`,
+      answerStyle: 'planet_focus',
+      usedTools: [buildPlacementToolResult(placement)].filter(Boolean)
+    };
+  }
+
   const lines = [
     buildSinglePlacementFactText(locale, placement),
     buildDegreeText(locale, placement.degree)
@@ -7919,17 +9639,7 @@ function buildPointPlacementResponse(locale, subjectProfile, pointId, options = 
     pointIds: [placement.pointId],
     routeId,
     answerStyle: 'planet_focus',
-    usedTools: [placement.pointId === 'ascendant' || placement.pointId === 'descendant' || placement.pointId === 'midheaven' || placement.pointId === 'ic'
-      ? {
-          name: 'get_cached_angle_info',
-          args: { angle: placement.pointId === 'ascendant' ? 'asc' : placement.pointId },
-          result: { angle: placement.rawPoint }
-        }
-      : {
-          name: 'get_cached_planet_placement',
-          args: { planet: placement.pointId },
-          result: { planet: placement.rawPoint }
-        }]
+    usedTools: [buildPlacementToolResult(placement)].filter(Boolean)
   };
 }
 
@@ -8043,6 +9753,11 @@ function buildDirectPlanetPlacementResponse(locale, subjectProfile, userText, op
         return `${planetName || 'Planet'}: ${signName || '?'}${houseValue ? `, ${houseLabel} ${houseValue}` : ''}${degreeText}.`;
       })
       .join('\n');
+  }
+
+  if (looksLikeSimplePlacementRouteQuestion(userText, placements[0].planetId)) {
+    const placement = normalizePlacement(locale, subjectProfile, placements[0].planetId);
+    return buildRichPlacementRouteText(locale, placement);
   }
 
   const { planetName, signName, houseValue, degree } = formatPlacement(placements[0]);
@@ -10026,6 +11741,7 @@ function buildIndexedFactUsedTools(searchInput, facts) {
         fact_text: fact.factText,
         fact_payload: fact.factPayload,
         source_kind: fact.sourceKind,
+        source_tool_name: fact.sourceToolName || fact.source_tool_name || null,
         cache_month: fact.cacheMonth
       }))
     }
@@ -10436,6 +12152,28 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
 
   facts = await enrichChartPatternRelatedFacts(identity, subjectProfile, searchInput, facts);
 
+  const indexedFactsForUsedTools = facts;
+  const extraUsedTools = [];
+  const moonPhaseContext = await maybeBuildCurrentMoonPhaseContext(identity, subjectProfile, plannedRoute, options);
+  if (moonPhaseContext?.fact) {
+    const seenFactKeys = new Set();
+    facts = [moonPhaseContext.fact, ...facts].filter((fact) => {
+      const key = String(fact.factKey || fact.fact_key || fact.title || '');
+      if (key && seenFactKeys.has(key)) {
+        return false;
+      }
+      if (key) {
+        seenFactKeys.add(key);
+      }
+      return true;
+    });
+    extraUsedTools.push(...(moonPhaseContext.usedTools || []));
+  }
+  const currentTransitFocusBody = resolveCurrentTransitRouteFocusBody(plannedRoute, options);
+  if (currentTransitFocusBody) {
+    facts = buildUserFacingCurrentTransitFacts(facts, { focusBody: currentTransitFocusBody });
+  }
+
   if (facts.length < 2) {
     return null;
   }
@@ -10588,7 +12326,10 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
       })
     : null;
 
-  const usedTools = buildIndexedFactUsedTools(searchInput, facts);
+  const usedTools = [
+    ...buildIndexedFactUsedTools(searchInput, indexedFactsForUsedTools),
+    ...extraUsedTools
+  ];
   let rewrittenAnswer = draftAnswer;
   let rewriteDurationMs = 0;
   const shouldGenerateProgressively = (
@@ -10696,6 +12437,21 @@ async function tryFactFastPath(identity, userText, intent, subjectProfile, factA
         error: error.message || 'unknown'
       });
     }
+  }
+
+  const plannedRouteIds = [
+    plannedRoute?.id,
+    plannedRoute?.commonRouteId,
+    options.queryState?.canonicalRouteId
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  if (plannedRouteIds.includes('current_mental_transits')) {
+    rewrittenAnswer = normalizeCurrentMentalTransitSections(rewrittenAnswer);
+    rewrittenAnswer = ensureCurrentMentalSupportSection(rewrittenAnswer, facts);
+    rewrittenAnswer = ensureCurrentMentalSectionEvidence(rewrittenAnswer, facts);
+    rewrittenAnswer = limitCurrentMentalTransitTiming(rewrittenAnswer);
+    rewrittenAnswer = ensureCurrentMentalWeatherHasTiming(rewrittenAnswer, facts);
+    rewrittenAnswer = limitCurrentMentalTransitTiming(rewrittenAnswer);
+    rewrittenAnswer = ensureCurrentMentalTransitHasTiming(rewrittenAnswer, facts);
   }
 
   const factualCardTextParts = (
@@ -11036,11 +12792,31 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
     )
   );
   const requestedLimit = queryState?.parameters?.limit || null;
-  const selectedBlocks = (useIndexedFacts ? indexedBlocks : timelineBlocks)
+  const timelineEntries = Array.isArray(timelinePayload?.transits) ? timelinePayload.transits : [];
+  const selectedEntries = (useIndexedFacts ? indexedFacts : timelineEntries)
     .slice(0, requestedLimit || undefined);
+  const selectedBlocks = selectedEntries
+    .map((entry) => useIndexedFacts
+      ? buildTransitFactLines(locale, entry).join('\n')
+      : buildTransitTimelineEntryLines(locale, entry))
+    .filter(Boolean);
+  const selectedRows = selectedEntries
+    .map((entry) => useIndexedFacts
+      ? buildMonthlyTransitTableRowFromFact(locale, entry)
+      : buildMonthlyTransitTableRowFromTimeline(locale, entry))
+    .filter((row) => row?.title || row?.window || row?.peak || row?.houses || row?.notes);
   const cacheMonth = factAvailability?.indexedTransitCacheMonth || ensuredTransitCache?.cacheMonth || null;
+  const listingBlocks = selectedBlocks.length > 0
+    ? selectedBlocks
+    : selectedRows.map((row) => [
+        row.title,
+        row.window ? `${formatRawLabel(locale, { en: 'Window', fr: 'Fenêtre', de: 'Fenster', es: 'Ventana' })}: ${row.window}` : null,
+        row.peak ? `${formatRawLabel(locale, { en: 'Peak / exact', fr: 'Pic / exact', de: 'Höhepunkt / exakt', es: 'Pico / exacto' })}: ${row.peak}` : null,
+        row.houses ? `${formatRawLabel(locale, { en: 'Houses', fr: 'Maisons', de: 'Häuser', es: 'Casas' })}: ${row.houses}` : null,
+        row.notes
+      ].filter(Boolean).join('\n')).filter(Boolean);
 
-  if (selectedBlocks.length === 0) {
+  if (listingBlocks.length === 0 && selectedRows.length === 0) {
     return {
       textParts: [normalizeRawPresentationText(formatRawLabel(locale, {
         en: `No monthly transit listing is available for ${getRawSubjectLabel(locale, subjectProfile.profileName || 'Chart User')}.`,
@@ -11053,13 +12829,26 @@ async function tryFullRawListing(identity, userText, subjectProfile, factAvailab
     };
   }
 
+  const title = buildRawListingTitle(locale, 'all_monthly_transits', subjectProfile.profileName, cacheMonth || String(selectedRows.length || listingBlocks.length), responseMode);
+
   return {
     textParts: buildRawListingParts(
       locale,
-      buildRawListingTitle(locale, 'all_monthly_transits', subjectProfile.profileName, cacheMonth || String(selectedBlocks.length), responseMode),
-      selectedBlocks,
+      title,
+      listingBlocks,
       { itemType: 'block', chunkSize: 6 }
     ),
+    suppressTextResponse: selectedRows.length > 0,
+    mediaPayload: selectedRows.length > 0
+      ? {
+          monthlyTransits: {
+            title,
+            month: cacheMonth || null,
+            columns: buildMonthlyTransitTableColumns(locale),
+            rows: selectedRows
+          }
+        }
+      : null,
     usedTools: useIndexedFacts
       ? [{
           name: 'search_cached_profile_facts',
@@ -11872,6 +13661,13 @@ async function answerConversation(identity, userText, options = {}) {
       'embedding route match',
       () => matchRouteByEmbedding(effectiveUserQuestion, { topK: 8 })
     );
+    if (shouldKeepLocalCommonRouteOverEmbedding(commonRoute, embeddingRouteMatch, effectiveUserQuestion)) {
+      embeddingRouteMatch = {
+        ...embeddingRouteMatch,
+        accepted: false,
+        rejectedReason: 'local_common_route_precedence'
+      };
+    }
     if (embeddingRouteMatch?.accepted) {
       if (embeddingRouteMatch.definition.kind === 'canonical') {
         canonicalRoute = embeddingRouteMatch.route;
@@ -12908,12 +14704,28 @@ module.exports = {
     buildTransitSearchRawResponse,
     isElectionalResultExplanationFollowUp,
     detectArtifactFollowUpLocally,
+    detectExplicitFollowUp,
+    looksLikeContextDependentFollowUp,
     inferElectionalRouteConfigFromQuestion,
     extractRequestedExternalProfileName,
     looksLikeStandaloneAstrologyQuery,
     parseExplicitSingleDateFromQuestion,
+    parseRelativeDateWindowFromQuestion,
+    buildElectionalSearchWindow,
+    inferStructuredQueryParameters,
     buildDirectPlanetPlacementResponse,
     buildDeterministicNatalResponse,
-    validateNatalPlacementIntegrity
+    validateNatalPlacementIntegrity,
+    buildCurrentMoonPhaseRequest,
+    extractCurrentMoonPhaseDetails,
+    buildCurrentMoonPhaseFact,
+    buildUserFacingCurrentTransitFacts,
+    buildUserFacingCurrentMoonTransitFacts,
+    normalizeCurrentMentalTransitSections,
+    ensureCurrentMentalSupportSection,
+    ensureCurrentMentalSectionEvidence,
+    limitCurrentMentalTransitTiming,
+    ensureCurrentMentalWeatherHasTiming,
+    ensureCurrentMentalTransitHasTiming
   }
 };

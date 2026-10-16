@@ -9,6 +9,8 @@ const registerNatalCommand = require('./commands/natal');
 const registerLanguageCommand = require('./commands/language');
 const registerProfileCommand = require('./commands/profile');
 const registerChatCommand = require('./commands/chat');
+const { createIncomingEventRouter } = require('./application/incomingEventRouter');
+const { createLegacyControllerHandlers } = require('./adapters/legacyControllerHandlers');
 const { getWhatsappPaths } = require('./channels/whatsapp/api');
 const { handleWhatsAppVerification, handleWhatsAppWebhook, processWhatsAppEvent } = require('./channels/whatsapp/webhook');
 const billing = require('./services/billing');
@@ -121,7 +123,7 @@ async function withRetry(label, fn, options = {}) {
   throw lastError;
 }
 
-function createAppServer(bot, webhookPath) {
+function createAppServer(bot, webhookPath, routeIncomingEvent) {
   const { webhookPath: whatsappWebhookPath } = getWhatsappPaths();
 
   return http.createServer(async (req, res) => {
@@ -198,7 +200,7 @@ function createAppServer(bot, webhookPath) {
       }
 
       if (pathname === whatsappWebhookPath && req.method === 'POST') {
-        await handleWhatsAppWebhook(req, res);
+        await handleWhatsAppWebhook(req, res, { routeIncomingEvent });
         return;
       }
     }
@@ -306,16 +308,17 @@ async function main() {
   requireEnv('FREEASTRO_API_KEY');
 
   const bot = new Telegraf(botToken);
+  const routeIncomingEvent = createIncomingEventRouter(createLegacyControllerHandlers());
   setTelegramNotifier(bot.telegram);
   persistence.initialize();
   billing.initialize();
 
-  registerBillingCommand(bot);
-  registerStartCommand(bot);
-  registerNatalCommand(bot);
-  registerLanguageCommand(bot);
-  registerProfileCommand(bot);
-  registerChatCommand(bot);
+  registerBillingCommand(bot, routeIncomingEvent);
+  registerStartCommand(bot, routeIncomingEvent);
+  registerNatalCommand(bot, routeIncomingEvent);
+  registerLanguageCommand(bot, routeIncomingEvent);
+  registerProfileCommand(bot, routeIncomingEvent);
+  registerChatCommand(bot, routeIncomingEvent);
 
   bot.catch(async (error, ctx) => {
     await reportError('telegram.bot', error, { updateId: ctx.update?.update_id });
@@ -327,7 +330,7 @@ async function main() {
   let server = null;
 
   if (startHttpServer) {
-    server = createAppServer(bot, webhookPath);
+    server = createAppServer(bot, webhookPath, routeIncomingEvent);
     const port = getPort();
 
     await new Promise((resolve) => {
@@ -384,7 +387,7 @@ async function main() {
       await bot.handleUpdate(update);
     });
     eventQueue.registerHandler('whatsapp_event', async (event) => {
-      await processWhatsAppEvent(event);
+      await processWhatsAppEvent(event, routeIncomingEvent);
     });
     eventQueue.start();
   } else {

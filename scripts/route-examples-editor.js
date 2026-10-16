@@ -8,14 +8,9 @@ const { performance } = require('node:perf_hooks');
 const { URL } = require('node:url');
 const persistence = require('../src/services/persistence');
 const natalFlow = require('../src/services/natalFlow');
-const {
-  handleBilling,
-  handleCancel,
-  handleIncomingAction,
-  handleIncomingText,
-  handleProfile,
-  handleStart
-} = require('../src/core/controller');
+const { ACTIONS } = require('../src/application/actionIds');
+const { createIncomingEventRouter } = require('../src/application/incomingEventRouter');
+const { createLegacyControllerHandlers } = require('../src/adapters/legacyControllerHandlers');
 const {
   getChatState,
   getChatStateSnapshot,
@@ -75,6 +70,7 @@ const ANSWER_STYLE_OVERRIDES_PATH = getAnswerStyleOverridesPath();
 const RESPONSE_SHAPE_OVERRIDES_PATH = getResponseShapeOverridesPath();
 const PORT = Number(process.env.ROUTING_EDITOR_PORT || process.argv[2] || 4321);
 const DEFAULT_SIMULATOR_CHAT_ID = 'browser-sim-local';
+const routeIncomingEvent = createIncomingEventRouter(createLegacyControllerHandlers());
 
 persistence.initialize();
 
@@ -818,24 +814,24 @@ async function dispatchSimulatorMessage(chatId, input, options = {}) {
   try {
     if (line === '/start') {
       handlerName = 'start command';
-      await handleStart(attachSimulatorTrace(createSimulatorEvent(chatId, { type: 'start' }), captured), channelApi);
+      await routeIncomingEvent(attachSimulatorTrace(createSimulatorEvent(chatId, { type: 'text', text: '/start' }), captured), channelApi);
     } else if (line === '/profile') {
       handlerName = 'profile command';
-      await handleProfile(attachSimulatorTrace(createSimulatorEvent(chatId, { type: 'command' }), captured), channelApi);
+      await routeIncomingEvent(attachSimulatorTrace(createSimulatorEvent(chatId, { type: 'text', text: '/profile' }), captured), channelApi);
     } else if (line === '/billing') {
       handlerName = 'billing command';
-      await handleBilling(attachSimulatorTrace(createSimulatorEvent(chatId, { type: 'command' }), captured), channelApi);
+      await routeIncomingEvent(attachSimulatorTrace(createSimulatorEvent(chatId, { type: 'text', text: '/billing' }), captured), channelApi);
     } else if (line === '/cancel') {
       handlerName = 'cancel command';
-      await handleCancel(attachSimulatorTrace(createSimulatorEvent(chatId, { type: 'action', actionId: 'cancel' }), captured), channelApi);
+      await routeIncomingEvent(attachSimulatorTrace(createSimulatorEvent(chatId, { type: 'action', actionId: ACTIONS.CANCEL }), captured), channelApi);
     } else if (line.startsWith('/action ')) {
       handlerName = 'action handler';
-      await handleIncomingAction(attachSimulatorTrace(createSimulatorEvent(chatId, {
+      await routeIncomingEvent(attachSimulatorTrace(createSimulatorEvent(chatId, {
         type: 'action',
         actionId: line.slice('/action '.length).trim()
       }), captured), channelApi);
     } else {
-      await handleIncomingText(event, channelApi);
+      await routeIncomingEvent(event, channelApi);
     }
   } catch (caught) {
     error = caught;
@@ -1440,9 +1436,9 @@ function buildHtml() {
     }
     .bubble-image {
       display: block;
-      width: auto;
-      min-width: 900px;
-      max-width: none;
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
       height: auto;
       background: #fff;
     }
@@ -1974,6 +1970,12 @@ function buildHtml() {
       }
       if (mediaAttachments.includes('natal_aspects_png') && route.id !== 'all_natal_aspects') {
         warnings.push('Natal aspects PNG is intended for the all_natal_aspects route.');
+      }
+      if (mediaAttachments.includes('monthly_transits_png') && route.id !== 'all_monthly_transits') {
+        warnings.push('Monthly transits PNG is intended for the all_monthly_transits route.');
+      }
+      if (mediaAttachments.includes('moon_phase_svg') && route.id !== 'current_moon_transits') {
+        warnings.push('Moon phase SVG is intended for the current_moon_transits route.');
       }
       if (mediaAttachments.length > 0) {
         passes.push('Media attachments are configured.');
@@ -2649,7 +2651,7 @@ function buildHtml() {
             '<label class="editable">' + fieldLabel('Answer style', 'Controls the focus/tone of the answer, like natal_theme, planet_focus, personal_transits, or synastry.') + '<select id="route-answer-style">' + optionList(getAnswerStyleOptions(), override.answerStyle) + '</select></label>' +
             '<label class="editable">' + fieldLabel('Response shape', 'Controls the structural format of the answer. Some shapes map to deterministic renderers; custom shapes add instructions to AI-rendered answers.') + '<select id="route-response-shape">' + optionList(getResponseShapeOptions(), override.responseShape) + '</select></label>' +
             '<label class="editable">' + fieldLabel('Delivery mode', 'Standard sends the final answer normally. Separate card sections splits the final answer after generation. Generate each section live creates and sends each factual-card section one after another.') + '<select id="route-delivery-mode">' + optionList(state.metadata.deliveryModes || ['standard', 'progressive_sections', 'progressive_generate_sections'], override.deliveryMode, formatDeliveryMode) + '</select></label>' +
-            '<label class="editable">' + fieldLabel('Media attachments', 'Optional images sent with the answer. Natal chart PNG uses /api/v1/natal/chart/. Ephemeris month PNG turns returned ephemeris rows into a Telegram-friendly table image. Natal aspects PNG turns the aspect listing into an image.') + '<select id="route-media-picker"><option value="">Add media attachment</option>' + (state.metadata.mediaAttachmentOptions || []).map((item) => '<option value="' + escapeAttr(item) + '">' + escapeHtml(formatMediaAttachment(item)) + '</option>').join('') + '</select><div class="chips">' + renderChips(override.mediaAttachments, 'route-media') + '</div></label>' +
+            '<label class="editable">' + fieldLabel('Media attachments', 'Optional images sent with the answer. Natal chart PNG uses /api/v1/natal/chart/. Ephemeris month PNG turns returned ephemeris rows into a Telegram-friendly table image. Natal aspects PNG and monthly transits PNG turn full listings into images. Moon phase SVG uses FreeAstro /api/v1/moon/phase visual output and sends a channel-compatible image.') + '<select id="route-media-picker"><option value="">Add media attachment</option>' + (state.metadata.mediaAttachmentOptions || []).map((item) => '<option value="' + escapeAttr(item) + '">' + escapeHtml(formatMediaAttachment(item)) + '</option>').join('') + '</select><div class="chips">' + renderChips(override.mediaAttachments, 'route-media') + '</div></label>' +
           '</div>' +
           rendererPanel +
           responseShapeControls +
@@ -2820,7 +2822,9 @@ function buildHtml() {
       const labels = {
         natal_chart_png: 'Natal chart PNG',
         ephemeris_month_png: 'Ephemeris month PNG',
-        natal_aspects_png: 'Natal aspects PNG'
+        natal_aspects_png: 'Natal aspects PNG',
+        monthly_transits_png: 'Monthly transits PNG',
+        moon_phase_svg: 'Moon phase SVG'
       };
       return labels[value] || value || 'No media';
     }

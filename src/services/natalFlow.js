@@ -174,20 +174,25 @@ function parseDateInput(input) {
   }
 
   const [year, month, day] = value.split('-').map(Number);
-  const parsedDate = new Date(`${value}T00:00:00`);
+  // Date.UTC rolls impossible days over (1985-02-30 -> 1985-03-02), so round-trip to reject them.
+  const parsedDate = new Date(Date.UTC(year, month - 1, day));
 
   if (
     Number.isNaN(parsedDate.getTime()) ||
     year < 1900 ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31
+    parsedDate.getUTCFullYear() !== year ||
+    parsedDate.getUTCMonth() !== month - 1 ||
+    parsedDate.getUTCDate() !== day ||
+    parsedDate.getTime() > Date.now()
   ) {
     return null;
   }
 
   return { year, month, day, raw: value };
+}
+
+function looksLikeDateInput(input) {
+  return /^\d{1,4}[\s./-]\d{1,2}[\s./-]\d{1,4}$/.test(String(input || '').trim());
 }
 
 function parseTimeInput(input) {
@@ -291,6 +296,7 @@ module.exports = {
   getSessionSnapshot,
   isSessionCurrent,
   lockSession,
+  looksLikeDateInput,
   parseDateInput,
   parseProfileNameInput,
   parseTimeInput,

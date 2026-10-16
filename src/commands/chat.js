@@ -1,8 +1,7 @@
 const { getChatState } = require('../state/chatState');
 const { createTelegramChannelApi, createTelegramEvent } = require('../channels/telegram/api');
-const { handleIncomingText } = require('../core/controller');
 
-module.exports = function registerChatCommand(bot) {
+module.exports = function registerChatCommand(bot, routeIncomingEvent) {
   bot.on('text', async (ctx) => {
     const text = String(ctx.message?.text || '').trim();
 
@@ -17,6 +16,6 @@ module.exports = function registerChatCommand(bot) {
       return;
     }
 
-    await handleIncomingText(event, createTelegramChannelApi(ctx));
+    await routeIncomingEvent(event, createTelegramChannelApi(ctx));
   });
 };

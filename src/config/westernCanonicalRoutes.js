@@ -64,7 +64,7 @@ function buildElectionalCanonicalRoute(input) {
 
 const CURRENT_TRANSIT_BODY_CANONICAL_CONFIGS = [
   { id: 'current_sun_transits', name: 'Sun', aliases: ['what is the sun doing to me right now', 'tell me about my sun transits'] },
-  { id: 'current_moon_transits', name: 'Moon', aliases: ['what is the moon doing to me right now', 'tell me about my moon transits'] },
+  { id: 'current_moon_transits', name: 'Moon', aliases: ['what is the moon doing to me right now', 'tell me about my moon transits', 'what phase is the moon today', 'what is the moon phase today', 'is there a special moon today', 'is it a full moon today'] },
   { id: 'current_mercury_transits', name: 'Mercury', aliases: ['what is mercury doing to me right now', 'tell me about my mercury transits'] },
   { id: 'current_venus_transits', name: 'Venus', aliases: ['what is venus doing to me right now', 'tell me about my venus transits'] },
   { id: 'current_mars_transits', name: 'Mars', aliases: ['what is mars doing to me right now', 'tell me about my mars transits'] },
@@ -591,6 +591,7 @@ const BASE_WESTERN_CANONICAL_ROUTES = [
     requiredArgs: ['profile'],
     cacheStrategy: 'indexed_transits_then_tool',
     responseShape: 'full_listing',
+    mediaAttachments: ['monthly_transits_png'],
     scope: 'monthly_transits',
     intentSample: 'list all monthly transits',
     matchHint: 'Exhaustive monthly transit listing for the current or requested month. Return all transits, not a curated subset.',

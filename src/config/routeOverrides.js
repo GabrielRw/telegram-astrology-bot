@@ -50,7 +50,9 @@ const DELIVERY_MODES = new Set([
 const MEDIA_ATTACHMENTS = new Set([
   'natal_chart_png',
   'ephemeris_month_png',
-  'natal_aspects_png'
+  'natal_aspects_png',
+  'monthly_transits_png',
+  'moon_phase_svg'
 ]);
 const PRODUCTION_STATUSES = new Set([
   'unreviewed',

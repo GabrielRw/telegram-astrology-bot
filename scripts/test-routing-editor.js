@@ -168,7 +168,7 @@ async function main() {
             factLimit: 11,
             mcpLoadingMode: 'after_fast_path',
             deliveryMode: 'progressive_generate_sections',
-            mediaAttachments: ['natal_chart_png'],
+            mediaAttachments: ['natal_chart_png', 'moon_phase_svg'],
             productionStatus: 'ready',
             productionNotes: 'Manual approval after simulator smoke.',
             responseInstructions: 'Return three short cards.',
@@ -189,7 +189,7 @@ async function main() {
     assert.equal(savedOverrides.routes.moon_emotions.factLimit, 11);
     assert.equal(savedOverrides.routes.moon_emotions.mcpLoadingMode, 'after_fast_path');
     assert.equal(savedOverrides.routes.moon_emotions.deliveryMode, 'progressive_generate_sections');
-    assert.deepEqual(savedOverrides.routes.moon_emotions.mediaAttachments, ['natal_chart_png']);
+    assert.deepEqual(savedOverrides.routes.moon_emotions.mediaAttachments, ['natal_chart_png', 'moon_phase_svg']);
     assert.equal(savedOverrides.routes.moon_emotions.productionStatus, 'ready');
     assert.equal(savedOverrides.routes.moon_emotions.productionNotes, 'Manual approval after simulator smoke.');
     assert.equal(savedOverrides.routes.moon_emotions.responseInstructions, 'Return three short cards.');
@@ -206,7 +206,7 @@ async function main() {
     assert.deepEqual(moonRouteAfterOverride.factSourceTools, ['rest_western_natal_insights']);
     assert.equal(moonRouteAfterOverride.mcpLoadingMode, 'after_fast_path');
     assert.equal(moonRouteAfterOverride.deliveryMode, 'progressive_generate_sections');
-    assert.deepEqual(moonRouteAfterOverride.mediaAttachments, ['natal_chart_png']);
+    assert.deepEqual(moonRouteAfterOverride.mediaAttachments, ['natal_chart_png', 'moon_phase_svg']);
     assert.equal(moonRouteAfterOverride.productionStatus, 'ready');
     assert.equal(moonRouteAfterOverride.productionNotes, 'Manual approval after simulator smoke.');
     assert.equal(moonRouteAfterOverride.responseInstructions, 'Return three short cards.');

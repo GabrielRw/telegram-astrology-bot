@@ -110,6 +110,40 @@ function testEnglishMoonPlacementMeaning() {
   assert.doesNotMatch(text, /Taurus/i);
 }
 
+function testEnglishSunSignSimpleQuestionIsRich() {
+  const result = __test.buildDeterministicNatalResponse(
+    'en',
+    profile,
+    'What is my Sun sign?'
+  );
+  const text = result.text;
+
+  assert.equal(result.routeId, 'sun_sign');
+  assert.equal(text.split(/\n{2,}/).length, 4);
+  assert.match(text, /Your Sun placement/i);
+  assert.match(text, /Sun is in Virgo, in house 7/i);
+  assert.match(text, /Exact position in the sign: 12\.71°/i);
+  assert.match(text, /Virgo makes it/i);
+  assert.match(text, /7th house/i);
+}
+
+function testEnglishMoonSignSimpleQuestionIsRich() {
+  const result = __test.buildDeterministicNatalResponse(
+    'en',
+    profile,
+    'What is my Moon sign?'
+  );
+  const text = result.text;
+
+  assert.equal(result.routeId, 'moon_sign');
+  assert.equal(text.split(/\n{2,}/).length, 4);
+  assert.match(text, /Moon is in Capricorn, in house 12/i);
+  assert.match(text, /emotional needs/i);
+  assert.match(text, /Capricorn makes it/i);
+  assert.match(text, /12th house/i);
+  assert.doesNotMatch(text, /Taurus/i);
+}
+
 function testEnglishMoonMeaningFollowUpDisabledByDefault() {
   const first = __test.buildDeterministicNatalResponse(
     'en',
@@ -143,6 +177,7 @@ function testEnglishRisingSign() {
 
   assert.match(text, /Ascendant is in Cancer/i);
   assert.match(text, /Exact position in the sign: 2\.42°/i);
+  assert.equal(text.split(/\n{2,}/).length, 4);
   assert.doesNotMatch(text, /relationships and how you engage/i);
 }
 
@@ -303,6 +338,8 @@ function testNoisyPlanetOnlyFollowUpPlacement() {
 testFrenchMoonPlacement();
 testEnglishMoonPlacement();
 testEnglishMoonPlacementMeaning();
+testEnglishSunSignSimpleQuestionIsRich();
+testEnglishMoonSignSimpleQuestionIsRich();
 testEnglishMoonMeaningFollowUpDisabledByDefault();
 testEnglishRisingSign();
 testStandaloneAstroThemeDoesNotInheritMoon();

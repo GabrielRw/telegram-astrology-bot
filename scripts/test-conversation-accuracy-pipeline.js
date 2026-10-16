@@ -10,6 +10,7 @@ const testScripts = [
   'scripts/test-response-shape-overrides.js',
   'scripts/test-routing-editor.js',
   'scripts/test-direct-planet-placement.js',
+  'scripts/test-moon-phase-context.js',
   'scripts/test-artifact-followups.js',
   'scripts/test-canonical-renderers.js',
   'scripts/test-electional-routing-guards.js',

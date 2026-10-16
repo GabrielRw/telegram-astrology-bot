@@ -1,17 +1,16 @@
 const { createTelegramChannelApi, createTelegramEvent } = require('../channels/telegram/api');
-const { handleBilling, handleSubscribe } = require('../core/controller');
 
-module.exports = function registerBillingCommand(bot) {
+module.exports = function registerBillingCommand(bot, routeIncomingEvent) {
   bot.command('billing', async (ctx) => {
-    await handleBilling(
-      createTelegramEvent(ctx, { type: 'command' }),
+    await routeIncomingEvent(
+      createTelegramEvent(ctx, { type: 'text', text: '/billing' }),
       createTelegramChannelApi(ctx)
     );
   });
 
   bot.command('subscribe', async (ctx) => {
-    await handleSubscribe(
-      createTelegramEvent(ctx, { type: 'command' }),
+    await routeIncomingEvent(
+      createTelegramEvent(ctx, { type: 'text', text: '/subscribe' }),
       createTelegramChannelApi(ctx)
     );
   });

@@ -1,0 +1,608 @@
+{
+  "runAt": "2026-10-14T18:48:05.814Z",
+  "summary": {
+    "cases": 94,
+    "passed": 67,
+    "passRate": 0.7127659574468085,
+    "byCategory": {
+      "natal_placement": {
+        "pass": 16,
+        "total": 18
+      },
+      "natal_topic": {
+        "pass": 16,
+        "total": 21
+      },
+      "format": {
+        "pass": 1,
+        "total": 5
+      },
+      "transits": {
+        "pass": 10,
+        "total": 18
+      },
+      "electional": {
+        "pass": 13,
+        "total": 14
+      },
+      "other": {
+        "pass": 5,
+        "total": 8
+      },
+      "guardrail": {
+        "pass": 6,
+        "total": 6
+      },
+      "multi_turn": {
+        "pass": 0,
+        "total": 4
+      }
+    },
+    "byLocale": {
+      "en": {
+        "pass": 37,
+        "total": 57
+      },
+      "fr": {
+        "pass": 13,
+        "total": 16
+      },
+      "de": {
+        "pass": 7,
+        "total": 10
+      },
+      "es": {
+        "pass": 10,
+        "total": 11
+      }
+    },
+    "checks": {
+      "answered": {
+        "pass": 93,
+        "total": 94
+      },
+      "no_error_reply": {
+        "pass": 94,
+        "total": 94
+      },
+      "mentions": {
+        "pass": 21,
+        "total": 24
+      },
+      "natal_claims": {
+        "pass": 45,
+        "total": 46
+      },
+      "validator": {
+        "pass": 91,
+        "total": 94
+      },
+      "validator_warnings": {
+        "pass": 89,
+        "total": 94
+      },
+      "latency": {
+        "pass": 83,
+        "total": 94
+      },
+      "no_production_repairs": {
+        "pass": 79,
+        "total": 94
+      },
+      "must_match": {
+        "pass": 1,
+        "total": 2
+      },
+      "route": {
+        "pass": 45,
+        "total": 66
+      },
+      "window": {
+        "pass": 20,
+        "total": 23
+      },
+      "declines": {
+        "pass": 3,
+        "total": 3
+      },
+      "must_not_match": {
+        "pass": 7,
+        "total": 7
+      }
+    },
+    "validatorIssues": {
+      "lowercase_start": 4,
+      "media_only_answer": 1,
+      "format_paragraph_count": 3
+    },
+    "productionRepairs": {
+      "folded_headings": 13,
+      "dropped_meta_sentence": 2
+    },
+    "latency": {
+      "p50": 5419,
+      "p90": 14689,
+      "byCategory": {
+        "natal_placement": {
+          "p50": 102,
+          "p90": 8059,
+          "max": 12375
+        },
+        "natal_topic": {
+          "p50": 7163,
+          "p90": 22556,
+          "max": 39792
+        },
+        "format": {
+          "p50": 7431,
+          "p90": 17340,
+          "max": 17340
+        },
+        "transits": {
+          "p50": 2114,
+          "p90": 14689,
+          "max": 15667
+        },
+        "electional": {
+          "p50": 5910,
+          "p90": 8666,
+          "max": 9711
+        },
+        "other": {
+          "p50": 5148,
+          "p90": 29194,
+          "max": 29194
+        },
+        "guardrail": {
+          "p50": 5115,
+          "p90": 11917,
+          "max": 11917
+        },
+        "multi_turn": {
+          "p50": 10,
+          "p90": 46049,
+          "max": 46049
+        }
+      }
+    },
+    "judge": null
+  },
+  "cases": {
+    "placement_rising_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_sun_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_moon_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_venus_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_mars_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_mercury_en": {
+      "pass": false,
+      "hardFailures": [
+        "must_match (?i)retrograde"
+      ]
+    },
+    "placement_mc_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_saturn_house_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_rising_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_moon_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_venus_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_sun_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_rising_de": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_moon_de": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_mars_de": {
+      "pass": false,
+      "hardFailures": [
+        "answered",
+        "mentions"
+      ]
+    },
+    "placement_rising_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_moon_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "placement_venus_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_sun_meaning_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_strongest_aspect_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_overview_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_relationships_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_career_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "topic_money_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "topic_shadow_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "topic_chart_ruler_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_element_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_nodes_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_chiron_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_moon_emotions_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "topic_venus_love_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_stellium_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "topic_overview_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_relationships_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_career_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_overview_de": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_career_de": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_overview_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "topic_relationships_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "format_three_paragraphs_en": {
+      "pass": false,
+      "hardFailures": [
+        "validator"
+      ]
+    },
+    "format_one_sentence_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "format_three_paragraphs_fr": {
+      "pass": false,
+      "hardFailures": [
+        "validator"
+      ]
+    },
+    "format_two_paragraphs_de": {
+      "pass": false,
+      "hardFailures": [
+        "route",
+        "natal_claims",
+        "validator"
+      ]
+    },
+    "format_short_es": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "transit_today_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "transit_sky_today_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "transit_month_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "transit_week_en": {
+      "pass": false,
+      "hardFailures": [
+        "route",
+        "window"
+      ]
+    },
+    "transit_saturn_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "transit_venus_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "transit_love_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "transit_career_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "transit_mental_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "transit_exact_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "transit_year_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "transit_month_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "transit_today_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "transit_saturn_fr": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "transit_month_de": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "transit_love_de": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "transit_month_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "transit_career_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_contract_next_week_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_contract_this_week_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_move_next_month_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_journey_tomorrow_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_invest_month_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_interview_range_en": {
+      "pass": false,
+      "hardFailures": [
+        "route",
+        "window"
+      ]
+    },
+    "elect_car_week_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_property_year_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_contract_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_move_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_contract_de": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_journey_de": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_contract_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "elect_move_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "horoscope_daily_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "horoscope_sign_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "ephemeris_date_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "profections_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "solar_return_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "progressions_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "relocation_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "horoscope_daily_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "guard_offtopic_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "guard_offtopic_fr": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "guard_injection_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "guard_medical_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "guard_lottery_en": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "guard_death_es": {
+      "pass": true,
+      "hardFailures": []
+    },
+    "multi_contract_next_week_en": {
+      "pass": false,
+      "hardFailures": [
+        "route",
+        "window"
+      ]
+    },
+    "multi_venus_meaning_en": {
+      "pass": false,
+      "hardFailures": [
+        "mentions"
+      ]
+    },
+    "multi_transits_strongest_en": {
+      "pass": false,
+      "hardFailures": [
+        "route"
+      ]
+    },
+    "multi_rising_fr": {
+      "pass": false,
+      "hardFailures": [
+        "mentions"
+      ]
+    }
+  }
+}

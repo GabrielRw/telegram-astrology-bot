@@ -5,16 +5,12 @@ const readline = require('node:readline/promises');
 const { stdin, stdout } = require('node:process');
 const { performance } = require('node:perf_hooks');
 const persistence = require('../src/services/persistence');
-const {
-  handleBilling,
-  handleCancel,
-  handleIncomingAction,
-  handleIncomingText,
-  handleProfile,
-  handleStart,
-  handleSubscribe
-} = require('../src/core/controller');
+const { ACTIONS } = require('../src/application/actionIds');
+const { createIncomingEventRouter } = require('../src/application/incomingEventRouter');
+const { createLegacyControllerHandlers } = require('../src/adapters/legacyControllerHandlers');
 const { getChoiceMap, getChatState, resolveStateKey } = require('../src/state/chatState');
+
+const routeIncomingEvent = createIncomingEventRouter(createLegacyControllerHandlers());
 
 function parseArgs(argv) {
   const args = {
@@ -193,17 +189,17 @@ async function dispatchInput(session, channelApi, input) {
   const startedAt = performance.now();
 
   if (line === '/start') {
-    await handleStart(createEvent(session, { type: 'start' }), channelApi);
+    await routeIncomingEvent(createEvent(session, { type: 'text', text: '/start' }), channelApi);
   } else if (line === '/profile') {
-    await handleProfile(createEvent(session, { type: 'command' }), channelApi);
+    await routeIncomingEvent(createEvent(session, { type: 'text', text: '/profile' }), channelApi);
   } else if (line === '/billing') {
-    await handleBilling(createEvent(session, { type: 'command' }), channelApi);
+    await routeIncomingEvent(createEvent(session, { type: 'text', text: '/billing' }), channelApi);
   } else if (line === '/subscribe') {
-    await handleSubscribe(createEvent(session, { type: 'command' }), channelApi);
+    await routeIncomingEvent(createEvent(session, { type: 'text', text: '/subscribe' }), channelApi);
   } else if (line === '/cancel') {
-    await handleCancel(createEvent(session, { type: 'action', actionId: 'cancel' }), channelApi);
+    await routeIncomingEvent(createEvent(session, { type: 'action', actionId: ACTIONS.CANCEL }), channelApi);
   } else if (line.startsWith('/action ')) {
-    await handleIncomingAction(
+    await routeIncomingEvent(
       createEvent(session, {
         type: 'action',
         actionId: line.slice('/action '.length).trim()
@@ -211,7 +207,7 @@ async function dispatchInput(session, channelApi, input) {
       channelApi
     );
   } else {
-    await handleIncomingText(
+    await routeIncomingEvent(
       createEvent(session, {
         type: 'text',
         text: line

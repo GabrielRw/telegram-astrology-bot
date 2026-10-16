@@ -1,0 +1,7 @@
+{
+  "description": "Birth profile every eval chat is onboarded with. Changing it changes the expected chart facts, which the harness derives from the computed chart.",
+  "birthDate": "1990-05-15",
+  "birthCity": "Paris",
+  "cityChoice": 0,
+  "birthTime": "14:30"
+}

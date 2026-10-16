@@ -2,12 +2,16 @@ const Stripe = require('stripe');
 const { getSupabaseClient, isSupabaseConfigured } = require('./supabase');
 const { info, warn } = require('./logger');
 const { resolveIdentity, resolveStateKey } = require('../state/chatState');
+const {
+  FREE_QUESTIONS_PER_DAY,
+  MONTHLY_PRICE_USD,
+  buildAccessSummary,
+  buildRecordedQuestionSummary,
+  hasUnlimitedAccess
+} = require('../domain/billingPolicy');
 
 const BILLING_TABLE = 'bot_billing_profiles';
 const DAILY_USAGE_TABLE = 'bot_daily_usage';
-const FREE_QUESTIONS_PER_DAY = 3;
-const MONTHLY_PRICE_USD = '$4';
-const ACTIVE_STATUSES = new Set(['active', 'trialing']);
 const memoryProfiles = new Map();
 const memoryUsage = new Map();
 
@@ -283,10 +287,6 @@ async function incrementUsage(identity, dateKey = normalizeDateKey()) {
   return nextCount;
 }
 
-function hasUnlimitedAccess(profile) {
-  return ACTIVE_STATUSES.has(String(profile?.subscription_status || '').toLowerCase());
-}
-
 function isSimulatorIdentity(identity) {
   return resolveIdentity(identity).channel === 'simulator';
 }
@@ -314,18 +314,7 @@ async function getAccessSummary(identity) {
     getBillingProfile(identity),
     getUsageCount(identity)
   ]);
-  const unlimited = hasUnlimitedAccess(profile);
-  const remainingFreeQuestions = unlimited
-    ? null
-    : Math.max(0, FREE_QUESTIONS_PER_DAY - usedToday);
-
-  return {
-    profile,
-    usedToday,
-    remainingFreeQuestions,
-    unlimited,
-    limitReached: !unlimited && usedToday >= FREE_QUESTIONS_PER_DAY
-  };
+  return buildAccessSummary(profile, usedToday);
 }
 
 async function recordAnsweredQuestion(identity) {
@@ -336,21 +325,11 @@ async function recordAnsweredQuestion(identity) {
   const access = await getAccessSummary(identity);
 
   if (access.unlimited) {
-    return {
-      ...access,
-      usedToday: access.usedToday,
-      remainingFreeQuestions: null
-    };
+    return buildRecordedQuestionSummary(access, access.usedToday);
   }
 
   const usedToday = await incrementUsage(identity);
-
-  return {
-    ...access,
-    usedToday,
-    remainingFreeQuestions: Math.max(0, FREE_QUESTIONS_PER_DAY - usedToday),
-    limitReached: usedToday >= FREE_QUESTIONS_PER_DAY
-  };
+  return buildRecordedQuestionSummary(access, usedToday);
 }
 
 async function ensureCustomer(identity) {

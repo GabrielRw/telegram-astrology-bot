@@ -1,36 +1,31 @@
 const { getChatState } = require('../state/chatState');
 const { createTelegramChannelApi, createTelegramEvent } = require('../channels/telegram/api');
-const {
-  ACTIONS,
-  handleCancel,
-  handleIncomingAction,
-  handleIncomingText
-} = require('../core/controller');
+const { ACTIONS } = require('../application/actionIds');
 
-module.exports = function registerNatalCommand(bot) {
+module.exports = function registerNatalCommand(bot, routeIncomingEvent) {
   bot.command('cancel', async (ctx) => {
-    await handleCancel(
-      createTelegramEvent(ctx, { type: 'action', actionId: 'cancel' }),
+    await routeIncomingEvent(
+      createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.CANCEL }),
       createTelegramChannelApi(ctx)
     );
   });
 
   bot.action(ACTIONS.TIME_YES, async (ctx) => {
-    await handleIncomingAction(
+    await routeIncomingEvent(
       createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.TIME_YES }),
       createTelegramChannelApi(ctx)
     );
   });
 
   bot.action(ACTIONS.TIME_NO, async (ctx) => {
-    await handleIncomingAction(
+    await routeIncomingEvent(
       createTelegramEvent(ctx, { type: 'action', actionId: ACTIONS.TIME_NO }),
       createTelegramChannelApi(ctx)
     );
   });
 
   bot.action(/^NATAL_CITY_(\d+)$/, async (ctx) => {
-    await handleIncomingAction(
+    await routeIncomingEvent(
       createTelegramEvent(ctx, { type: 'action', actionId: ctx.match[0] }),
       createTelegramChannelApi(ctx)
     );
@@ -50,6 +45,6 @@ module.exports = function registerNatalCommand(bot) {
       return next();
     }
 
-    await handleIncomingText(event, createTelegramChannelApi(ctx));
+    await routeIncomingEvent(event, createTelegramChannelApi(ctx));
   });
 };

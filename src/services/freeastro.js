@@ -212,6 +212,11 @@ async function getTransitInsights(data) {
   });
 }
 
+async function getMoonPhase(params = {}) {
+  const qs = buildQuery(params);
+  return request(`/api/v1/moon/phase${qs ? `?${qs}` : ''}`);
+}
+
 async function getDailyPersonalHoroscopeV3(data) {
   return request('/api/v3/horoscope/daily/personal', {
     method: 'POST',
@@ -337,6 +342,7 @@ module.exports = {
   getNatalChart,
   getNatal,
   getNatalInsights,
+  getMoonPhase,
   getDailyPersonalHoroscopeV3,
   getTransitInsights,
   searchCities,

@@ -4,13 +4,6 @@ const {
   getRequiredEnv,
   normalizeWhatsAppEvents
 } = require('./api');
-const {
-  handleStart,
-  handleProfile,
-  handleIncomingAction,
-  handleIncomingText,
-  promptForLanguage
-} = require('../../core/controller');
 const eventQueue = require('../../services/eventQueue');
 const { reportError } = require('../../services/logger');
 
@@ -51,21 +44,17 @@ async function handleWhatsAppVerification(req, res) {
   res.end('forbidden');
 }
 
-async function processWhatsAppEvent(event) {
-  const channelApi = createWhatsAppChannelApi();
-  const text = String(event.text || '').trim().toLowerCase();
-
-  if (event.type === 'action') {
-    await handleIncomingAction(event, channelApi);
-  } else if (event.type === 'text' && (text === 'start' || text === '/start')) {
-    await handleStart(event, channelApi);
-  } else if (event.type === 'text' && ['/profile', '/reglage', '/settings', '/einstellungen', '/ajustes'].includes(text)) {
-    await handleProfile(event, channelApi);
-  } else if (event.type === 'text' && text === '/language') {
-    await promptForLanguage(event, channelApi);
-  } else if (event.type === 'text') {
-    await handleIncomingText(event, channelApi);
+function requireRouteIncomingEvent(routeIncomingEvent) {
+  if (typeof routeIncomingEvent !== 'function') {
+    throw new Error('Missing routeIncomingEvent dependency.');
   }
+
+  return routeIncomingEvent;
+}
+
+async function processWhatsAppEvent(event, routeIncomingEvent) {
+  const channelApi = createWhatsAppChannelApi();
+  return requireRouteIncomingEvent(routeIncomingEvent)(event, channelApi);
 }
 
 function getWhatsAppEventKey(event) {
@@ -83,7 +72,7 @@ function getWhatsAppEventKey(event) {
   return `whatsapp:fallback:${digest}`;
 }
 
-async function handleWhatsAppWebhook(req, res) {
+async function handleWhatsAppWebhook(req, res, options = {}) {
   try {
     const payload = await readRequestBody(req);
     const events = normalizeWhatsAppEvents(payload);
@@ -96,7 +85,7 @@ async function handleWhatsAppWebhook(req, res) {
           payload: event
         });
       } else {
-        await processWhatsAppEvent(event);
+        await processWhatsAppEvent(event, options.routeIncomingEvent);
       }
     }
 

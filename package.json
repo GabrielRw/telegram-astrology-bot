@@ -11,6 +11,8 @@
     "start": "node src/bot.js",
     "dev": "node --watch src/bot.js",
     "simulate": "node scripts/simulate-chat.js",
+    "eval:answers": "node scripts/eval-answers.js",
+    "test:architecture": "node scripts/test-architecture-boundaries.js && node scripts/test-incoming-event-router.js && node scripts/test-billing-policy.js && node scripts/test-billing-handlers.js && node scripts/test-language-handlers.js && node scripts/test-cancel-handler.js && node scripts/test-start-handler.js && node scripts/test-profile-handler.js && node scripts/test-profile-action-handler.js && node scripts/test-profile-chart-handler.js && node scripts/test-daily-horoscope-handler.js && node scripts/test-natal-flow-handler.js && node scripts/test-conversation-selection-action-handler.js && node scripts/test-conversation-answer-handler.js && node scripts/test-natal-profile-domain.js",
     "routing:embed": "node scripts/build-route-embedding-index.js",
     "routing:editor": "node scripts/route-examples-editor.js",
     "routing:test": "node scripts/test-routing-eval.js"

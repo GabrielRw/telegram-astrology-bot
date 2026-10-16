@@ -186,7 +186,7 @@ function getLanguageName(locale, displayLocale = locale) {
   return catalog.languageNames[normalizeLocale(locale) || 'en'] || SELF_LANGUAGE_NAMES.en;
 }
 
-function translateUserError(locale, error) {
+function localizeUserErrorDetail(locale, error) {
   const rawMessage = error && error.message ? String(error.message) : t(locale, 'errors.genericUnexpected');
 
   const replacements = [
@@ -254,6 +254,15 @@ function translateUserError(locale, error) {
       }
     },
     {
+      test: /^FreeAstro request failed/i,
+      text: {
+        en: 'FreeAstro request failed.',
+        fr: 'La requête FreeAstro a échoué.',
+        de: 'Die FreeAstro-Anfrage ist fehlgeschlagen.',
+        es: 'La solicitud a FreeAstro falló.'
+      }
+    },
+    {
       test: /^FreeAstro API returned invalid JSON/i,
       text: {
         en: 'FreeAstro API returned invalid JSON.',
@@ -264,8 +273,24 @@ function translateUserError(locale, error) {
     }
   ];
 
-  const localizedDetail = replacements.find((entry) => entry.test.test(rawMessage))?.text?.[locale] || rawMessage;
-  return `${t(locale, 'errors.starsUnavailable')}\n${localizedDetail}`;
+  const localizedDetail = replacements.find((entry) => entry.test.test(rawMessage))?.text?.[locale];
+  if (localizedDetail) {
+    return localizedDetail;
+  }
+
+  if (rawMessage === t(locale, 'errors.genericUnexpected')) {
+    return rawMessage;
+  }
+
+  // Unrecognized details are raw API/English text: only show them to English users.
+  return (normalizeLocale(locale) || 'en') === 'en' ? rawMessage : null;
+}
+
+function translateUserError(locale, error) {
+  const localizedDetail = localizeUserErrorDetail(locale, error);
+  return localizedDetail
+    ? `${t(locale, 'errors.starsUnavailable')}\n${localizedDetail}`
+    : t(locale, 'errors.starsUnavailable');
 }
 
 module.exports = {
@@ -276,6 +301,7 @@ module.exports = {
   getLanguageOptions,
   getLocale,
   getStarterSuggestions,
+  localizeUserErrorDetail,
   getStarterSuggestionButtons,
   mapCountryToLocale,
   mapPlatformLocale,

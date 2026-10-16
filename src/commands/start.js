@@ -1,10 +1,9 @@
 const { createTelegramChannelApi, createTelegramEvent } = require('../channels/telegram/api');
-const { handleStart } = require('../core/controller');
 
-module.exports = function registerStartCommand(bot) {
+module.exports = function registerStartCommand(bot, routeIncomingEvent) {
   bot.start(async (ctx) => {
-    await handleStart(
-      createTelegramEvent(ctx, { type: 'start' }),
+    await routeIncomingEvent(
+      createTelegramEvent(ctx, { type: 'text', text: '/start' }),
       createTelegramChannelApi(ctx)
     );
   });
